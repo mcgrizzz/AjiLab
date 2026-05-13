@@ -21,9 +21,13 @@ const CL = {
         : (canScale
           ? ` data-orig="${escHtml(String(ing.quantity))}" onclick="RecipeView.editIngredientQty(this)" title="Click to scale recipe by this ingredient"`
           : '');
-      return `<li class="ingredient-item">
+      const nameHtml = renderIngredientName(ing);
+      const noteHtml = ing.note ? ` <span class="ing-note">(${escHtml(ing.note)})</span>` : '';
+      const optionalHtml = ing.optional ? ' <span class="ing-optional">(optional)</span>' : '';
+      const itemCls = ing.optional ? 'ingredient-item ingredient-item-optional' : 'ingredient-item';
+      return `<li class="${itemCls}">
         <span class="ing-qty${canScale && !isSelectable ? ' ing-qty-editable' : ''}${isSelectable ? ' ing-qty-selectable' : ''}"${actionAttr}>${escHtml(qtyStr)}</span>
-        <span class="ing-name">${escHtml(ing.name)}</span>
+        ${nameHtml}${noteHtml}${optionalHtml}
       </li>`;
     }).join('');
     return `<ul class="ingredient-list">${items}</ul>`;
@@ -59,39 +63,50 @@ const CL = {
     const knownMeta = ['title','source','author','servings','description','category','cuisine','yield','tags','prep time','cook time','total time','url','image'];
     const items = steps.map((step) => {
       if (step.length === 1 && step[0]?.type === 'comment') {
-        return `<li class="step-comment">${escHtml(step[0].value || '')}</li>`;
+        return `<li class="step-comment">${renderTextWithBreaks(step[0].value || '', options.temperatureUnit)}</li>`;
       }
       const plainText = getPlainTextStepText(step);
       if (plainText !== null) {
         if (/^\s*=\s+/.test(plainText)) {
-          return `<li class="step-section">${escHtml(plainText.replace(/^\s*=\s+/, ''))}</li>`;
+          const sectionId = step?.[0]?.section_id;
+          const sectionAttr = sectionId ? ` data-section-id="${escHtml(sectionId)}"` : '';
+          return `<li class="step-section"${sectionAttr}>${escHtml(plainText.replace(/^\s*=\s+/, ''))}</li>`;
         }
         if (/^\s*(>\s|--\s?)/.test(plainText)) {
           return `<li class="step-comment">${escHtml(plainText.replace(/^\s*(>\s+|--\s*)/, ''))}</li>`;
         }
-        const mm = plainText.match(/^\s*([a-zA-Z][a-zA-Z0-9 _-]*):\s/);
+        const mm = plainText.match(/^\s*([a-zA-Z][a-zA-Z0-9 _.-]*):\s/);
         if (mm) {
           const key = mm[1].trim().toLowerCase();
-          if (metaKeys.includes(key) || knownMeta.includes(key)) return '';
+          // metric.* keys are stripped by the parser layer; this is a defensive
+          // catch so a leftover `metric.foo: ...` line can never render as text.
+          if (metaKeys.includes(key) || knownMeta.includes(key) || key.startsWith('metric.')) return '';
         }
       }
       const html = step.map(token => {
         if (typeof token === 'string') return escHtml(token);
         switch (token.type) {
           case 'ingredient': {
-            const hoverAttrs = token.reference_target === 'step' && token.reference_step_id
-              ? ` data-ref-step-id="${escHtml(token.reference_step_id)}" onmouseenter="StepHoverCtrl.enter(this)" onmouseleave="StepHoverCtrl.leave(this)"`
-              : '';
-            let s = `<span class="s-ingredient${hoverAttrs ? ' s-ingredient-ref' : ''}"${hoverAttrs}>${escHtml(token.name)}`;
-            if (showAmounts && token.quantity) {
+            const prepRef = buildPrepReferenceAttrs(token);
+            const amtHtml = (showAmounts && token.quantity) ? (() => {
               const isFrac = /[\/⅛¼⅓⅜½⅝⅔¾⅞]/.test(String(token.quantity));
               const q = scaleQty(token.quantity, scale, isFrac);
-              s += `<span class="s-ing-amt"> (${escHtml(q)}${token.units ? ' ' + escHtml(token.units) : ''})</span>`;
+              return `<span class="s-ing-amt"> (${escHtml(q)}${token.units ? ' ' + escHtml(token.units) : ''})</span>`;
+            })() : '';
+            const noteHtml = token.note ? ` <span class="s-component-note">(${escHtml(token.note)})</span>` : '';
+            const optHtml = token.optional ? ' <span class="s-component-optional">(optional)</span>' : '';
+            if (token.recipe_reference) {
+              return renderRecipeReferenceChip(token) + amtHtml + noteHtml + optHtml;
             }
-            return s + '</span>';
+            if (prepRef) {
+              return `<span class="s-ingredient s-ingredient-prep-ref${token.optional ? ' s-ingredient-optional' : ''}"${prepRef.attrs} title="${escHtml(prepRef.title)}"><span class="s-prep-arrow" aria-hidden="true">↩</span>${escHtml(token.name)}${amtHtml}</span>${noteHtml}${optHtml}`;
+            }
+            return `<span class="s-ingredient${token.optional ? ' s-ingredient-optional' : ''}">${escHtml(token.name)}${amtHtml}</span>${noteHtml}${optHtml}`;
           }
-          case 'cookware':
-            return `<span class="s-cookware">${escHtml(token.name)}</span>`;
+          case 'cookware': {
+            const noteHtml = token.note ? ` <span class="s-component-note">(${escHtml(token.note)})</span>` : '';
+            return `<span class="s-cookware">${escHtml(token.name)}</span>${noteHtml}`;
+          }
           case 'timer': {
             const secs = timerToSeconds(token.quantity, token.units);
             const matchedToken = token.quantity && options.resolveTimerToken ? options.resolveTimerToken(token) : null;
@@ -113,7 +128,7 @@ const CL = {
           }
           case 'text':
           case 'comment':
-            return highlightTemps(token.value, options.temperatureUnit);
+            return renderTextWithBreaks(token.value, options.temperatureUnit);
           default:
             return escHtml(token.value || '');
         }
@@ -129,9 +144,36 @@ const CL = {
     return `<ol class="${cls}">${items}</ol>`;
   },
 
+  renderMetrics(metrics) {
+    if (!Array.isArray(metrics) || metrics.length === 0) return '';
+    // Hidden metrics still parse and compute (so later metrics can reference
+    // them) but stay out of the chip strip.
+    const visible = metrics.filter((m) => !m.hidden);
+    if (visible.length === 0) return '';
+    const chips = visible.map((m) => {
+      const safeName = escHtml(m.name);
+      if (m.error) {
+        const tip = escHtml(m.error);
+        return `<span class="metric-chip metric-chip-error" title="${tip}"><span class="metric-name">${safeName}</span> <span class="metric-icon" aria-hidden="true">⚠</span></span>`;
+      }
+      const tip = m.formula ? escHtml(`${m.formula}${m.format_unit ? ' | ' + m.format_unit : ''}`) : '';
+      return `<span class="metric-chip"${tip ? ` title="${tip}"` : ''}><span class="metric-name">${safeName}</span> <span class="metric-value">${escHtml(m.display || '')}</span></span>`;
+    }).join('');
+    return `<div class="recipe-metrics">${chips}</div>`;
+  },
+
   renderCookware(cookwares) {
     if (!cookwares || cookwares.length === 0) return '';
-    const chips = cookwares.map(c => `<span class="cookware-chip">${escHtml(c)}</span>`).join('');
+    const seen = new Set();
+    const unique = [];
+    for (const c of cookwares) {
+      const key = String(c || '').trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      unique.push(c);
+    }
+    if (unique.length === 0) return '';
+    const chips = unique.map(c => `<span class="cookware-chip">${escHtml(c)}</span>`).join('');
     return `<div class="cookware-list">${chips}</div>`;
   },
 };
@@ -201,11 +243,7 @@ const StepHoverCtrl = {
 
   enter(el) {
     this.clear();
-    const stepId = el?.dataset?.refStepId;
-    if (!stepId) return;
-    const list = el.closest('.step-list');
-    if (!list) return;
-    const target = list.querySelector(`.step-item[data-step-id="${cssEscape(stepId)}"]`);
+    const target = resolvePrepRefTarget(el);
     if (!target) return;
     target.classList.add('step-item-ref-highlight');
     el.classList.add('s-ingredient-ref-active');
@@ -222,7 +260,54 @@ const StepHoverCtrl = {
     this.activeTarget.el?.classList.remove('s-ingredient-ref-active');
     this.activeTarget = null;
   },
+
+  jump(el) {
+    const target = resolvePrepRefTarget(el);
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.add('step-item-ref-flash');
+    setTimeout(() => target.classList.remove('step-item-ref-flash'), 1200);
+  },
 };
+
+function resolvePrepRefTarget(el) {
+  const stepId = el?.dataset?.refStepId;
+  const sectionId = el?.dataset?.refSectionId;
+  if (!stepId && !sectionId) return null;
+  const list = el.closest('.step-list');
+  if (!list) return null;
+  return stepId
+    ? list.querySelector(`.step-item[data-step-id="${cssEscape(stepId)}"]`)
+    : list.querySelector(`.step-section[data-section-id="${cssEscape(sectionId)}"]`);
+}
+
+function buildPrepReferenceAttrs(token) {
+  if (token.reference_target === 'step' && token.reference_step_id) {
+    const stepNum = token.reference_step_number;
+    const label = stepNum ? `step ${stepNum}` : 'an earlier step';
+    return {
+      label,
+      title: `From ${label}`,
+      attrs: ` data-ref-step-id="${escHtml(token.reference_step_id)}"`
+        + ` onmouseenter="StepHoverCtrl.enter(this)"`
+        + ` onmouseleave="StepHoverCtrl.leave(this)"`
+        + ` onclick="StepHoverCtrl.jump(this)"`,
+    };
+  }
+  if (token.reference_target === 'section' && token.reference_section_id) {
+    const name = token.reference_section_name;
+    const label = name ? name : 'an earlier section';
+    return {
+      label,
+      title: `From ${label}`,
+      attrs: ` data-ref-section-id="${escHtml(token.reference_section_id)}"`
+        + ` onmouseenter="StepHoverCtrl.enter(this)"`
+        + ` onmouseleave="StepHoverCtrl.leave(this)"`
+        + ` onclick="StepHoverCtrl.jump(this)"`,
+    };
+  }
+  return null;
+}
 
 // ── Utilities ──────────────────────────────────────────────────────────────────
 function escHtml(s) {
@@ -235,6 +320,19 @@ function escHtml(s) {
 
 function scaleQty(qty, factor, useFractions = false) {
   if (factor === 1) return String(qty);
+  const str = String(qty);
+  // Ranges like "1-2" or "200-300": scale both endpoints independently so
+  // "200-300 g" at 2× becomes "400-600 g" instead of "400 g".
+  const rangeMatch = str.match(/^\s*(\d+(?:\.\d+)?)\s*([-–])\s*(\d+(?:\.\d+)?)\s*$/);
+  if (rangeMatch) {
+    const a = scaleSingleNumber(rangeMatch[1], factor, useFractions);
+    const b = scaleSingleNumber(rangeMatch[3], factor, useFractions);
+    return `${a}${rangeMatch[2]}${b}`;
+  }
+  return scaleSingleNumber(str, factor, useFractions);
+}
+
+function scaleSingleNumber(qty, factor, useFractions) {
   const n = parseFloat(qty);
   if (isNaN(n)) return String(qty);
   const scaled = n * factor;
@@ -258,6 +356,17 @@ function timerToSeconds(qty, units) {
   if (u.includes('min') || u === 'm') return n * 60;
   if (u.includes('sec') || u === 's') return n;
   return n * 60; // default to minutes
+}
+
+function renderTextWithBreaks(text, preferredUnit) {
+  // Cooklang explicit line break: backslash at EOL — the parser strips the
+  // backslash but preserves the newline. Implicit line breaks inside a step
+  // are folded to spaces by the parser, so any \n that reaches us is a
+  // forced break.
+  return String(text || '')
+    .split(/\r?\n/)
+    .map(part => highlightTemps(part, preferredUnit))
+    .join('<br>');
 }
 
 function highlightTemps(text, preferredUnit = 'F') {
@@ -369,4 +478,30 @@ function formatTime(secs) {
     return `${h}:${String(m % 60).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function renderRecipeReferenceChip(refLike) {
+  const res = refLike?.recipe_reference_resolution;
+  const displayName = refLike?.name || '';
+  const canonicalPath = refLike?.reference_path || '';
+  const aliasProvided = displayName && canonicalPath && displayName !== canonicalPath;
+  const aliasLabel = aliasProvided ? displayName : '';
+  if (res && res.found && res.url) {
+    const escUrl = escHtml(res.url);
+    const jsUrl = String(res.url).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const pinSuffix = res.pinned && res.version_string
+      ? ` <span class="ref-pin">@${escHtml(res.version_string)}</span>`
+      : '';
+    const label = aliasLabel || res.title || displayName || canonicalPath;
+    return `<a class="ingredient-reference" href="${escUrl}" onclick="event.preventDefault(); Router.go('${jsUrl}')">${escHtml(label)}${pinSuffix}</a>`;
+  }
+  const brokenLabel = aliasLabel || displayName || canonicalPath || (res?.raw_path || '');
+  return `<span class="ingredient-reference broken" title="Recipe not found">${escHtml(brokenLabel)}</span>`;
+}
+
+function renderIngredientName(ing) {
+  if (ing?.recipe_reference) {
+    return renderRecipeReferenceChip(ing);
+  }
+  return `<span class="ing-name">${escHtml(ing.name)}</span>`;
 }

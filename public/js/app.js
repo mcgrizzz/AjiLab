@@ -33,7 +33,10 @@ const Router = {
         if (route.view === 'recipe') {
           backBtn.classList.remove('hidden');
           addBtn.classList.remove('hidden');
-          await RecipeView.render(container, m[1], { branch: url.searchParams.get('branch') || 'main' });
+          await RecipeView.render(container, m[1], {
+            branch: url.searchParams.get('branch') || 'main',
+            tab: url.searchParams.get('tab') || 'overview',
+          });
           return;
         }
         if (route.view === 'recipe-version') {
@@ -42,6 +45,7 @@ const Router = {
           await RecipeView.render(container, m[1], {
             version: m[2],
             branch: url.searchParams.get('branch') || 'main',
+            tab: url.searchParams.get('tab') || 'overview',
           });
           return;
         }
@@ -85,6 +89,17 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeModal();
 });
 
+document.addEventListener('keydown', e => {
+  if (e.key !== 'p' && e.key !== 'P') return;
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (e.shiftKey || e.altKey) return;
+  const onRecipePage = /^\/recipe\/[^/]+(?:\/versions\/[^/]+)?\/?$/.test(location.pathname);
+  if (!onRecipePage) return;
+  if (typeof RecipeView === 'undefined' || typeof RecipeView.openPrintView !== 'function') return;
+  e.preventDefault();
+  RecipeView.openPrintView();
+});
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 let toastTimer;
 function showToast(msg) {
@@ -122,8 +137,7 @@ async function createRecipe() {
   try {
     const r = await API.post('/recipes', { title });
     closeModal();
-    await Router.go(`/recipe/${r.slug}`);
-    RecipeView.setTab('edit');
+    await Router.go(`/recipe/${r.slug}?tab=experiment`);
   } catch (e) {
     showToast('Error: ' + e.message);
   }

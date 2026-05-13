@@ -2,7 +2,6 @@ import {
   Decoration,
   EditorState,
   EditorView,
-  RangeSetBuilder,
   ViewPlugin,
   defaultKeymap,
   drawSelection,
@@ -14,56 +13,72 @@ import {
   placeholder,
 } from '../vendor/codemirror.js';
 
+// Decoration constructors are cached so `Decoration.set` can dedupe identical
+// instances and so we don't allocate a new mark per token on every redraw.
+const SECTION_LINE_DECO = Decoration.line({ class: 'cm-cook-section-line' });
+const SECTION_HEADER_DECO = Decoration.mark({ class: 'cm-cook-section-header' });
+const META_LINE_DECO = Decoration.mark({ class: 'cm-cook-meta-line' });
+const PUNCT_DECO = Decoration.mark({ class: 'cm-cook-punctuation' });
+const INGREDIENT_DECO = Decoration.mark({ class: 'cm-cook-ingredient' });
+const COOKWARE_DECO = Decoration.mark({ class: 'cm-cook-cookware' });
+const TIMER_DECO = Decoration.mark({ class: 'cm-cook-timer' });
+const TEMP_DECO = Decoration.mark({ class: 'cm-cook-temperature' });
+
 function buildCooklangDecorations(view) {
-  const builder = new RangeSetBuilder();
+  // Collect ranges in any order, then let Decoration.set sort them.
+  // RangeSetBuilder would require monotonically increasing `from` positions
+  // and crashes (with "Ranges must be added sorted by `from` position and
+  // `startSide`") when, e.g., a temperature later in the line is appended
+  // before per-character marks earlier in the line.
+  const ranges = [];
   for (const { from, to } of view.visibleRanges) {
     let lineStart = from;
     while (lineStart <= to) {
       const line = view.state.doc.lineAt(lineStart);
-      addCooklangLineDecorations(builder, line.from, line.text);
+      collectCooklangLineDecorations(ranges, line.from, line.text);
       if (line.to >= to) break;
       lineStart = line.to + 1;
     }
   }
-  return builder.finish();
+  return Decoration.set(ranges, true);
 }
 
-function addCooklangLineDecorations(builder, offset, text) {
+function collectCooklangLineDecorations(ranges, offset, text) {
   if (/^\s*=\s+\S/.test(text)) {
-    builder.add(offset, offset, Decoration.line({ class: 'cm-cook-section-line' }));
-    builder.add(offset, offset + text.length, Decoration.mark({ class: 'cm-cook-section-header' }));
+    ranges.push(SECTION_LINE_DECO.range(offset));
+    ranges.push(SECTION_HEADER_DECO.range(offset, offset + text.length));
   }
   if (/^\s*>>/.test(text)) {
-    builder.add(offset, offset + text.length, Decoration.mark({ class: 'cm-cook-meta-line' }));
+    ranges.push(META_LINE_DECO.range(offset, offset + text.length));
   }
-  addTemperatureDecorations(builder, offset, text);
+  collectTemperatureDecorations(ranges, offset, text);
 
   for (let i = 0; i < text.length; i += 1) {
     const char = text[i];
     if (char === '{' || char === '}' || char === '%') {
-      builder.add(offset + i, offset + i + 1, Decoration.mark({ class: 'cm-cook-punctuation' }));
+      ranges.push(PUNCT_DECO.range(offset + i, offset + i + 1));
       continue;
     }
     if (char === '@' || char === '#' || char === '~') {
       const end = findCooklangTokenEnd(text, i);
-      const className = char === '@'
-        ? 'cm-cook-ingredient'
+      const deco = char === '@'
+        ? INGREDIENT_DECO
         : char === '#'
-          ? 'cm-cook-cookware'
-          : 'cm-cook-timer';
-      builder.add(offset + i, offset + end, Decoration.mark({ class: className }));
+          ? COOKWARE_DECO
+          : TIMER_DECO;
+      ranges.push(deco.range(offset + i, offset + end));
       i = Math.max(i, end - 1);
     }
   }
 }
 
-function addTemperatureDecorations(builder, offset, text) {
+function collectTemperatureDecorations(ranges, offset, text) {
   const pattern = /\b\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*(?:°\s*)?(?:C|F)\b/gi;
   let match = pattern.exec(text);
   while (match) {
     const start = match.index;
     const end = start + match[0].length;
-    builder.add(offset + start, offset + end, Decoration.mark({ class: 'cm-cook-temperature' }));
+    ranges.push(TEMP_DECO.range(offset + start, offset + end));
     match = pattern.exec(text);
   }
 }

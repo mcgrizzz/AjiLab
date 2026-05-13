@@ -1,34 +1,46 @@
 import * as Diff from "diff";
 import { Hono } from "hono";
-import { parseCooklang } from "./cooklang.js";
+import { parseCooklang } from "./cooklang.ts";
+import { buildInlineDiffLines, diffStepBlocks } from "./compare.ts";
 import { diffIngredients } from "./ingredient-compare.js";
 import {
   applyBranchSync,
   attachRecipeImage,
+  collectUnresolvedReferences,
+  createCookLog,
   createRecipe,
   createRecipeBranch,
+  deleteCookLog,
   deleteRecipe,
   deleteRecipeImage,
   deleteVersion,
+  enrichRecipeReferences,
+  forkCookLogToDraft,
+  getCookLog,
   forkBranchHeadToDraft,
   forkVersionToDraft,
   getRecipeBranch,
   getRecipeBySlug,
   getVersionByString,
+  listBacklinks,
+  listBranchCookLogs,
   listRecipeBranches,
   listRecipeImages,
   listRecipes,
+  listVersionCookLogs,
   previewBranchSync,
+  promoteCookLog,
   readRecipeImage,
   releaseDraft,
   releaseVersion,
   setRecipeThumbnail,
+  updateCookLog,
   updateDraft,
   updateDraftNotes,
   updateRecipeTitle,
   updateVersionContent,
   updateVersionNotes,
-} from "./recipe-store.js";
+} from "./recipe-store.ts";
 
 const api = new Hono();
 const allowedImageTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
@@ -50,12 +62,35 @@ function activeBranch(c: any): string {
   return c.req.param("branch") || MAIN_BRANCH;
 }
 
-function compareVersions(recipe: any, fromStr: string, toStr: string) {
-  const getVersion = (vs: string) => vs === "draft"
-    ? recipe.draft
-    : recipe.versions.find((version: any) => version.version_string === vs);
-  const fromV = getVersion(fromStr) as any;
-  const toV = getVersion(toStr) as any;
+function resolveCompareOperand(recipe: any, branch: string, key: string): any | null {
+  // Cook log operands. Two flavours:
+  //   - "cooklog:<id>"        → the log's current (editable) cooklang_text
+  //   - "cooklog-source:<id>" → the immutable snapshot the log was forked from
+  // Both are treated as synthetic version-like objects so the rest of the diff
+  // pipeline works unchanged.
+  if (key.startsWith("cooklog-source:")) {
+    const log = getCookLog(recipe.slug, key.slice("cooklog-source:".length), branch);
+    if (!log) return null;
+    return {
+      cooklang_text: log.source_cooklang_text || "",
+      status: "cook-log-source",
+    };
+  }
+  if (key.startsWith("cooklog:")) {
+    const log = getCookLog(recipe.slug, key.slice("cooklog:".length), branch);
+    if (!log) return null;
+    return {
+      cooklang_text: log.cooklang_text || "",
+      status: "cook-log",
+    };
+  }
+  if (key === "draft") return recipe.draft || null;
+  return recipe.versions.find((version: any) => version.version_string === key) || null;
+}
+
+function compareVersions(recipe: any, branch: string, fromStr: string, toStr: string) {
+  const fromV = resolveCompareOperand(recipe, branch, fromStr);
+  const toV = resolveCompareOperand(recipe, branch, toStr);
   if (!fromV || !toV) return null;
 
   const textDiff = Diff.createTwoFilesPatch(fromStr, toStr, fromV.cooklang_text || "", toV.cooklang_text || "", "", "", { context: 3 });
@@ -66,7 +101,9 @@ function compareVersions(recipe: any, fromStr: string, toStr: string) {
     from: { version: fromStr, status: fromV.status },
     to: { version: toStr, status: toV.status },
     text_diff: textDiff,
+    text_diff_lines: buildInlineDiffLines(textDiff),
     ingredient_diff: diffIngredients(fromParsed.ingredients, toParsed.ingredients),
+    step_changes: diffStepBlocks(fromV.cooklang_text || "", toV.cooklang_text || ""),
     step_count_from: fromParsed.steps.length,
     step_count_to: toParsed.steps.length,
   };
@@ -141,13 +178,18 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     if (!recipe) return c.json({ error: "not found" }, 404);
     const body = await c.req.json();
     const baseline = recipe.draft || recipe.source_version || recipe.versions[0] || { cooklang_text: "", tags: "[]" };
+    const nextText = body.cooklang_text ?? baseline.cooklang_text ?? "";
     const result = updateDraft(c.req.param("slug"), {
-      cooklang_text: body.cooklang_text ?? baseline.cooklang_text ?? "",
+      cooklang_text: nextText,
       tags: body.tags ?? JSON.parse(baseline.tags || "[]"),
     }, {
       advance_beta: body.advance_beta === true,
     }, activeBranch(c));
-    return c.json(result);
+    const unresolved = collectUnresolvedReferences(enrichRecipeReferences(parseCooklang(nextText)));
+    return c.json({
+      ...result,
+      warnings: unresolved.length ? { unresolved_references: unresolved } : undefined,
+    });
   });
 
   api.post(`${prefix}/draft/fork`, (c) => {
@@ -168,7 +210,7 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
 
   api.post(`${prefix}/draft/parse`, async (c) => {
     const body = await c.req.json();
-    return c.json(parseCooklang(body.cooklang_text || ""));
+    return c.json(enrichRecipeReferences(parseCooklang(body.cooklang_text || "")));
   });
 
   api.get(`${prefix}/versions`, (c) => {
@@ -239,18 +281,28 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     if (!version_string?.trim()) return c.json({ error: "version_string required" }, 400);
     if (!["released", "beta", "archived"].includes(status)) return c.json({ error: "invalid status" }, 400);
     try {
+      let result;
+      let sourceText = "";
       if (source_version && source_version !== "draft") {
-        return c.json(releaseVersion(recipe.slug, source_version, {
+        result = releaseVersion(recipe.slug, source_version, {
           version_string: version_string.trim(),
           status,
           changelog,
-        }, activeBranch(c)));
+        }, activeBranch(c));
+        sourceText = recipe.versions.find((v) => v.version_string === source_version)?.cooklang_text || "";
+      } else {
+        result = releaseDraft(recipe.slug, {
+          version_string: version_string.trim(),
+          status,
+          changelog,
+        }, activeBranch(c));
+        sourceText = recipe.draft?.cooklang_text || "";
       }
-      return c.json(releaseDraft(recipe.slug, {
-        version_string: version_string.trim(),
-        status,
-        changelog,
-      }, activeBranch(c)));
+      const unresolved = collectUnresolvedReferences(enrichRecipeReferences(parseCooklang(sourceText)));
+      return c.json({
+        ...result,
+        warnings: unresolved.length ? { unresolved_references: unresolved } : undefined,
+      });
     } catch (error: any) {
       const message = error?.message || "release failed";
       return c.json({ error: message }, message === "version already exists" ? 409 : 400);
@@ -263,7 +315,7 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     const fromStr = c.req.query("from");
     const toStr = c.req.query("to");
     if (!fromStr || !toStr) return c.json({ error: "from and to required" }, 400);
-    const result = compareVersions(recipe, fromStr, toStr);
+    const result = compareVersions(recipe, activeBranch(c), fromStr, toStr);
     if (!result) return c.json({ error: "version not found" }, 404);
     return c.json(result);
   });
@@ -294,6 +346,134 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     } catch (error: any) {
       return c.json({ error: error?.message || "version not found" }, 404);
     }
+  });
+
+  api.get(`${prefix}/cook-logs`, (c) => {
+    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    return c.json(listBranchCookLogs(recipe.slug, activeBranch(c)));
+  });
+
+  api.get(`${prefix}/versions/:version/cook-logs`, (c) => {
+    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    return c.json(listVersionCookLogs(recipe.slug, c.req.param("version"), activeBranch(c)));
+  });
+
+  api.post(`${prefix}/cook-logs`, async (c) => {
+    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    const rawSource = body && typeof body === "object" ? body.source : null;
+    const sourceKind = rawSource && rawSource.kind === "draft" ? "draft" : "version";
+    const source = sourceKind === "draft"
+      ? { kind: "draft" as const }
+      : { kind: "version" as const, version_string: String(rawSource?.version_string || "") };
+    if (source.kind === "version" && !source.version_string) {
+      return c.json({ error: "source.version_string required for version source" }, 400);
+    }
+    try {
+      return c.json(createCookLog(recipe.slug, source, {
+        cooked_at: body.cooked_at,
+        outcome: body.outcome,
+        what_worked: body.what_worked,
+        problems_found: body.problems_found,
+        changes_to_try_next: body.changes_to_try_next,
+        freeform_notes: body.freeform_notes,
+        cooklang_text: body.cooklang_text,
+        tags: Array.isArray(body.tags) ? body.tags : undefined,
+      }, activeBranch(c)), 201);
+    } catch (error: any) {
+      const message = error?.message || "cook log create failed";
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  // Back-compat shim: legacy version-scoped create. Forwards to the branch-scoped
+  // handler with source = { kind: 'version', version_string: <route param> }.
+  api.post(`${prefix}/versions/:version/cook-logs`, async (c) => {
+    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      return c.json(createCookLog(recipe.slug, { kind: "version", version_string: c.req.param("version") }, {
+        cooked_at: body.cooked_at,
+        outcome: body.outcome,
+        what_worked: body.what_worked,
+        problems_found: body.problems_found,
+        changes_to_try_next: body.changes_to_try_next,
+        freeform_notes: body.freeform_notes,
+        cooklang_text: body.cooklang_text,
+        tags: Array.isArray(body.tags) ? body.tags : undefined,
+      }, activeBranch(c)), 201);
+    } catch (error: any) {
+      const message = error?.message || "cook log create failed";
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  api.put(`${prefix}/cook-logs/:id`, async (c) => {
+    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      return c.json(updateCookLog(recipe.slug, c.req.param("id"), {
+        cooked_at: body.cooked_at,
+        outcome: body.outcome,
+        what_worked: body.what_worked,
+        problems_found: body.problems_found,
+        changes_to_try_next: body.changes_to_try_next,
+        freeform_notes: body.freeform_notes,
+        cooklang_text: body.cooklang_text,
+        tags: Array.isArray(body.tags) ? body.tags : undefined,
+      }, activeBranch(c)));
+    } catch (error: any) {
+      const message = error?.message || "cook log update failed";
+      return c.json({ error: message }, message === "cook log not found" ? 404 : 400);
+    }
+  });
+
+  api.post(`${prefix}/cook-logs/:id/fork-to-draft`, async (c) => {
+    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    try {
+      return c.json(forkCookLogToDraft(recipe.slug, c.req.param("id"), activeBranch(c)));
+    } catch (error: any) {
+      const message = error?.message || "fork to draft failed";
+      return c.json({ error: message }, message === "cook log not found" ? 404 : 400);
+    }
+  });
+
+  api.post(`${prefix}/cook-logs/:id/promote`, async (c) => {
+    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    const versionString = String(body?.version_string || "").trim();
+    if (!versionString) return c.json({ error: "version_string required" }, 400);
+    const status = body?.status === "beta" || body?.status === "archived" ? body.status : "released";
+    try {
+      return c.json(promoteCookLog(recipe.slug, c.req.param("id"), {
+        version_string: versionString,
+        status,
+        changelog: body?.changelog || "",
+      }, activeBranch(c)));
+    } catch (error: any) {
+      const message = error?.message || "promote failed";
+      return c.json({ error: message }, message === "cook log not found" ? 404 : 400);
+    }
+  });
+
+  api.delete(`${prefix}/cook-logs/:id`, (c) => {
+    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    deleteCookLog(recipe.slug, c.req.param("id"), activeBranch(c));
+    return c.json({ ok: true });
+  });
+
+  api.get(`${prefix}/backlinks`, (c) => {
+    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    return c.json(listBacklinks(recipe.slug));
   });
 
   api.post(`${prefix}/sync/preview`, (c) => {

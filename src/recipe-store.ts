@@ -1,7 +1,8 @@
 import fs from "fs";
 import path from "path";
-import { DATA_DIR, db, generateId, q, slugify } from "./db.js";
-import { parseCooklang } from "./cooklang.js";
+import { DATA_DIR, db, generateId, q, slugify } from "./db.ts";
+import { parseCooklang, parseReferencePath } from "./cooklang.ts";
+import type { ParsedIngredient, ParsedRecipe, ParsedStep, RecipeReferenceResolution } from "./cooklang.ts";
 
 export type RecipeStatus = "draft" | "released" | "beta" | "archived";
 export type RecipeBranchKind = "main" | "variant";
@@ -52,6 +53,36 @@ type VersionRecord = Omit<VersionMeta, "tags"> & {
   is_inherited_source?: boolean;
 };
 
+export type CookLogSourceKind = "draft" | "version";
+
+export interface CookLogRecord {
+  id: string;
+  recipe_id: string;
+  branch_slug: string;
+  /** Legacy column kept in sync with source_version_string for back-compat. */
+  version_string: string | null;
+  source_kind: CookLogSourceKind;
+  source_version_string: string | null;
+  cooklang_text: string;
+  /** Immutable snapshot of the source's cooklang_text at log-creation time. */
+  source_cooklang_text: string;
+  tags: string[];
+  cooked_at: string;
+  outcome: string;
+  what_worked: string;
+  problems_found: string;
+  changes_to_try_next: string;
+  freeform_notes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BranchCounts {
+  releases_count: number;
+  betas_count: number;
+  cook_logs_count: number;
+}
+
 interface RecipeBranchRecord extends RecipeBranchMeta {
   latest_released: string | null;
   latest_beta: string | null;
@@ -60,6 +91,10 @@ interface RecipeBranchRecord extends RecipeBranchMeta {
   source_version: VersionRecord | null;
   has_unreleased_changes: boolean;
   draft_change_label: string | null;
+  current_best_release: VersionRecord | null;
+  active_experiment: VersionRecord | null;
+  latest_cook_log: CookLogRecord | null;
+  counts: BranchCounts;
 }
 
 interface RecipeRecord extends RecipeMeta {
@@ -73,6 +108,10 @@ interface RecipeRecord extends RecipeMeta {
   source_version: VersionRecord | null;
   has_unreleased_changes: boolean;
   draft_change_label: string | null;
+  current_best_release: VersionRecord | null;
+  active_experiment: VersionRecord | null;
+  latest_cook_log: CookLogRecord | null;
+  counts: BranchCounts;
 }
 
 type MergeEdit = {
@@ -148,6 +187,14 @@ function imageDir(slug: string, branchSlug: string | null, versionKey: string | 
   if (versionKey === "draft") return path.join(draftDir(slug, branchSlug), "images");
   if (versionKey) return path.join(versionDir(slug, branchSlug, versionKey), "images");
   return path.join(branchDir(slug, branchSlug), "images");
+}
+
+function cookLogsDir(slug: string, branchSlug: string): string {
+  return path.join(branchDir(slug, branchSlug), "cook-logs");
+}
+
+function cookLogPath(slug: string, branchSlug: string, id: string): string {
+  return path.join(cookLogsDir(slug, branchSlug), `${id}.json`);
 }
 
 function ensureDir(dir: string): void {
@@ -678,6 +725,18 @@ function findVersionById(recipe: RecipeMeta, versionId: string | null | undefine
   return null;
 }
 
+function selectActiveExperiment(
+  branch: Pick<RecipeBranchRecord, "draft" | "versions">,
+  latestReleased: VersionRecord | null,
+  latestBeta: VersionRecord | null,
+): VersionRecord | null {
+  if (branch.draft && hasDraftChanges(branch)) return branch.draft;
+  if (latestBeta && (!latestReleased || latestBeta.created_at.localeCompare(latestReleased.created_at) > 0)) {
+    return latestBeta;
+  }
+  return null;
+}
+
 function loadBranchRecord(recipe: RecipeMeta, branchMeta: RecipeBranchMeta): RecipeBranchRecord {
   const versions = loadVersions(recipe, branchMeta.slug);
   const draft = loadDraft(recipe, branchMeta.slug);
@@ -686,6 +745,11 @@ function loadBranchRecord(recipe: RecipeMeta, branchMeta: RecipeBranchMeta): Rec
   const sourceVersion = branchMeta.kind === "variant"
     ? findVersionById(recipe, branchMeta.forked_from_version_id)
     : null;
+  const releasesCount = versions.filter((version) => version.status === "released").length;
+  const betasCount = versions.filter((version) => version.status === "beta").length;
+  const cookLogsCountRow = q.cookLogCountByBranch.get(recipe.id, branchMeta.slug) as { n: number } | undefined;
+  const cookLogsCount = cookLogsCountRow?.n || 0;
+  const latestCookLog = loadLatestCookLogForBranch(recipe.slug, branchMeta.slug, recipe.id);
   const record: RecipeBranchRecord = {
     ...branchMeta,
     versions,
@@ -695,9 +759,18 @@ function loadBranchRecord(recipe: RecipeMeta, branchMeta: RecipeBranchMeta): Rec
     latest_beta: latestBeta?.version_string || null,
     has_unreleased_changes: false,
     draft_change_label: null,
+    current_best_release: latestReleased,
+    active_experiment: null,
+    latest_cook_log: latestCookLog,
+    counts: {
+      releases_count: releasesCount,
+      betas_count: betasCount,
+      cook_logs_count: cookLogsCount,
+    },
   };
   record.has_unreleased_changes = hasDraftChanges(record);
   record.draft_change_label = draftChangeLabel(record);
+  record.active_experiment = selectActiveExperiment(record, latestReleased, latestBeta);
   return record;
 }
 
@@ -726,6 +799,10 @@ function loadRecipeRecordFromMeta(recipe: RecipeMeta, branchSlug = MAIN_BRANCH_S
     source_version: branch.source_version,
     has_unreleased_changes: branch.has_unreleased_changes,
     draft_change_label: branch.draft_change_label,
+    current_best_release: branch.current_best_release,
+    active_experiment: branch.active_experiment,
+    latest_cook_log: branch.latest_cook_log,
+    counts: branch.counts,
   };
 }
 
@@ -831,6 +908,18 @@ export function listRecipes(search?: string) {
       latest_beta: recipe.latest_beta,
       has_unreleased_changes: recipe.has_unreleased_changes,
       draft_change_label: recipe.draft_change_label,
+      current_best_release: recipe.current_best_release ? {
+        version_string: recipe.current_best_release.version_string,
+        created_at: recipe.current_best_release.created_at,
+        changelog: recipe.current_best_release.changelog || "",
+      } : null,
+      latest_cook_log: recipe.latest_cook_log ? {
+        id: recipe.latest_cook_log.id,
+        version_string: recipe.latest_cook_log.version_string,
+        cooked_at: recipe.latest_cook_log.cooked_at,
+        outcome: recipe.latest_cook_log.outcome,
+      } : null,
+      counts: recipe.counts,
     }));
 }
 
@@ -1266,6 +1355,302 @@ export function deleteRecipeImage(id: string) {
   q.deleteImage.run(id);
 }
 
+interface CookLogRow {
+  id: string;
+  recipe_id: string;
+  branch_slug: string;
+  version_string: string | null;
+  source_kind: string | null;
+  source_version_string: string | null;
+  cooklang_text: string | null;
+  source_cooklang_text: string | null;
+  tags: string | null;
+  cooked_at: string;
+  outcome: string;
+  what_worked: string;
+  problems_found: string;
+  changes_to_try_next: string;
+  freeform_notes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function rowToCookLog(row: CookLogRow): CookLogRecord {
+  const sourceKind: CookLogSourceKind = row.source_kind === "draft" ? "draft" : "version";
+  return {
+    id: row.id,
+    recipe_id: row.recipe_id,
+    branch_slug: row.branch_slug,
+    version_string: row.version_string ?? null,
+    source_kind: sourceKind,
+    source_version_string: row.source_version_string ?? row.version_string ?? null,
+    cooklang_text: row.cooklang_text || "",
+    source_cooklang_text: row.source_cooklang_text || "",
+    tags: parseTags(row.tags),
+    cooked_at: row.cooked_at,
+    outcome: row.outcome || "",
+    what_worked: row.what_worked || "",
+    problems_found: row.problems_found || "",
+    changes_to_try_next: row.changes_to_try_next || "",
+    freeform_notes: row.freeform_notes || "",
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function cookLogCooklangPath(slug: string, branchSlug: string, id: string): string {
+  return path.join(cookLogsDir(slug, branchSlug), `${id}.cook`);
+}
+
+function hydrateCookLogFromFs(slug: string, branchSlug: string, row: CookLogRow): CookLogRecord {
+  const base = rowToCookLog(row);
+  try {
+    const filePath = cookLogPath(slug, branchSlug, row.id);
+    if (fs.existsSync(filePath)) {
+      const fileData = readJson<Partial<CookLogRecord>>(filePath);
+      base.cooked_at = fileData.cooked_at ?? base.cooked_at;
+      base.outcome = fileData.outcome ?? base.outcome;
+      base.what_worked = fileData.what_worked ?? base.what_worked;
+      base.problems_found = fileData.problems_found ?? base.problems_found;
+      base.changes_to_try_next = fileData.changes_to_try_next ?? base.changes_to_try_next;
+      base.freeform_notes = fileData.freeform_notes ?? base.freeform_notes;
+      if (typeof fileData.cooklang_text === "string") base.cooklang_text = fileData.cooklang_text;
+      if (typeof fileData.source_cooklang_text === "string") base.source_cooklang_text = fileData.source_cooklang_text;
+      if (Array.isArray(fileData.tags)) base.tags = fileData.tags.map(String);
+      if (fileData.source_kind === "draft" || fileData.source_kind === "version") base.source_kind = fileData.source_kind;
+      if (fileData.source_version_string !== undefined) base.source_version_string = fileData.source_version_string ?? null;
+      if (fileData.version_string !== undefined) base.version_string = fileData.version_string ?? null;
+    }
+  } catch {
+    // fall back to DB row
+  }
+  // The .cook sidecar is the authoritative source for the cooklang body when
+  // present — it survives JSON-shape changes and is human-diffable on disk.
+  try {
+    const cookPath = cookLogCooklangPath(slug, branchSlug, row.id);
+    if (fs.existsSync(cookPath)) {
+      base.cooklang_text = fs.readFileSync(cookPath, "utf8");
+    }
+  } catch {
+    // ignore
+  }
+  return base;
+}
+
+function writeCookLogFile(slug: string, log: CookLogRecord): void {
+  const filePath = cookLogPath(slug, log.branch_slug, log.id);
+  ensureDir(path.dirname(filePath));
+  writeJson(filePath, log);
+  const cookPath = cookLogCooklangPath(slug, log.branch_slug, log.id);
+  if (log.cooklang_text) {
+    fs.writeFileSync(cookPath, log.cooklang_text, "utf8");
+  } else if (fs.existsSync(cookPath)) {
+    fs.rmSync(cookPath, { force: true });
+  }
+}
+
+function loadLatestCookLogForBranch(slug: string, branchSlug: string, recipeId: string): CookLogRecord | null {
+  const row = q.latestCookLogForBranch.get(recipeId, branchSlug) as CookLogRow | undefined;
+  if (!row) return null;
+  return hydrateCookLogFromFs(slug, branchSlug, row);
+}
+
+export function listBranchCookLogs(slug: string, branchSlug: string = MAIN_BRANCH_SLUG): CookLogRecord[] {
+  const recipe = requireRecipe(slug, branchSlug);
+  const rows = q.cookLogsByBranch.all(recipe.id, branchSlug) as CookLogRow[];
+  return rows.map((row) => hydrateCookLogFromFs(slug, branchSlug, row));
+}
+
+export function listVersionCookLogs(
+  slug: string,
+  versionString: string,
+  branchSlug: string = MAIN_BRANCH_SLUG,
+): CookLogRecord[] {
+  const recipe = requireRecipe(slug, branchSlug);
+  const rows = q.cookLogsByBranchVersion.all(recipe.id, branchSlug, versionString, versionString) as CookLogRow[];
+  return rows.map((row) => hydrateCookLogFromFs(slug, branchSlug, row));
+}
+
+export function getCookLog(
+  slug: string,
+  id: string,
+  branchSlug: string = MAIN_BRANCH_SLUG,
+): CookLogRecord | null {
+  const recipe = requireRecipe(slug, branchSlug);
+  const row = q.cookLogById.get(id) as CookLogRow | undefined;
+  if (!row || row.recipe_id !== recipe.id || row.branch_slug !== branchSlug) return null;
+  return hydrateCookLogFromFs(slug, branchSlug, row);
+}
+
+interface CookLogInput {
+  cooked_at?: string;
+  outcome: string;
+  what_worked?: string;
+  problems_found?: string;
+  changes_to_try_next?: string;
+  freeform_notes?: string;
+  /** Optional override of the snapshot taken from `source`. */
+  cooklang_text?: string;
+  tags?: string[];
+}
+
+export type CookLogSourceSpec =
+  | { kind: "draft" }
+  | { kind: "version"; version_string: string };
+
+function validateCookedAt(raw: string | undefined): string {
+  if (!raw) return nowIso();
+  const trimmed = String(raw).trim();
+  if (!trimmed) return nowIso();
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) throw new Error("invalid cooked_at");
+  return parsed.toISOString();
+}
+
+function resolveCookLogSource(
+  recipe: RecipeRecord,
+  source: CookLogSourceSpec,
+): { cooklang_text: string; tags: string[]; version_string: string | null } {
+  if (source.kind === "draft") {
+    if (!recipe.draft) throw new Error("draft not found");
+    return {
+      cooklang_text: recipe.draft.cooklang_text || "",
+      tags: parseTags(recipe.draft.tags),
+      version_string: null,
+    };
+  }
+  const version = recipe.versions.find(
+    (entry) => entry.version_string === source.version_string && !entry.is_draft,
+  );
+  if (!version) throw new Error("version not found");
+  return {
+    cooklang_text: version.cooklang_text || "",
+    tags: parseTags(version.tags),
+    version_string: version.version_string,
+  };
+}
+
+export function createCookLog(
+  slug: string,
+  source: CookLogSourceSpec,
+  input: CookLogInput,
+  branchSlug: string = MAIN_BRANCH_SLUG,
+): CookLogRecord {
+  const recipe = requireRecipe(slug, branchSlug);
+  const resolved = resolveCookLogSource(recipe, source);
+  const outcome = String(input.outcome || "").trim();
+  if (!outcome) throw new Error("outcome is required");
+  const cookedAt = validateCookedAt(input.cooked_at);
+  const timestamp = nowIso();
+  const cooklangText = typeof input.cooklang_text === "string"
+    ? input.cooklang_text
+    : resolved.cooklang_text;
+  const tags = Array.isArray(input.tags)
+    ? input.tags.map((t) => String(t))
+    : resolved.tags;
+  const log: CookLogRecord = {
+    id: generateId(),
+    recipe_id: recipe.id,
+    branch_slug: branchSlug,
+    version_string: resolved.version_string,
+    source_kind: source.kind,
+    source_version_string: resolved.version_string,
+    cooklang_text: cooklangText,
+    source_cooklang_text: resolved.cooklang_text,
+    tags,
+    cooked_at: cookedAt,
+    outcome,
+    what_worked: String(input.what_worked || ""),
+    problems_found: String(input.problems_found || ""),
+    changes_to_try_next: String(input.changes_to_try_next || ""),
+    freeform_notes: String(input.freeform_notes || ""),
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+  writeCookLogFile(slug, log);
+  q.insertCookLog.run(
+    log.id,
+    log.recipe_id,
+    log.branch_slug,
+    log.version_string,
+    log.source_kind,
+    log.source_version_string,
+    log.cooklang_text,
+    log.source_cooklang_text,
+    JSON.stringify(log.tags),
+    log.cooked_at,
+    log.outcome,
+    log.what_worked,
+    log.problems_found,
+    log.changes_to_try_next,
+    log.freeform_notes,
+    log.created_at,
+    log.updated_at,
+  );
+  const branchMeta = recipe.branches.find((branch) => branch.slug === branchSlug);
+  if (branchMeta) {
+    const nextBranchMeta: RecipeBranchMeta = {
+      id: branchMeta.id,
+      slug: branchMeta.slug,
+      name: branchMeta.name,
+      kind: branchMeta.kind,
+      upstream_branch_slug: branchMeta.upstream_branch_slug,
+      forked_from_version_id: branchMeta.forked_from_version_id,
+      last_merged_upstream_version_id: branchMeta.last_merged_upstream_version_id,
+      created_at: branchMeta.created_at,
+      updated_at: timestamp,
+      archived_at: branchMeta.archived_at || null,
+    };
+    updateRecipeAndBranchMeta(recipe, nextBranchMeta, timestamp);
+  }
+  return log;
+}
+
+export function updateCookLog(
+  slug: string,
+  id: string,
+  patch: Partial<CookLogInput>,
+  branchSlug: string = MAIN_BRANCH_SLUG,
+): CookLogRecord {
+  const existing = getCookLog(slug, id, branchSlug);
+  if (!existing) throw new Error("cook log not found");
+  const next: CookLogRecord = {
+    ...existing,
+    cooked_at: patch.cooked_at !== undefined ? validateCookedAt(patch.cooked_at) : existing.cooked_at,
+    outcome: patch.outcome !== undefined ? String(patch.outcome).trim() : existing.outcome,
+    what_worked: patch.what_worked !== undefined ? String(patch.what_worked) : existing.what_worked,
+    problems_found: patch.problems_found !== undefined ? String(patch.problems_found) : existing.problems_found,
+    changes_to_try_next: patch.changes_to_try_next !== undefined ? String(patch.changes_to_try_next) : existing.changes_to_try_next,
+    freeform_notes: patch.freeform_notes !== undefined ? String(patch.freeform_notes) : existing.freeform_notes,
+    cooklang_text: patch.cooklang_text !== undefined ? String(patch.cooklang_text) : existing.cooklang_text,
+    tags: Array.isArray(patch.tags) ? patch.tags.map((t) => String(t)) : existing.tags,
+    updated_at: nowIso(),
+  };
+  if (!next.outcome) throw new Error("outcome is required");
+  writeCookLogFile(slug, next);
+  q.updateCookLog.run(
+    next.cooked_at,
+    next.outcome,
+    next.what_worked,
+    next.problems_found,
+    next.changes_to_try_next,
+    next.freeform_notes,
+    next.cooklang_text,
+    JSON.stringify(next.tags),
+    next.updated_at,
+    next.id,
+  );
+  return next;
+}
+
+export function deleteCookLog(slug: string, id: string, branchSlug: string = MAIN_BRANCH_SLUG): void {
+  const existing = getCookLog(slug, id, branchSlug);
+  if (!existing) return;
+  fs.rmSync(cookLogPath(slug, branchSlug, id), { force: true });
+  fs.rmSync(cookLogCooklangPath(slug, branchSlug, id), { force: true });
+  q.deleteCookLog.run(id);
+}
+
 export function readRecipeImage(id: string): { data: Buffer; mime_type: string } | null {
   const image = q.imageById.get(id) as any;
   if (!image?.slug) return null;
@@ -1367,6 +1752,38 @@ export function releaseVersion(
   return releaseSourceVersion(recipe, source, release);
 }
 
+export function promoteCookLog(
+  slug: string,
+  logId: string,
+  release: { version_string: string; status: "released" | "beta" | "archived"; changelog?: string },
+  branchSlug = MAIN_BRANCH_SLUG,
+) {
+  const recipe = requireRecipe(slug, branchSlug);
+  const log = getCookLog(slug, logId, branchSlug);
+  if (!log) throw new Error("cook log not found");
+  if (!log.cooklang_text.trim()) throw new Error("cook log has no recipe text to promote");
+  // Synthetic VersionRecord just for releaseSourceVersion. is_draft=false so it
+  // skips the draft-cleanup branch; the log itself is preserved.
+  const syntheticSource: VersionRecord = {
+    id: generateId(),
+    recipe_id: recipe.id,
+    branch_slug: recipe.branch.slug,
+    version_string: null,
+    status: "released",
+    changelog: "",
+    parent_version: log.source_version_string,
+    current_beta_version: null,
+    tags: JSON.stringify(log.tags || []),
+    created_at: log.created_at,
+    updated_at: log.updated_at,
+    notes: null,
+    servings: null,
+    is_draft: false,
+    cooklang_text: log.cooklang_text,
+  };
+  return releaseSourceVersion(recipe, syntheticSource, release);
+}
+
 export function forkVersionToDraft(slug: string, versionString: string, branchSlug = MAIN_BRANCH_SLUG) {
   const recipe = requireRecipe(slug, branchSlug);
   const version = recipe.versions.find((entry) => entry.version_string === versionString);
@@ -1390,6 +1807,36 @@ export function forkVersionToDraft(slug: string, versionString: string, branchSl
   writeDraft(slug, recipe.branch.slug, draftMeta, version.cooklang_text);
   const branchMeta = { ...recipe.branch, updated_at: timestamp };
   updateRecipeAndBranchMeta(recipe, branchMeta, timestamp);
+}
+
+// Fork a cook log into the draft so the next iteration starts from "what I
+// actually cooked" instead of from a release. Parent is the log's source
+// (the version or draft it was snapshotted from) so once the user saves with
+// advance_beta, the new beta lands in the right lineage.
+export function forkCookLogToDraft(slug: string, logId: string, branchSlug = MAIN_BRANCH_SLUG) {
+  const recipe = requireRecipe(slug, branchSlug);
+  const log = getCookLog(slug, logId, branchSlug);
+  if (!log) throw new Error("cook log not found");
+  if (!log.cooklang_text.trim()) throw new Error("cook log has no recipe text to fork");
+
+  const timestamp = nowIso();
+  const draftMeta: VersionMeta = {
+    id: recipe.draft?.id || generateId(),
+    branch_slug: recipe.branch.slug,
+    version_string: null,
+    status: "draft",
+    changelog: "",
+    parent_version: log.source_version_string,
+    current_beta_version: null,
+    tags: Array.isArray(log.tags) ? log.tags.map(String) : [],
+    created_at: recipe.draft?.created_at || timestamp,
+    updated_at: timestamp,
+    is_draft: true,
+  };
+  writeDraft(slug, recipe.branch.slug, draftMeta, log.cooklang_text);
+  const branchMeta = { ...recipe.branch, updated_at: timestamp };
+  updateRecipeAndBranchMeta(recipe, branchMeta, timestamp);
+  return { ok: true };
 }
 
 export function forkBranchHeadToDraft(slug: string, branchSlug = MAIN_BRANCH_SLUG) {
@@ -1633,4 +2080,147 @@ export function applyBranchSync(slug: string, branchSlug: string) {
     ok: true,
     draft_created: ensured.created,
   };
+}
+
+// ── Recipe reference resolution ──────────────────────────────────────────────
+
+export interface BacklinkRecord {
+  from_slug: string;
+  from_title: string;
+  from_version: string | null;
+  pinned: boolean;
+}
+
+function resolveOne(rawName: string): RecipeReferenceResolution {
+  const { slug, version, categoryPath } = parseReferencePath(rawName);
+  const recipe = slug ? loadRecipeMeta(slug) : null;
+  if (!recipe) {
+    return {
+      found: false,
+      slug,
+      raw_path: String(rawName || ""),
+      category_path: categoryPath,
+      version_string: version,
+      pinned: !!version,
+      title: null,
+      url: null,
+    };
+  }
+  const branchMeta = (recipe.branches || []).find((branch) => branch.slug === MAIN_BRANCH_SLUG);
+  const branch = branchMeta ? loadBranchRecord(recipe, branchMeta) : null;
+  const targetVersion = version || branch?.current_best_release?.version_string || null;
+  return {
+    found: true,
+    slug,
+    raw_path: String(rawName || ""),
+    category_path: categoryPath,
+    version_string: targetVersion,
+    pinned: !!version,
+    title: recipe.title,
+    url: targetVersion
+      ? `/recipe/${slug}/versions/${encodeURIComponent(targetVersion)}`
+      : `/recipe/${slug}`,
+  };
+}
+
+function refKey(entry: { reference_path?: string | null; name?: string }): string {
+  return (entry.reference_path && entry.reference_path.length > 0)
+    ? entry.reference_path
+    : (entry.name || "");
+}
+
+export function enrichRecipeReferences(parsed: ParsedRecipe): ParsedRecipe {
+  if (!parsed?.ingredients) return parsed;
+  const cache = new Map<string, RecipeReferenceResolution>();
+  const resolve = (rawPath: string): RecipeReferenceResolution => {
+    if (cache.has(rawPath)) return cache.get(rawPath)!;
+    const resolution = resolveOne(rawPath);
+    cache.set(rawPath, resolution);
+    return resolution;
+  };
+  for (const ingredient of parsed.ingredients) {
+    if (!ingredient.recipe_reference) continue;
+    ingredient.recipe_reference_resolution = resolve(refKey(ingredient));
+  }
+  if (parsed.ingredient_summary?.flat) {
+    for (const ingredient of parsed.ingredient_summary.flat) {
+      if (!ingredient.recipe_reference) continue;
+      ingredient.recipe_reference_resolution = resolve(refKey(ingredient));
+    }
+  }
+  if (parsed.ingredient_summary?.sections) {
+    for (const section of parsed.ingredient_summary.sections) {
+      for (const ingredient of section.ingredients || []) {
+        if (!ingredient.recipe_reference) continue;
+        ingredient.recipe_reference_resolution = resolve(refKey(ingredient));
+      }
+    }
+  }
+  if (parsed.steps) {
+    for (const stepTokens of parsed.steps) {
+      for (const token of stepTokens) {
+        if (token.type !== "ingredient" || !token.recipe_reference) continue;
+        token.recipe_reference_resolution = resolve(refKey(token));
+      }
+    }
+  }
+  return parsed;
+}
+
+export function collectUnresolvedReferences(parsed: ParsedRecipe): Array<{ raw_path: string; slug: string }> {
+  const unresolved: Array<{ raw_path: string; slug: string }> = [];
+  const seen = new Set<string>();
+  for (const ingredient of parsed?.ingredients || []) {
+    if (!ingredient.recipe_reference) continue;
+    const res = ingredient.recipe_reference_resolution
+      || resolveOne(refKey(ingredient));
+    if (res.found) continue;
+    if (seen.has(res.raw_path)) continue;
+    seen.add(res.raw_path);
+    unresolved.push({ raw_path: res.raw_path, slug: res.slug });
+  }
+  return unresolved;
+}
+
+export function listBacklinks(slug: string): BacklinkRecord[] {
+  if (!loadRecipeMeta(slug)) throw new Error("not found");
+  const results: BacklinkRecord[] = [];
+  for (const recipe of loadAllRecipeMetas()) {
+    if (recipe.slug === slug) continue;
+    let matched = false;
+    let matchedVersion: string | null = null;
+    let pinned = false;
+    for (const branch of recipe.branches || []) {
+      if (matched) break;
+      const versions = loadVersions(recipe, branch.slug);
+      const draft = loadDraft(recipe, branch.slug);
+      const candidates: VersionRecord[] = [];
+      if (draft) candidates.push(draft);
+      for (const v of versions) {
+        if (v.status === "released" || v.status === "beta") candidates.push(v);
+      }
+      for (const version of candidates) {
+        const parsed = parseCooklang(version.cooklang_text || "");
+        for (const ingredient of parsed.ingredients || []) {
+          if (!ingredient.recipe_reference) continue;
+          const { slug: refSlug, version: refVersion } = parseReferencePath(refKey(ingredient));
+          if (refSlug !== slug) continue;
+          matched = true;
+          matchedVersion = refVersion;
+          pinned = !!refVersion;
+          break;
+        }
+        if (matched) break;
+      }
+    }
+    if (matched) {
+      results.push({
+        from_slug: recipe.slug,
+        from_title: recipe.title,
+        from_version: matchedVersion,
+        pinned,
+      });
+    }
+  }
+  return results;
 }

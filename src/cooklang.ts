@@ -7,16 +7,31 @@ import {
   ingredient_display_name,
   cookware_display_name,
 } from "@cooklang/cooklang";
+import { evaluateExpression } from "./metric-expr.ts";
 
 const parser = new CooklangParser();
+
+export interface RecipeReferenceResolution {
+  found: boolean;
+  slug: string;
+  raw_path: string;
+  category_path: string[];
+  version_string: string | null;
+  pinned: boolean;
+  title: string | null;
+  url: string | null;
+}
 
 export interface ParsedIngredient {
   name: string;
   quantity: string | number;
   units: string;
+  note?: string | null;
   optional?: boolean;
   recipe_reference?: boolean;
   intermediate?: boolean;
+  reference_path?: string | null;
+  recipe_reference_resolution?: RecipeReferenceResolution | null;
 }
 
 export interface ParsedIngredientSection {
@@ -35,14 +50,24 @@ export interface ParsedStep {
   type: "text" | "comment" | "ingredient" | "cookware" | "timer" | "inlineQuantity";
   value: string;
   name?: string;
+  note?: string | null;
+  optional?: boolean;
+  intermediate?: boolean;
   quantity?: string | number;
   units?: string;
   step_id?: string;
   step_number?: number;
   section_index?: number;
+  section_id?: string;
   reference_target?: "ingredient" | "step" | "section" | null;
   reference_step_number?: number;
   reference_step_id?: string;
+  reference_section_index?: number;
+  reference_section_id?: string;
+  reference_section_name?: string | null;
+  recipe_reference?: boolean;
+  reference_path?: string | null;
+  recipe_reference_resolution?: RecipeReferenceResolution | null;
 }
 
 export interface EditableQuantityToken {
@@ -56,14 +81,41 @@ export interface EditableQuantityToken {
   rangeEnd: number;
 }
 
+export interface ComputedMetric {
+  name: string;             // 'hydration', 'salt pct' …
+  formula: string;          // raw expression body (no format-unit tail)
+  format_unit: string | null; // '%', 'g', null
+  hidden: boolean;          // computed but not rendered as a chip — useful as
+                            // an intermediate referenced by later metrics
+  value: number | null;     // null when error is set
+  display: string | null;   // pre-formatted '70%' / '850 g' / '0.7'
+  error: string | null;     // human-readable cause when evaluation fails
+}
+
 export interface ParsedRecipe {
   ingredients: ParsedIngredient[];
   ingredient_summary: ParsedIngredientSummary;
   cookwares: string[];
   metadata: Record<string, string>;
+  metrics: ComputedMetric[];
   steps: ParsedStep[][];
   editable_tokens: EditableQuantityToken[];
   error?: string;
+}
+
+export function parseReferencePath(raw: string): { slug: string; version: string | null; categoryPath: string[] } {
+  const cleaned = String(raw || "").replace(/^\.?\//, "").replace(/\/+$/, "");
+  const segments = cleaned.split("/").filter(Boolean);
+  if (segments.length === 0) return { slug: "", version: null, categoryPath: [] };
+  const last = segments[segments.length - 1];
+  const versionPattern = /^v\d+(?:\.\d+){0,2}(?:-beta\.\d+)?$/i;
+  let version: string | null = null;
+  if (segments.length >= 2 && versionPattern.test(last)) {
+    version = last;
+    segments.pop();
+  }
+  const slug = segments.pop() || "";
+  return { slug, version, categoryPath: segments };
 }
 
 function emptyIngredientSummary(): ParsedIngredientSummary {
@@ -75,20 +127,44 @@ function emptyIngredientSummary(): ParsedIngredientSummary {
   };
 }
 
+function ingredientReferencePath(ingredient: any, annotations: ComponentAnnotation | undefined): string | null {
+  const nativePath = ingredient?.reference?.name;
+  if (typeof nativePath === "string" && nativePath) return nativePath;
+  if (annotations?.recipe && typeof ingredient?.name === "string" && ingredient.name) return ingredient.name;
+  return null;
+}
+
 function toParsedIngredient(ingredient: any): ParsedIngredient {
   return {
     name: ingredient_display_name(ingredient),
     quantity: extractQty(ingredient.quantity),
     units: getQuantityUnit(ingredient.quantity) || "",
+    note: ingredientNote(ingredient),
   };
 }
 
+function ingredientNote(ingredient: any): string | null {
+  const raw = ingredient?.note;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed ? trimmed : null;
+}
+
+function cookwareNote(cookware: any): string | null {
+  const raw = cookware?.note;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed ? trimmed : null;
+}
+
 function toParsedIngredientWithAnnotations(ingredient: any, annotations: ComponentAnnotation | undefined): ParsedIngredient {
+  const refPath = ingredientReferencePath(ingredient, annotations);
   return {
     ...toParsedIngredient(ingredient),
     optional: annotations?.optional || false,
-    recipe_reference: annotations?.recipe || false,
+    recipe_reference: !!refPath || (annotations?.recipe || false),
     intermediate: annotations?.intermediate || false,
+    reference_path: refPath,
   };
 }
 
@@ -128,8 +204,21 @@ function collectComponentAnnotations(
       if (modifier === "-") annotation.hidden = true;
       if (modifier === "?") annotation.optional = true;
       if (modifier === "@") annotation.recipe = true;
-      if (modifier === "&") annotation.intermediate = true;
+      // NOTE: plain `&` is the cooklang "reference" modifier (merges totals
+      // with a prior `@flour{}`). It is NOT the intermediate-preparation
+      // marker — only `&` followed by `(...)` (e.g. `@&(~1)dough{}`) is, and
+      // that gets flagged below where we consume the parens. So a regular
+      // `@&flour{100%g}` in a section keeps `intermediate = false` and stays
+      // visible in that section's ingredient list, just like the canonical
+      // cooklang spec describes.
       index += 1;
+    }
+
+    // Path-style recipe reference: @./<path>{} or @/<path>{} flags as recipe reference
+    if (sigil === "@" && text[index] === "." && text[index + 1] === "/") {
+      annotation.recipe = true;
+    } else if (sigil === "@" && text[index] === "/") {
+      annotation.recipe = true;
     }
 
     if (text[index] === "(") {
@@ -161,6 +250,15 @@ function collectComponentAnnotations(
 
 function shouldIncludeIngredientSummaryItem(annotation: ComponentAnnotation | undefined): boolean {
   return !annotation?.hidden && !annotation?.intermediate;
+}
+
+// Section view is a per-section "what gets used here" list, so intermediate
+// prep references (e.g. `@&(=1)previous sakadane{30%g}` — using something
+// produced in section 1) belong in the consuming section's row even though
+// they're excluded from the flat totals (the original definition already
+// covers that ingredient there).
+function shouldIncludeInSectionSummary(annotation: ComponentAnnotation | undefined): boolean {
+  return !annotation?.hidden;
 }
 
 function toGroupedParsedIngredient(ingredient: any, groupedQuantity: any, annotation: ComponentAnnotation | undefined): ParsedIngredient {
@@ -290,9 +388,14 @@ function convertToSortableBase(quantity: number, unit: string): number | null {
 
 function extractQty(quantity: any): string | number {
   if (!quantity) return "";
-  const n = getQuantityValue(quantity);
-  if (n !== null && !isNaN(n)) return n;
-  // Fallback for fractions/text: use display string but strip the unit
+  // Ranges: getQuantityValue returns the start only, which silently truncates
+  // "1-2" to "1". Detect range values and fall through to the display path so
+  // we preserve both ends.
+  if (quantity.value?.type !== "range") {
+    const n = getQuantityValue(quantity);
+    if (n !== null && !isNaN(n)) return n;
+  }
+  // Fallback for fractions/ranges/text: use display string but strip the unit
   // (unit is tracked separately) to avoid "1/8 tsp" + "tsp" → "1/8 tsp tsp"
   const display = quantity_display(quantity);
   if (!display) return "";
@@ -310,6 +413,7 @@ export function parseCooklang(text: string): ParsedRecipe {
       ingredient_summary: emptyIngredientSummary(),
       cookwares: [],
       metadata: {},
+      metrics: [],
       steps: [],
       editable_tokens: [],
     };
@@ -319,12 +423,16 @@ export function parseCooklang(text: string): ParsedRecipe {
     const ingredientAnnotations = collectComponentAnnotations(text, "@");
     const cookwareAnnotations = collectComponentAnnotations(text, "#");
 
-    // Build metadata as plain object from rawMetadata Map
+    // Build metadata as plain object from rawMetadata Map. Skip null/undefined
+    // values — otherwise `String(null)` leaks the literal "null" into the UI,
+    // which is how a bare YAML key (`servings:` with nothing after) and a
+    // recipe.servings of null both ended up rendering as "Serves null".
     const metadata: Record<string, string> = {};
     for (const [key, value] of recipe.rawMetadata) {
+      if (value == null) continue;
       metadata[String(key)] = String(value);
     }
-    if (recipe.servings !== undefined && !metadata.servings) {
+    if (recipe.servings != null && !metadata.servings) {
       metadata.servings = String(recipe.servings);
     }
     if (recipe.description && !metadata.description) {
@@ -332,6 +440,7 @@ export function parseCooklang(text: string): ParsedRecipe {
     }
     // Expose custom_metadata entries (e.g. notes) that rawMetadata may key differently
     for (const [key, value] of recipe.custom_metadata) {
+      if (value == null) continue;
       const k = String(key);
       if (!metadata[k]) metadata[k] = String(value);
     }
@@ -346,7 +455,7 @@ export function parseCooklang(text: string): ParsedRecipe {
         for (const item of content.value.items) {
           if (item.type !== "ingredient") continue;
           const annotation = ingredientAnnotations[item.index];
-          if (!shouldIncludeIngredientSummaryItem(annotation)) continue;
+          if (!shouldIncludeInSectionSummary(annotation)) continue;
           sectionIngredients.push(toParsedIngredientWithAnnotations(recipe.ingredients[item.index], annotation));
         }
       }
@@ -379,7 +488,12 @@ export function parseCooklang(text: string): ParsedRecipe {
     let sectionIndex = 0;
     for (const section of recipe.sections) {
       if (section.name) {
-        steps.push([{ type: "text", value: `= ${section.name}` }]);
+        steps.push([{
+          type: "text",
+          value: `= ${section.name}`,
+          section_index: sectionIndex,
+          section_id: makeSectionId(sectionIndex),
+        }]);
       }
       for (const content of section.content) {
         if (content.type === "text") {
@@ -397,16 +511,31 @@ export function parseCooklang(text: string): ParsedRecipe {
                 });
               case "ingredient": {
                 const ing = recipe.ingredients[item.index];
+                const annotation = ingredientAnnotations[item.index];
                 const relation = ing.relation?.relation || null;
                 const referenceTarget = ing.relation?.reference_target || null;
                 const referenceStepNumber = referenceTarget === "step" && relation?.type === "reference"
                   ? resolveReferenceStepNumber(section, Number(relation.references_to))
                   : undefined;
                 const referenceStepId = referenceStepNumber ? makeStepId(sectionIndex, referenceStepNumber) : undefined;
+                const referenceSectionIndex = referenceTarget === "section" && relation?.type === "reference"
+                  ? Number(relation.references_to)
+                  : undefined;
+                const referenceSectionId = (typeof referenceSectionIndex === "number" && Number.isFinite(referenceSectionIndex))
+                  ? makeSectionId(referenceSectionIndex)
+                  : undefined;
+                const referenceSectionName = (typeof referenceSectionIndex === "number" && Number.isFinite(referenceSectionIndex))
+                  ? (recipe.sections[referenceSectionIndex]?.name ?? null)
+                  : null;
+                const refPath = ingredientReferencePath(ing, annotation);
+                const isIntermediate = referenceTarget === "step" || referenceTarget === "section";
                 return [{
                   type: "ingredient",
                   value: ingredient_display_name(ing),
                   name: ingredient_display_name(ing),
+                  note: ingredientNote(ing),
+                  optional: annotation?.optional || false,
+                  intermediate: isIntermediate,
                   quantity: extractQty(ing.quantity),
                   units: getQuantityUnit(ing.quantity) || "",
                   step_id: stepId,
@@ -415,6 +544,11 @@ export function parseCooklang(text: string): ParsedRecipe {
                   reference_target: referenceTarget,
                   reference_step_number: referenceStepNumber,
                   reference_step_id: referenceStepId,
+                  reference_section_index: referenceSectionIndex,
+                  reference_section_id: referenceSectionId,
+                  reference_section_name: referenceSectionName,
+                  recipe_reference: !!refPath || (annotation?.recipe || false),
+                  reference_path: refPath,
                 }];
               }
               case "cookware": {
@@ -423,6 +557,7 @@ export function parseCooklang(text: string): ParsedRecipe {
                   type: "cookware",
                   value: cookware_display_name(cw),
                   name: cookware_display_name(cw),
+                  note: cookwareNote(cw),
                   step_id: stepId,
                   step_number: stepNumber,
                   section_index: sectionIndex,
@@ -464,11 +599,14 @@ export function parseCooklang(text: string): ParsedRecipe {
       sectionIndex += 1;
     }
 
+    const metrics = extractComputedMetrics(metadata, ingredientSummary);
+
     return {
       ingredients,
       ingredient_summary: ingredientSummary,
       cookwares,
       metadata,
+      metrics,
       steps,
       editable_tokens: editableTokens,
     };
@@ -478,11 +616,189 @@ export function parseCooklang(text: string): ParsedRecipe {
       ingredient_summary: emptyIngredientSummary(),
       cookwares: [],
       metadata: {},
+      metrics: [],
       steps: [],
       editable_tokens: [],
       error: e?.message || "Parse error",
     };
   }
+}
+
+// ── Computed metrics ──────────────────────────────────────────────────────────
+// `>> metric.<display name>: <expression> [| <format unit>]` declares a derived
+// value. The expression layer (src/metric-expr.ts) handles arithmetic; we
+// supply the ingredient-lookup context here.
+
+const METRIC_UNIT_TABLE: Record<string, { category: "mass" | "volume"; factor: number }> = {
+  g: { category: "mass", factor: 1 },
+  gram: { category: "mass", factor: 1 },
+  grams: { category: "mass", factor: 1 },
+  kg: { category: "mass", factor: 1000 },
+  kilogram: { category: "mass", factor: 1000 },
+  kilograms: { category: "mass", factor: 1000 },
+  mg: { category: "mass", factor: 0.001 },
+  milligram: { category: "mass", factor: 0.001 },
+  milligrams: { category: "mass", factor: 0.001 },
+  ml: { category: "volume", factor: 1 },
+  milliliter: { category: "volume", factor: 1 },
+  milliliters: { category: "volume", factor: 1 },
+  millilitre: { category: "volume", factor: 1 },
+  millilitres: { category: "volume", factor: 1 },
+  l: { category: "volume", factor: 1000 },
+  liter: { category: "volume", factor: 1000 },
+  liters: { category: "volume", factor: 1000 },
+  litre: { category: "volume", factor: 1000 },
+  litres: { category: "volume", factor: 1000 },
+};
+
+function metricUnitKey(unit: string | null | undefined): string {
+  return String(unit || "").trim().toLowerCase().replace(/\.$/, "");
+}
+
+// Canonical key for ingredient-name comparison in metric formulas. Whitespace
+// collapses to a single `_` so `@whole wheat flour{}` is addressable as
+// `whole_wheat_flour` in expressions. Case-insensitive.
+function normalizeMetricIngredientName(name: string): string {
+  return String(name || "").trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+function convertMetricQuantity(qty: number, fromUnit: string, toUnit: string): number | null {
+  const f = METRIC_UNIT_TABLE[metricUnitKey(fromUnit)];
+  const t = METRIC_UNIT_TABLE[metricUnitKey(toUnit)];
+  if (!f || !t) return null;
+  if (f.category !== t.category) return null;
+  return (qty * f.factor) / t.factor;
+}
+
+function extractComputedMetrics(
+  metadata: Record<string, string>,
+  ingredientSummary: ParsedIngredientSummary,
+): ComputedMetric[] {
+  const prefix = "metric.";
+  const metricKeys = Object.keys(metadata).filter((k) => k.toLowerCase().startsWith(prefix));
+  if (metricKeys.length === 0) return [];
+
+  // Pull aggregated ingredients into a case-insensitive, underscore-normalized
+  // map so multi-word ingredient names like `@whole wheat flour{}` are
+  // addressable from formulas as `whole_wheat_flour` — no braces required, so
+  // metrics work cleanly inside YAML front matter too. Each `flat` entry
+  // already represents one *cooklang* grouping (e.g. `@flour{200%g}` +
+  // `@&flour{300%g}` → one entry with quantity 500); duplicate names without
+  // `@&` are intentionally distinct ingredients per spec.
+  const lookupByName = new Map<string, ParsedIngredient>();
+  for (const ing of ingredientSummary.flat) {
+    lookupByName.set(normalizeMetricIngredientName(ing.name), ing);
+  }
+
+  // Previously-computed metric values, keyed by normalized name. Lets later
+  // metrics reference earlier ones via `metric.<name>` in their formula —
+  // resolved in declaration order, so forward refs fail.
+  const metricValues = new Map<string, number>();
+
+  const metrics: ComputedMetric[] = [];
+  for (const rawKey of metricKeys) {
+    const name = rawKey.slice(prefix.length).trim();
+    const rawValue = String(metadata[rawKey] || "");
+    delete metadata[rawKey]; // strip so it doesn't leak into step-text metadata filter
+    if (!name) continue;
+
+    // `<formula> | <flag-or-unit> | <flag-or-unit>...`
+    // First segment is the expression. Each `|`-separated tail piece is either
+    // the special flag `hidden` or the (single) format unit.
+    const segments = rawValue.split("|").map((s) => s.trim());
+    const formulaText = segments[0] || "";
+    let formatUnit: string | null = null;
+    let hidden = false;
+    for (let i = 1; i < segments.length; i++) {
+      const seg = segments[i];
+      if (!seg) continue;
+      if (seg.toLowerCase() === "hidden") { hidden = true; continue; }
+      if (formatUnit === null) { formatUnit = seg; continue; }
+      // additional segments are ignored — keep it simple
+    }
+
+    if (!formulaText) {
+      metrics.push({ name, formula: "", format_unit: formatUnit, hidden, value: null, display: null, error: "empty formula" });
+      continue;
+    }
+
+    const ctx = {
+      lookup(path: string[]): number | string | null {
+        // Metric reference: `metric.<name>` resolves to a previously-computed
+        // metric. The metric must have been declared earlier in the file.
+        if (path.length >= 2 && path[0].toLowerCase() === "metric") {
+          const metricKey = normalizeMetricIngredientName(path.slice(1).join("_"));
+          const v = metricValues.get(metricKey);
+          if (v === undefined) {
+            // Distinguish "doesn't exist" from "declared later" to help
+            // the user spot ordering bugs without trial and error.
+            const declaredLater = metricKeys.some(
+              (k) => normalizeMetricIngredientName(k.slice(prefix.length)) === metricKey,
+            );
+            return declaredLater
+              ? `metric '${path.slice(1).join(".")}' is referenced before it's defined`
+              : `unknown metric '${path.slice(1).join(".")}'`;
+          }
+          return v;
+        }
+        // Ingredient lookup: path is `[name]` (no unit) or `[name, unit]`.
+        if (path.length > 2) {
+          return `unknown reference '${path.join(".")}'`;
+        }
+        const ingredientName = path[0];
+        const unit = path[1] || null;
+        const ing = lookupByName.get(normalizeMetricIngredientName(ingredientName));
+        if (!ing) return null;
+        const qty = parseSortableNumber(ing.quantity);
+        if (qty === null) {
+          return `ingredient '${ingredientName}' has no numeric quantity`;
+        }
+        if (!unit) return qty;
+        const source = ing.units || "";
+        if (!source) {
+          return `ingredient '${ingredientName}' has no unit, cannot convert to ${unit}`;
+        }
+        const converted = convertMetricQuantity(qty, source, unit);
+        if (converted === null) {
+          return `cannot convert ${source} → ${unit} for '${ingredientName}'`;
+        }
+        return converted;
+      },
+    };
+
+    const evald = evaluateExpression(formulaText, ctx);
+    if (!evald.ok) {
+      metrics.push({ name, formula: formulaText, format_unit: formatUnit, hidden, value: null, display: null, error: evald.error });
+      continue;
+    }
+    metricValues.set(normalizeMetricIngredientName(name), evald.value);
+    metrics.push({
+      name,
+      formula: formulaText,
+      format_unit: formatUnit,
+      hidden,
+      value: evald.value,
+      display: formatMetricDisplay(evald.value, formatUnit),
+      error: null,
+    });
+  }
+  return metrics;
+}
+
+function formatMetricDisplay(value: number, formatUnit: string | null): string {
+  const u = formatUnit ? formatUnit.trim() : "";
+  if (u === "%") return `${stripTrailingZeros(value.toFixed(1))}%`;
+  // Mass/volume display as whole numbers when possible.
+  if (METRIC_UNIT_TABLE[metricUnitKey(u)]) {
+    const rounded = Math.round(value * 10) / 10;
+    return `${stripTrailingZeros(rounded.toFixed(1))} ${u}`;
+  }
+  if (u) return `${stripTrailingZeros(value.toFixed(2))} ${u}`;
+  return stripTrailingZeros(value.toFixed(2));
+}
+
+function stripTrailingZeros(s: string): string {
+  return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
 }
 
 function splitTextIntoParsedSteps(text: string, meta: Partial<ParsedStep> = {}): ParsedStep[] {
@@ -518,6 +834,10 @@ function splitTextIntoParsedSteps(text: string, meta: Partial<ParsedStep> = {}):
 
 function makeStepId(sectionIndex: number, stepNumber: number): string {
   return `section-${sectionIndex}-step-${stepNumber}`;
+}
+
+function makeSectionId(sectionIndex: number): string {
+  return `section-${sectionIndex}`;
 }
 
 function resolveReferenceStepNumber(section: any, referenceIndex: number | null | undefined): number | undefined {

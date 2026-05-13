@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import api from "./routes.js";
+import api from "./routes.ts";
 
 const app = new Hono();
 const PORT = parseInt(process.env.PORT || "3000");

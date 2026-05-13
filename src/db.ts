@@ -50,9 +50,31 @@ db.exec(`
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS cook_logs (
+    id                    TEXT PRIMARY KEY,
+    recipe_id             TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    branch_slug           TEXT NOT NULL,
+    version_string        TEXT,
+    source_kind           TEXT NOT NULL DEFAULT 'version',
+    source_version_string TEXT,
+    cooklang_text         TEXT NOT NULL DEFAULT '',
+    source_cooklang_text  TEXT NOT NULL DEFAULT '',
+    tags                  TEXT NOT NULL DEFAULT '[]',
+    cooked_at             TEXT NOT NULL,
+    outcome               TEXT NOT NULL DEFAULT '',
+    what_worked           TEXT NOT NULL DEFAULT '',
+    problems_found        TEXT NOT NULL DEFAULT '',
+    changes_to_try_next   TEXT NOT NULL DEFAULT '',
+    freeform_notes        TEXT NOT NULL DEFAULT '',
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE INDEX IF NOT EXISTS idx_versions_recipe ON recipe_versions(recipe_id);
   CREATE INDEX IF NOT EXISTS idx_versions_status ON recipe_versions(status);
   CREATE INDEX IF NOT EXISTS idx_images_recipe ON recipe_images(recipe_id);
+  CREATE INDEX IF NOT EXISTS idx_cook_logs_branch_version ON cook_logs(recipe_id, branch_slug, version_string);
+  CREATE INDEX IF NOT EXISTS idx_cook_logs_branch_recent ON cook_logs(recipe_id, branch_slug, cooked_at DESC);
 `);
 
 const recipeColumns = db.prepare(`PRAGMA table_info(recipes)`).all() as Array<{ name: string }>;
@@ -83,6 +105,52 @@ db.exec(`
     AND version_id IS NOT NULL
 `);
 
+// Cook-logs schema upgrade (one-shot): adds cooklang snapshot fields, makes
+// version_string nullable, and wipes any legacy narrative-only rows. Existing
+// rows are intentionally dropped — per the redesign, cook logs are now per-
+// batch records of the recipe-as-cooked and the old narrative-only rows can't
+// be backfilled into that model.
+export const cookLogsMigrationApplied = (() => {
+  const columns = db.prepare(`PRAGMA table_info(cook_logs)`).all() as Array<{ name: string }>;
+  const hasNewShape = columns.some((c) => c.name === "cooklang_text")
+    && columns.some((c) => c.name === "source_cooklang_text");
+  if (hasNewShape) return false;
+  db.exec(`BEGIN`);
+  try {
+    db.exec(`DELETE FROM cook_logs`);
+    db.exec(`
+      CREATE TABLE cook_logs_new (
+        id                    TEXT PRIMARY KEY,
+        recipe_id             TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+        branch_slug           TEXT NOT NULL,
+        version_string        TEXT,
+        source_kind           TEXT NOT NULL DEFAULT 'version',
+        source_version_string TEXT,
+        cooklang_text         TEXT NOT NULL DEFAULT '',
+        source_cooklang_text  TEXT NOT NULL DEFAULT '',
+        tags                  TEXT NOT NULL DEFAULT '[]',
+        cooked_at             TEXT NOT NULL,
+        outcome               TEXT NOT NULL DEFAULT '',
+        what_worked           TEXT NOT NULL DEFAULT '',
+        problems_found        TEXT NOT NULL DEFAULT '',
+        changes_to_try_next   TEXT NOT NULL DEFAULT '',
+        freeform_notes        TEXT NOT NULL DEFAULT '',
+        created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+    db.exec(`DROP TABLE cook_logs`);
+    db.exec(`ALTER TABLE cook_logs_new RENAME TO cook_logs`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_cook_logs_branch_version ON cook_logs(recipe_id, branch_slug, version_string)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_cook_logs_branch_recent ON cook_logs(recipe_id, branch_slug, cooked_at DESC)`);
+    db.exec(`COMMIT`);
+    return true;
+  } catch (error) {
+    db.exec(`ROLLBACK`);
+    throw error;
+  }
+})();
+
 function prep(sql: string) {
   return db.prepare(sql);
 }
@@ -107,6 +175,16 @@ export const q = {
   legacyRecipes: prep(`SELECT * FROM recipes ORDER BY updated_at DESC`),
   legacyVersionsByRecipe: prep(`SELECT * FROM recipe_versions WHERE recipe_id = ? ORDER BY created_at DESC`),
   legacyVersionByString: prep(`SELECT * FROM recipe_versions WHERE recipe_id = ? AND version_string = ?`),
+
+  insertCookLog: prep(`INSERT INTO cook_logs (id, recipe_id, branch_slug, version_string, source_kind, source_version_string, cooklang_text, source_cooklang_text, tags, cooked_at, outcome, what_worked, problems_found, changes_to_try_next, freeform_notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+  updateCookLog: prep(`UPDATE cook_logs SET cooked_at = ?, outcome = ?, what_worked = ?, problems_found = ?, changes_to_try_next = ?, freeform_notes = ?, cooklang_text = ?, tags = ?, updated_at = ? WHERE id = ?`),
+  deleteCookLog: prep(`DELETE FROM cook_logs WHERE id = ?`),
+  cookLogById: prep(`SELECT * FROM cook_logs WHERE id = ?`),
+  cookLogsByBranch: prep(`SELECT * FROM cook_logs WHERE recipe_id = ? AND branch_slug = ? ORDER BY cooked_at DESC, created_at DESC`),
+  cookLogsByBranchVersion: prep(`SELECT * FROM cook_logs WHERE recipe_id = ? AND branch_slug = ? AND (version_string = ? OR source_version_string = ?) ORDER BY cooked_at DESC, created_at DESC`),
+  latestCookLogForBranch: prep(`SELECT * FROM cook_logs WHERE recipe_id = ? AND branch_slug = ? ORDER BY cooked_at DESC, created_at DESC LIMIT 1`),
+  cookLogCountByBranch: prep(`SELECT COUNT(*) AS n FROM cook_logs WHERE recipe_id = ? AND branch_slug = ?`),
+  cookLogsForMigration: prep(`SELECT * FROM cook_logs WHERE recipe_id = ? AND branch_slug = ?`),
 };
 
 export function generateId(): string {

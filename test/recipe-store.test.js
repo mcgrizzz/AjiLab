@@ -10,18 +10,25 @@ process.env.DATA_DIR = dataDir;
 const {
   attachRecipeImage,
   applyBranchSync,
+  createCookLog,
   createRecipe,
   createRecipeBranch,
+  deleteCookLog,
   deleteRecipeImage,
   forkBranchHeadToDraft,
+  forkCookLogToDraft,
+  getCookLog,
   getRecipeBySlug,
+  listBranchCookLogs,
   listRecipeImages,
   listRecipes,
   previewBranchSync,
+  promoteCookLog,
   readRecipeImage,
   releaseDraft,
   releaseVersion,
   setRecipeThumbnail,
+  updateCookLog,
   updateDraft,
   updateVersionContent,
 } = await import("../src/recipe-store.ts");
@@ -274,4 +281,172 @@ test("sync preview reports conflicts for overlapping edits", () => {
   const preview = previewBranchSync(created.slug, branchRecipe.branch_slug);
   assert.equal(preview.status, "conflict");
   assert.ok(preview.conflicts.length > 0);
+});
+
+test("createCookLog snapshots cooklang_text from the current draft when source is draft", () => {
+  const created = createRecipe("Log From Draft");
+  updateDraft(created.slug, { cooklang_text: "@flour{300%g}" });
+
+  const log = createCookLog(created.slug, { kind: "draft" }, { outcome: "good crust" });
+
+  assert.equal(log.source_kind, "draft");
+  assert.equal(log.source_version_string, null);
+  assert.equal(log.version_string, null);
+  assert.equal(log.cooklang_text, "@flour{300%g}");
+  assert.equal(log.outcome, "good crust");
+
+  const refetched = getCookLog(created.slug, log.id);
+  assert.equal(refetched?.cooklang_text, "@flour{300%g}");
+  assert.equal(refetched?.source_kind, "draft");
+  assert.equal(refetched?.source_version_string, null);
+});
+
+test("createCookLog snapshots cooklang_text from a specified version", () => {
+  const created = createRecipe("Log From Version");
+  updateDraft(created.slug, { cooklang_text: "@flour{200%g}" });
+  releaseDraft(created.slug, { version_string: "v1.0", status: "released" });
+  // Move the draft forward so we can prove the version snapshot is independent.
+  updateDraft(created.slug, { cooklang_text: "@flour{999%g}" });
+
+  const log = createCookLog(
+    created.slug,
+    { kind: "version", version_string: "v1.0" },
+    { outcome: "as expected" },
+  );
+
+  assert.equal(log.source_kind, "version");
+  assert.equal(log.source_version_string, "v1.0");
+  assert.equal(log.version_string, "v1.0");
+  assert.equal(log.cooklang_text, "@flour{200%g}");
+  assert.equal(log.source_cooklang_text, "@flour{200%g}");
+});
+
+test("source_cooklang_text is frozen at creation and unchanged by later draft edits", () => {
+  const created = createRecipe("Frozen Source");
+  updateDraft(created.slug, { cooklang_text: "@flour{200%g}" });
+  const log = createCookLog(created.slug, { kind: "draft" }, { outcome: "ok" });
+  assert.equal(log.source_cooklang_text, "@flour{200%g}");
+
+  // Move the draft forward; the log's source snapshot must NOT change.
+  updateDraft(created.slug, { cooklang_text: "@flour{999%g}" });
+  // And edit the log's own cooked text; source snapshot still unchanged.
+  updateCookLog(created.slug, log.id, { cooklang_text: "@flour{225%g}" });
+
+  const refetched = getCookLog(created.slug, log.id);
+  assert.equal(refetched?.source_cooklang_text, "@flour{200%g}");
+  assert.equal(refetched?.cooklang_text, "@flour{225%g}");
+});
+
+test("updateCookLog persists an edited cooklang_text to both DB and .cook sidecar", () => {
+  const created = createRecipe("Log Edit Cooklang");
+  updateDraft(created.slug, { cooklang_text: "@flour{200%g}" });
+  const log = createCookLog(created.slug, { kind: "draft" }, { outcome: "fine" });
+
+  const cookSidecarPath = path.join(
+    dataDir,
+    "recipes",
+    created.slug,
+    "branches",
+    "main",
+    "cook-logs",
+    `${log.id}.cook`,
+  );
+  assert.equal(fs.existsSync(cookSidecarPath), true);
+
+  const updated = updateCookLog(created.slug, log.id, { cooklang_text: "@flour{225%g}" });
+  assert.equal(updated.cooklang_text, "@flour{225%g}");
+  assert.equal(fs.readFileSync(cookSidecarPath, "utf8"), "@flour{225%g}");
+
+  const refetched = getCookLog(created.slug, log.id);
+  assert.equal(refetched?.cooklang_text, "@flour{225%g}");
+});
+
+test("promoteCookLog produces a released version with the log's cooklang_text", () => {
+  const created = createRecipe("Log Promote");
+  updateDraft(created.slug, { cooklang_text: "@flour{250%g}" });
+  const log = createCookLog(created.slug, { kind: "draft" }, { outcome: "great" });
+
+  const result = promoteCookLog(
+    created.slug,
+    log.id,
+    { version_string: "v1.0", status: "released", changelog: "first cook" },
+  );
+  assert.equal(result.version_string, "v1.0");
+
+  const recipe = getRecipeBySlug(created.slug);
+  const released = recipe?.versions.find((version) => version.version_string === "v1.0");
+  assert.equal(released?.cooklang_text, "@flour{250%g}");
+  assert.equal(released?.status, "released");
+});
+
+test("promoting twice with the same version_string throws 'version already exists'", () => {
+  const created = createRecipe("Log Promote Conflict");
+  updateDraft(created.slug, { cooklang_text: "@flour{250%g}" });
+  const log = createCookLog(created.slug, { kind: "draft" }, { outcome: "ok" });
+  promoteCookLog(created.slug, log.id, { version_string: "v1.0", status: "released" });
+
+  assert.throws(
+    () => promoteCookLog(created.slug, log.id, { version_string: "v1.0", status: "released" }),
+    /version already exists/,
+  );
+});
+
+test("forkCookLogToDraft seeds the draft with the cook log's cooklang and parents it to the log's source", () => {
+  const created = createRecipe("Iterate From Log");
+  // Beta line: draft → v1.0-beta.1.
+  updateDraft(created.slug, { cooklang_text: "@flour{500%g}\n@water{300%g}\nMix.\nBake." }, { advance_beta: true });
+  // Cook from that beta, capture the actual measurements.
+  const log = createCookLog(
+    created.slug,
+    { kind: "version", version_string: "v1.0-beta.1" },
+    { outcome: "good crust", cooklang_text: "@flour{500%g}\n@water{310%g}\nMix.\nBake." },
+  );
+  // Fork the log into the draft for the next iteration.
+  forkCookLogToDraft(created.slug, log.id);
+  const recipe = getRecipeBySlug(created.slug);
+  assert.ok(recipe?.draft, "expected a draft after fork");
+  assert.equal(recipe?.draft?.cooklang_text, "@flour{500%g}\n@water{310%g}\nMix.\nBake.", "draft text should match the cook log's recipe-as-cooked");
+  assert.equal(recipe?.draft?.parent_version, "v1.0-beta.1", "draft parent should be the cook log's source version");
+});
+
+test("forkCookLogToDraft overwrites an existing draft so the iteration starts clean", () => {
+  const created = createRecipe("Overwrite Draft With Log");
+  updateDraft(created.slug, { cooklang_text: "@flour{500%g}" }, { advance_beta: true });
+  // User started a new draft after the beta and made unrelated edits.
+  updateDraft(created.slug, { cooklang_text: "@flour{999%g}\nthrowaway scratch." });
+  const log = createCookLog(
+    created.slug,
+    { kind: "version", version_string: "v1.0-beta.1" },
+    { outcome: "ok", cooklang_text: "@flour{520%g}\nMix briefly." },
+  );
+  forkCookLogToDraft(created.slug, log.id);
+  const recipe = getRecipeBySlug(created.slug);
+  assert.equal(recipe?.draft?.cooklang_text, "@flour{520%g}\nMix briefly.", "fork must replace the scratch draft, not merge with it");
+});
+
+test("forkCookLogToDraft requires a cook log with non-empty cooklang", () => {
+  const created = createRecipe("Empty Log Fork");
+  updateDraft(created.slug, { cooklang_text: "@flour{500%g}" }, { advance_beta: true });
+  const log = createCookLog(
+    created.slug,
+    { kind: "version", version_string: "v1.0-beta.1" },
+    { outcome: "ok", cooklang_text: "   \n  " },
+  );
+  assert.throws(() => forkCookLogToDraft(created.slug, log.id), /no recipe text to fork/);
+});
+
+test("deleteCookLog removes both the .json file and the .cook sidecar", () => {
+  const created = createRecipe("Log Delete");
+  updateDraft(created.slug, { cooklang_text: "@flour{200%g}" });
+  const log = createCookLog(created.slug, { kind: "draft" }, { outcome: "ok" });
+
+  const jsonPath = path.join(dataDir, "recipes", created.slug, "branches", "main", "cook-logs", `${log.id}.json`);
+  const cookPath = path.join(dataDir, "recipes", created.slug, "branches", "main", "cook-logs", `${log.id}.cook`);
+  assert.equal(fs.existsSync(jsonPath), true);
+  assert.equal(fs.existsSync(cookPath), true);
+
+  deleteCookLog(created.slug, log.id);
+  assert.equal(fs.existsSync(jsonPath), false);
+  assert.equal(fs.existsSync(cookPath), false);
+  assert.equal(listBranchCookLogs(created.slug).length, 0);
 });

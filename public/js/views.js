@@ -71,9 +71,9 @@ const RecipeView = {
   photosExpanded: false,
   photosExpandedVersionKey: null,
   scale: 1,
-  activeTab: 'recipe',
+  activeTab: 'overview',
   cookMode: false,
-  showAmounts: false,
+  showAmounts: true,
   temperatureUnit: 'F',
   ingredientSummaryMode: null,
   draftEditor: null,
@@ -81,14 +81,19 @@ const RecipeView = {
   selectedDraftTokenId: null,
   draftPreviewState: null,
   draftQuantityAnchor: null,
+  cookLogs: [],
+  cookLogsFilterVersion: null,
+  historyFocusVersion: null,
+  explicitVersionRequest: null,
+  backlinks: [],
 
   async render(container, slug, opts = {}) {
     this.slug = slug;
     this.branchSlug = opts.branch || 'main';
-    this.activeTab = opts.tab || 'recipe';
+    this.activeTab = opts.tab || 'overview';
     this.scale = 1;
     this.cookMode = false;
-    this.showAmounts = false;
+    this.showAmounts = true;
     this.temperatureUnit = 'F';
     this.ingredientSummaryMode = null;
     this.images = [];
@@ -98,6 +103,11 @@ const RecipeView = {
     this.selectedDraftTokenId = null;
     this.draftPreviewState = null;
     this.draftQuantityAnchor = null;
+    this.cookLogs = [];
+    this.cookLogsFilterVersion = null;
+    this.historyFocusVersion = null;
+    this.explicitVersionRequest = opts.version || null;
+    this.backlinks = [];
     container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
     try {
       await this.refreshRecipe();
@@ -111,6 +121,11 @@ const RecipeView = {
   async refreshRecipe() {
     this.recipe = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}`);
     this.branchSlug = this.recipe.branch_slug || this.branchSlug || 'main';
+    try {
+      this.backlinks = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/backlinks`);
+    } catch {
+      this.backlinks = [];
+    }
   },
 
   selectedVersionKey() {
@@ -148,14 +163,17 @@ const RecipeView = {
         return await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${versionStr}`);
       } catch {}
     }
-    const defaultVersion = this.recipe.latest_released || this.recipe.latest_beta;
-    if (defaultVersion) {
-      try {
-        return await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${defaultVersion}`);
-      } catch {}
+    return this.defaultActiveVersion();
+  },
+
+  defaultActiveVersion() {
+    if (this.activeTab === 'experiment') {
+      return this.recipe.active_experiment || this.recipe.draft || this.recipe.current_best_release || (this.recipe.source_version ? { ...this.recipe.source_version, is_inherited_source: true } : null);
     }
-    if (this.recipe.draft) return this.recipe.draft;
-    return this.recipe.source_version ? { ...this.recipe.source_version, is_inherited_source: true } : null;
+    return this.recipe.active_experiment
+      || this.recipe.current_best_release
+      || this.recipe.draft
+      || (this.recipe.source_version ? { ...this.recipe.source_version, is_inherited_source: true } : null);
   },
 
   async loadParsed() {
@@ -189,24 +207,24 @@ const RecipeView = {
 
   renderScaffold(container) {
     const recipe = this.recipe;
-    const version = this.activeVersion;
-    const versions = (recipe.versions || []).filter((entry) => !entry.is_draft);
     const branches = recipe.branches || [];
-    const isDraft = !!version?.is_draft;
     const branchOptions = branches.map((entry) => `
       <option value="${escHtml(entry.slug)}" ${entry.slug === this.branchSlug ? 'selected' : ''}>
         ${escHtml(entry.name)}${entry.kind === 'main' ? ' (main)' : ''}
       </option>`).join('');
-    const versionOptions = versions.map((entry) => `
-      <option value="${escHtml(entry.version_string)}" ${version?.version_string === entry.version_string ? 'selected' : ''}>
-        ${escHtml(entry.version_string)} (${escHtml(entry.status)})
-      </option>`).join('');
-    const latestReleasedLabel = recipe.latest_released && recipe.latest_released !== version?.version_string
-      ? `<span class="version-secondary">Latest released: ${escHtml(recipe.latest_released)}</span>`
+    const branchSelect = branches.length > 1
+      ? `<select class="version-select" onchange="RecipeView.switchBranch(this.value)">${branchOptions}</select>`
       : '';
-    const badge = isDraft
-      ? '<span class="badge badge-draft">Draft</span>'
-      : `<span class="badge badge-${version?.status || 'released'}">${escHtml(version?.version_string || '')}</span>`;
+    const statusBits = this.headerStatusBits();
+    const tabCount = (n) => n > 0 ? `<span class="tab-count">· ${n}</span>` : '';
+    const historyCount = recipe.counts ? (recipe.counts.releases_count + recipe.counts.betas_count) : 0;
+    const cookLogsCount = recipe.counts?.cook_logs_count || 0;
+    const tabs = [
+      { id: 'overview', label: 'Overview' },
+      { id: 'experiment', label: this.experimentTabLabel() },
+      { id: 'history', label: `History${tabCount(historyCount)}` },
+      { id: 'cook-logs', label: `Cook Logs${tabCount(cookLogsCount)}` },
+    ];
 
     container.innerHTML = `
       <div class="recipe-header">
@@ -214,41 +232,72 @@ const RecipeView = {
           <div id="header-thumb-slot" class="header-thumb-slot"></div>
           <div class="recipe-header-copy">
             <h1 class="recipe-title-lg">${escHtml(recipe.title)}</h1>
+            <div class="recipe-status-row">
+              ${statusBits}
+              ${branchSelect}
+            </div>
+          </div>
+          <div class="recipe-header-actions">
+            <button class="header-gear-btn" onclick="RecipeView.openSettingsModal()" aria-label="Recipe menu" title="Recipe menu">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+            </button>
           </div>
         </div>
-        <div class="recipe-version-row">
-          ${badge}
-          ${latestReleasedLabel}
-          <select class="version-select" onchange="RecipeView.switchBranch(this.value)">
-            ${branchOptions}
-          </select>
-          <select class="version-select" onchange="RecipeView.switchVersion(this.value)">
-            ${recipe.draft ? `<option value="draft" ${isDraft ? 'selected' : ''}>Draft${recipe.draft.cooklang_text?.trim() ? '' : ' (empty)'}</option>` : ''}
-            ${versionOptions}
-          </select>
-          <button class="btn btn-sm" onclick="RecipeView.openPrintView()">Print</button>
-          ${!isDraft ? `
-            <button class="btn btn-sm" onclick="RecipeView.forkVersion()">Fork to draft</button>
-            <button class="btn btn-sm" onclick="RecipeView.editVersion()">Edit version</button>
-          ` : ''}
-        </div>
-        <div class="tab-bar">
-          <button class="tab ${this.activeTab === 'recipe' ? 'active' : ''}" onclick="RecipeView.setTab('recipe')">Recipe</button>
-          <button class="tab ${this.activeTab === 'versions' ? 'active' : ''}" onclick="RecipeView.setTab('versions')">Versions</button>
-          <button class="tab ${this.activeTab === 'compare' ? 'active' : ''}" onclick="RecipeView.setTab('compare')">Compare</button>
-          <button class="tab ${this.activeTab === 'edit' ? 'active' : ''}" onclick="RecipeView.setTab('edit')">Edit</button>
-          <button class="tab ${this.activeTab === 'settings' ? 'active' : ''}" onclick="RecipeView.setTab('settings')">Settings</button>
+        <div class="tab-bar" role="tablist">
+          ${tabs.map((tab) => `
+            <button class="tab ${this.activeTab === tab.id ? 'active' : ''}" data-tab="${tab.id}" role="tab" onclick="RecipeView.setTab('${tab.id}')">${tab.label}</button>
+          `).join('')}
         </div>
       </div>
       <div id="tab-body"></div>`;
   },
 
+  headerStatusBits() {
+    const recipe = this.recipe;
+    const bits = [];
+    const best = recipe.current_best_release;
+    if (best) {
+      bits.push(`<span class="badge badge-released">Best: ${escHtml(best.version_string || '')}</span>`);
+    }
+    if (!best && !recipe.active_experiment) {
+      bits.push('<span class="badge badge-draft">No releases yet</span>');
+    }
+    return bits.join('');
+  },
+
+  experimentTabLabel() {
+    return 'Experiment';
+  },
+
   setTab(tab) {
+    // Leaving the experiment tab exits cook-log edit mode so the next entry
+    // doesn't re-bind to a stale log.
+    if (tab !== 'experiment' && this.cookLogEditingId) {
+      this.cookLogEditingId = null;
+      this.activeVersion = null;
+    }
     this.activeTab = tab;
-    document.querySelectorAll('.tab').forEach((el) => {
-      el.classList.toggle('active', el.textContent.toLowerCase().startsWith(tab));
+    if (tab !== 'history') this.historyFocusVersion = null;
+    document.querySelectorAll('.tab[data-tab]').forEach((el) => {
+      el.classList.toggle('active', el.dataset.tab === tab);
     });
+    this.syncTabUrl();
     this.renderTab();
+  },
+
+  syncTabUrl() {
+    const params = new URLSearchParams(location.search);
+    if (this.activeTab && this.activeTab !== 'overview') params.set('tab', this.activeTab);
+    else params.delete('tab');
+    if (this.branchSlug && this.branchSlug !== 'main') params.set('branch', this.branchSlug);
+    else params.delete('branch');
+    const search = params.toString();
+    const nextPath = location.pathname + (search ? `?${search}` : '');
+    if (location.pathname + location.search === nextPath) return;
+    history.replaceState({}, '', nextPath);
   },
 
   renderTab() {
@@ -256,11 +305,11 @@ const RecipeView = {
     if (!body) return;
     this.destroyDraftEditor();
     switch (this.activeTab) {
-      case 'recipe': this.renderRecipeTab(body); break;
-      case 'versions': this.renderVersionsTab(body); break;
-      case 'compare': this.renderCompareTab(body); break;
-      case 'edit': this.renderEditTab(body); break;
-      case 'settings': this.renderSettingsTab(body); break;
+      case 'overview': this.renderOverviewTab(body); break;
+      case 'experiment': this.renderExperimentTab(body); break;
+      case 'history': this.renderHistoryTab(body); break;
+      case 'cook-logs': this.renderCookLogsTab(body); break;
+      default: this.renderOverviewTab(body);
     }
   },
 
@@ -269,8 +318,8 @@ const RecipeView = {
     this.draftEditor = null;
   },
 
-  renderRecipeTab(body) {
-    const parsed = this.parsed;
+  recipeBodyHtml() {
+    const parsed = this.parsed || { ingredients: [], ingredient_summary: emptyIngredientSummary(), steps: [], cookwares: [], metadata: {} };
     const version = this.activeVersion;
     const hasIngredients = parsed.ingredients?.length > 0;
     const hasSteps = parsed.steps?.length > 0;
@@ -298,7 +347,6 @@ const RecipeView = {
               <button class="scale-btn${this.scale === 2 ? ' active' : ''}" data-scale="2" onclick="RecipeView.setScale(2)">2×</button>
               <button class="scale-btn${this.scale === 3 ? ' active' : ''}" data-scale="3" onclick="RecipeView.setScale(3)">3×</button>
             </div>
-            <span class="scale-val" id="scale-val">${this.scale}×</span>
             ${servings ? `<span class="text-muted" style="font-size:0.8rem">Serves ${escHtml(servings)}</span>` : ''}
           </div>
           ${ingredientToggle}
@@ -312,82 +360,78 @@ const RecipeView = {
           ${CL.renderCookware(parsed.cookwares)}
         </div>` : ''}
       </div>` : '';
+    const inlineAddNotes = !notes ? `<button class="notes-inline-add" onclick="RecipeView.openNotesModal()" title="Add notes">✎ Add notes</button>` : '';
     const stepsHtml = hasSteps ? `
       <div class="recipe-main">
         <div class="section-head" id="steps-head">
-          Steps
-          <button class="btn btn-sm" style="margin-left:8px;font-size:0.75rem" id="amounts-btn" onclick="RecipeView.toggleAmounts()">
-            ${this.showAmounts ? '✓ Hide amounts' : '⊕ Show amounts'}
-          </button>
-          <button class="btn btn-sm" style="margin-left:4px;font-size:0.75rem" id="temp-btn" onclick="RecipeView.toggleTemperatureUnit()">
-            Temps: °${this.temperatureUnit}
-          </button>
-          <button class="btn btn-sm" style="margin-left:4px;font-size:0.75rem" id="cook-btn" onclick="RecipeView.toggleCookMode()">
-            ${this.cookMode ? '✓ Exit cook mode' : '▶ Cook mode'}
-          </button>
+          <span class="section-head-title">Steps</span>
+          <div class="steps-toolbar">
+            <button class="btn btn-sm" id="amounts-btn" onclick="RecipeView.toggleAmounts()">
+              ${this.showAmounts ? '✓ Hide amounts' : '⊕ Show amounts'}
+            </button>
+            <button class="btn btn-sm" id="temp-btn" onclick="RecipeView.toggleTemperatureUnit()">
+              Temps: °${this.temperatureUnit}
+            </button>
+            <button class="btn btn-sm" id="cook-btn" onclick="RecipeView.toggleCookMode()">
+              ${this.cookMode ? '✓ Exit cook mode' : '▶ Cook mode'}
+            </button>
+            ${inlineAddNotes}
+          </div>
         </div>
         <div id="steps-list">${CL.renderSteps(parsed.steps, this.scale, this.cookMode, parsed.metadata, this.showAmounts, {
           temperatureUnit: this.temperatureUnit,
         })}</div>
       </div>` : '';
 
-    body.innerHTML = `
-      <div class="tab-content">
-        ${notes ? `
+    const metricsHtml = CL.renderMetrics(parsed.metrics);
+    return `
+      ${metricsHtml}
+      ${notes ? `
         <div class="notes-card">
           <div class="notes-actions">
             <div class="section-head notes-head">${escHtml(notesLabel)}</div>
             <button class="btn btn-sm" onclick="RecipeView.openNotesModal()">Edit notes</button>
           </div>
           <div class="notes-box recipe-notes-display">${formatMultilineText(notes)}</div>
-        </div>` : `
-        <div class="notes-empty-row">
-          <button class="btn btn-sm" onclick="RecipeView.openNotesModal()">Add notes</button>
-        </div>`}
-        ${hasSidebar || hasSteps ? `
+        </div>` : ''}
+      ${hasSidebar || hasSteps ? `
         <div class="recipe-grid${!hasSidebar ? ' no-sidebar' : ''}">
           ${sidebarHtml}
           ${stepsHtml}
         </div>` : ''}
-        ${!hasIngredients && !hasSteps ? `
+      ${!hasIngredients && !hasSteps ? `
         <div class="empty-state" style="padding:32px 0">
-          <p>This version is empty. <button class="btn btn-sm" onclick="RecipeView.setTab('edit')">Edit draft →</button></p>
+          <p>This version is empty. <button class="btn btn-sm" onclick="RecipeView.setTab('experiment')">Open Experiment →</button></p>
         </div>` : ''}
-        <div class="media-strip-card">
-          <div class="media-strip-head">
-            <div>
-              <div class="section-head notes-head">${escHtml(photosLabel)}</div>
-              <div class="media-strip-meta">${this.images.length} photo${this.images.length === 1 ? '' : 's'}</div>
-            </div>
-            <div class="media-strip-actions">
-              <button class="btn btn-sm" onclick="document.getElementById('img-file').click()">${this.images.length ? 'Add photo' : 'Upload photo'}</button>
-              ${this.images.length ? `<button class="btn btn-sm btn-ghost" onclick="RecipeView.togglePhotosExpanded()">${this.photosToggleLabel()}</button>` : ''}
-            </div>
+      <div class="media-strip-card">
+        <div class="media-strip-head">
+          <div>
+            <div class="section-head notes-head">${escHtml(photosLabel)}</div>
+            <div class="media-strip-meta">${this.images.length} photo${this.images.length === 1 ? '' : 's'}</div>
           </div>
-          <div id="img-section"></div>
+          <div class="media-strip-actions">
+            <button class="btn btn-sm" onclick="document.getElementById('img-file').click()">${this.images.length ? 'Add photo' : 'Upload photo'}</button>
+            ${this.images.length ? `<button class="btn btn-sm btn-ghost" onclick="RecipeView.togglePhotosExpanded()">${this.photosToggleLabel()}</button>` : ''}
+          </div>
         </div>
+        <div id="img-section"></div>
       </div>`;
-    this.renderImageManager();
   },
 
   renderHeaderThumbnail() {
     const slot = document.getElementById('header-thumb-slot');
     if (!slot) return;
-    const thumb = this.recipe?.thumbnail_image_id
-      ? `
-        <div class="header-thumb-image-wrap">
+    if (this.recipe?.thumbnail_image_id) {
+      slot.innerHTML = `
+        <div class="header-thumb-card">
           <img class="header-thumb-image" src="/api/images/${this.recipe.thumbnail_image_id}" alt="${escHtml(this.recipe.title)}" loading="lazy" />
-          <button class="header-thumb-remove" onclick="RecipeView.deleteThumbnail()" aria-label="Remove thumbnail">✕</button>
-        </div>`
-      : `<button class="header-thumb-placeholder" onclick="document.getElementById('thumb-file').click()">Add photo</button>`;
-    slot.innerHTML = `
-      <div class="header-thumb-card">
-        ${thumb}
-        <div class="header-thumb-actions">
-          <button class="btn btn-sm" onclick="document.getElementById('thumb-file').click()">${this.recipe?.thumbnail_image_id ? 'Change' : 'Upload'}</button>
-        </div>
-      </div>
-      <input type="file" id="thumb-file" accept="image/*" style="display:none" onchange="RecipeView.uploadThumbnail(this)" />`;
+        </div>`;
+    } else {
+      slot.innerHTML = `
+        <div class="header-thumb-card header-thumb-card-empty" aria-hidden="true">
+          <span class="header-thumb-glyph">🍽</span>
+        </div>`;
+    }
   },
 
   openNotesModal() {
@@ -454,11 +498,11 @@ const RecipeView = {
       Router.dispatch(location.pathname + location.search);
       return;
     }
-    if (this.activeTab === 'recipe') {
+    if (this.activeTab === 'overview') {
       this.renderTab();
       return;
     }
-    if (this.activeTab === 'edit') {
+    if (this.activeTab === 'experiment') {
       this.updatePreview();
     }
   },
@@ -541,6 +585,7 @@ const RecipeView = {
   },
 
   getEditableVersion() {
+    if (this.activeVersion?._cookLogId) return this.activeVersion;
     if (this.activeVersion?.is_draft || this.activeVersion?.status === 'beta') {
       return this.activeVersion;
     }
@@ -550,9 +595,45 @@ const RecipeView = {
   editTargetLabel() {
     const editable = this.getEditableVersion();
     if (!editable) return 'No editable version';
+    if (editable._cookLogId) {
+      const log = editable._cookLog;
+      const sourceLabel = log?.source_kind === 'draft'
+        ? 'draft'
+        : (log?.source_version_string || 'unknown source');
+      return `Editing cook log${log?.outcome ? ` — ${log.outcome}` : ''} (from ${sourceLabel})`;
+    }
     if (editable.is_draft) return 'Editing Draft';
     if (editable.status === 'beta') return `Editing ${editable.version_string}`;
     return `Editing ${editable.version_string || 'version'}`;
+  },
+
+  cookLogToEditableTarget(log) {
+    return {
+      _cookLogId: log.id,
+      _cookLog: log,
+      cooklang_text: log.cooklang_text || '',
+      tags: JSON.stringify(log.tags || []),
+      is_draft: false,
+      status: 'cook-log',
+      version_string: null,
+    };
+  },
+
+  editCookLogRecipe(logId) {
+    const log = (this.cookLogs || []).find((entry) => entry.id === logId);
+    if (!log) {
+      showToast('Cook log not found');
+      return;
+    }
+    this.cookLogEditingId = logId;
+    this.activeVersion = this.cookLogToEditableTarget(log);
+    this.setTab('experiment');
+  },
+
+  exitCookLogEdit() {
+    this.cookLogEditingId = null;
+    this.activeVersion = null;
+    this.setTab('cook-logs');
   },
 
   releaseSourceVersionKey() {
@@ -571,19 +652,32 @@ const RecipeView = {
 
   async viewVersion(versionString) {
     await this.switchVersion(versionString);
-    this.setTab('recipe');
+    this.setTab('overview');
   },
 
-  async forkVersion() {
+  async forkVersionAndEdit(versionString) {
     try {
-      await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(this.activeVersion.version_string)}/fork`, {});
+      const target = versionString || this.activeVersion?.version_string;
+      if (!target) {
+        showToast('No version to fork');
+        return;
+      }
+      await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(target)}/fork`, {});
       await this.refreshRecipe();
-      this.activeTab = 'edit';
+      this.activeTab = 'experiment';
       await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
       showToast('Forked to draft');
     } catch (e) {
       showToast('Error: ' + e.message);
     }
+  },
+
+  async forkVersion() {
+    return this.forkVersionAndEdit(this.activeVersion?.version_string);
+  },
+
+  async startNextBetaFrom(versionString) {
+    await this.forkVersionAndEdit(versionString);
   },
 
   async forkCurrentBranchHead() {
@@ -594,12 +688,22 @@ const RecipeView = {
       }
       await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/draft/fork`, {});
       await this.refreshRecipe();
-      this.activeTab = 'edit';
+      this.activeTab = 'experiment';
       await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
       showToast('Forked to draft');
     } catch (e) {
       showToast('Error: ' + e.message);
     }
+  },
+
+  async startExperimentFromScratch() {
+    if (this.recipe.current_best_release) {
+      await this.forkCurrentBranchHead();
+      return;
+    }
+    this.activeTab = 'experiment';
+    this.activeVersion = this.recipe.draft;
+    await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
   },
 
   openPrintView() {
@@ -635,17 +739,16 @@ const RecipeView = {
     }
   },
 
-  renderVersionsTab(body) {
+  renderVersionsListHtml() {
     const versions = (this.recipe.versions || []).filter((entry) => !entry.is_draft);
     if (versions.length === 0) {
-      body.innerHTML = `<div class="tab-content"><div class="empty-state" style="padding:40px 0">
-        <p>No released versions yet. Edit the draft and release it.</p>
-        <button class="btn mt12" onclick="RecipeView.setTab('edit')">Edit draft</button>
-      </div></div>`;
-      return;
+      return `<div class="empty-state" style="padding:40px 0">
+        <p>No released versions yet. Open Experiment to start a draft and release it.</p>
+        <button class="btn mt12" onclick="RecipeView.setTab('experiment')">Open Experiment</button>
+      </div>`;
     }
-    body.innerHTML = `<div class="tab-content"><div id="versions-list">${versions.map((version) => `
-      <div class="version-item">
+    return `<div id="versions-list">${versions.map((version) => `
+      <div class="version-item${this.historyFocusVersion === version.version_string ? ' version-item-focus' : ''}" data-version="${escHtml(version.version_string)}">
         <div class="version-dot ${version.status}"></div>
         <div style="flex:1">
           <div class="version-label">${escHtml(version.version_string)}</div>
@@ -654,9 +757,10 @@ const RecipeView = {
         </div>
         <div class="version-actions">
           <button class="btn btn-sm" onclick="RecipeView.viewVersion('${escJs(version.version_string)}')">View</button>
+          <button class="btn btn-sm" onclick="RecipeView.startNextBetaFrom('${escJs(version.version_string)}')" title="Start next beta from this release">Iterate</button>
           <button class="btn btn-sm btn-danger" onclick="RecipeView.openDeleteVersionModal('${escJs(version.version_string)}')">Delete</button>
         </div>
-      </div>`).join('')}</div></div>`;
+      </div>`).join('')}</div>`;
   },
 
   openDeleteVersionModal(versionString) {
@@ -699,21 +803,20 @@ const RecipeView = {
     }
   },
 
-  renderCompareTab(body) {
+  compareSectionHtml() {
     const versions = (this.recipe.versions || []).filter((entry) => !entry.is_draft);
     const options = [
       ...(this.recipe.draft ? [{ val: 'draft', label: 'Draft' }] : []),
       ...versions.map((version) => ({ val: version.version_string, label: `${version.version_string} (${version.status})` })),
     ];
     if (options.length < 2) {
-      body.innerHTML = `<div class="tab-content"><div class="empty-state" style="padding:40px 0"><p>Need at least 2 versions to compare.</p></div></div>`;
-      return;
+      return `<div class="text-muted" style="padding:12px 0;font-size:0.88rem">Need at least 2 versions to compare.</div>`;
     }
     const opts = (selected) => options.map((option) => `
       <option value="${escHtml(option.val)}" ${option.val === selected ? 'selected' : ''}>${escHtml(option.label)}</option>`).join('');
     const fromVal = options.length >= 2 ? options[options.length - 2].val : options[0].val;
     const toVal = this.selectedVersionKey() || options[0].val;
-    body.innerHTML = `
+    return `
       <div class="compare-selectors">
         <select id="cmp-from">${opts(fromVal)}</select>
         <span class="vs">→</span>
@@ -721,7 +824,6 @@ const RecipeView = {
         <button class="btn btn-sm" onclick="RecipeView.runCompare()">Compare</button>
       </div>
       <div id="compare-result"><div class="loading"><div class="spinner"></div></div></div>`;
-    this.runCompare();
   },
 
   async runCompare() {
@@ -739,68 +841,151 @@ const RecipeView = {
   },
 
   renderCompareResult(el, cmp) {
-    const idiff = cmp.ingredient_diff;
-    const ingHtml = (() => {
-      const changed = idiff.changed || [];
-      const removed = idiff.removed || [];
-      const added = idiff.added || [];
-      if (!changed.length && !removed.length && !added.length) {
-        return '<p class="text-muted" style="font-size:0.88rem">No ingredient changes.</p>';
-      }
-      const renderGroup = (title, rows, renderRow) => {
-        if (!rows.length) return '';
-        return `
-          <div class="diff-group">
-            <div class="diff-subtitle">${escHtml(title)}</div>
-            ${rows.map(renderRow).join('')}
-          </div>`;
-      };
-      return [
-        renderGroup('Changes', changed, (row) => {
+    const renderGroup = (title, rows, renderRow) => {
+      if (!rows.length) return '';
+      return `
+        <div class="diff-group">
+          <div class="diff-subtitle">${escHtml(title)}</div>
+          ${rows.map(renderRow).join('')}
+        </div>`;
+    };
+
+    const idiff = cmp.ingredient_diff || { changed: [], removed: [], added: [] };
+    const ingHtml = (!idiff.changed?.length && !idiff.removed?.length && !idiff.added?.length)
+      ? '<p class="text-muted" style="font-size:0.88rem">No ingredient changes.</p>'
+      : [
+        renderGroup('Changes', idiff.changed || [], (row) => {
           const suffix = row.percent_change === null ? '[CHANGED]' : formatPercentChange(row.percent_change);
           return `<div class="diff-changed">${escHtml(row.name)} ${escHtml(row.from_display)} → ${escHtml(row.to_display)} <span class="diff-row-meta">${escHtml(suffix)}</span></div>`;
         }),
-        renderGroup('Removals', removed, (row) => (
+        renderGroup('Removals', idiff.removed || [], (row) => (
           `<div class="diff-removed">- ${escHtml(row.from_display)} ${escHtml(row.name)}</div>`
         )),
-        renderGroup('Additions', added, (row) => (
+        renderGroup('Additions', idiff.added || [], (row) => (
           `<div class="diff-added">+ ${escHtml(row.to_display)} ${escHtml(row.name)}</div>`
         )),
       ].join('');
-    })();
-    const stepInfo = cmp.step_count_from !== cmp.step_count_to
-      ? `<div class="diff-changed">Step count: ${cmp.step_count_from} → ${cmp.step_count_to}</div>`
-      : '<p class="text-muted" style="font-size:0.88rem">Same number of steps.</p>';
-    const patchLines = (cmp.text_diff || '').split('\n').map((line) => {
-      if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@')) return `<span class="diff-line-hdr">${escHtml(line)}</span>`;
-      if (line.startsWith('+')) return `<span class="diff-line-add">${escHtml(line)}</span>`;
-      if (line.startsWith('-')) return `<span class="diff-line-del">${escHtml(line)}</span>`;
-      return `<span class="diff-line-ctx">${escHtml(line)}</span>`;
-    }).join('\n');
+
+    const stepChanges = Array.isArray(cmp.step_changes) ? cmp.step_changes : [];
+    const stepChangesHtml = stepChanges.length === 0
+      ? '<p class="text-muted" style="font-size:0.88rem">No step changes.</p>'
+      : this.renderStepChanges(stepChanges);
+
+    const patchHtml = this.renderInlineDiffPatch(cmp);
+
     el.innerHTML = `
       <div class="diff-section">
-        <div class="diff-title">Ingredients</div>
+        <div class="diff-title">Step changes</div>
+        ${stepChangesHtml}
+      </div>
+      <div class="diff-section">
+        <div class="diff-title">Ingredients (totals)</div>
         ${ingHtml}
       </div>
-      <div class="diff-section">
-        <div class="diff-title">Steps</div>
-        ${stepInfo}
-      </div>
-      <div class="diff-section">
-        <div class="diff-title">Full diff</div>
-        <div class="diff-patch">${patchLines}</div>
-      </div>`;
+      <details class="diff-section">
+        <summary class="diff-title" style="cursor:pointer">Raw text diff</summary>
+        <div class="diff-patch">${patchHtml}</div>
+      </details>`;
   },
 
-  renderEditTab(body) {
+  renderStepChanges(changes) {
+    const renderInline = (tokens) => (tokens || []).map((token) => {
+      if (token.op === 'context') return escHtml(token.text);
+      if (token.op === 'replace') {
+        // A coalesced change region. Render as old → new so the swap reads
+        // unambiguously even when no internal separator would otherwise exist.
+        const del = token.removed
+          ? `<span class="diff-token-del">${escHtml(token.removed)}</span>`
+          : '';
+        const ins = token.added
+          ? `<span class="diff-token-add">${escHtml(token.added)}</span>`
+          : '';
+        if (del && ins) return `${del}<span class="diff-arrow"> → </span>${ins}`;
+        return del || ins;
+      }
+      // Back-compat: stand-alone removed/added (e.g. patch-line renderer reuse).
+      const tcls = token.op === 'removed' ? 'diff-token-del' : 'diff-token-add';
+      return `<span class="${tcls}">${escHtml(token.text)}</span>`;
+    }).join('');
+
+    // One line per change. The section + step number sits in a small left-side
+    // label; the changed sentence reads inline with strike/highlight tokens.
+    return `<ul class="step-diff-list">${changes.map((change) => {
+      const sectionLabel = change.section_name ? `${change.section_name} · ` : '';
+      const stepLabel = change.block_kind === 'note'
+        ? 'Note'
+        : (change.step_number ? `Step ${change.step_number}` : 'Step');
+      const prefix = `<span class="step-diff-prefix">${escHtml(sectionLabel + stepLabel)}</span>`;
+      let body;
+      let cls;
+      if (change.kind === 'modified') {
+        cls = 'step-diff-modified';
+        body = renderInline(change.inline_tokens);
+      } else if (change.kind === 'removed') {
+        cls = 'step-diff-removed';
+        body = `<span class="diff-token-del">${escHtml(change.text)}</span>`;
+      } else {
+        cls = 'step-diff-added';
+        body = `<span class="diff-token-add">${escHtml(change.text)}</span>`;
+      }
+      return `<li class="step-diff-row ${cls}">${prefix}<span class="step-diff-body">${body}</span></li>`;
+    }).join('')}</ul>`;
+  },
+
+  renderInlineDiffPatch(cmp) {
+    // Prefer the structured token-pair stream when the server provides it;
+    // fall back to the old line-level coloring for back-compat.
+    const lines = Array.isArray(cmp.text_diff_lines) ? cmp.text_diff_lines : null;
+    if (!lines) {
+      return (cmp.text_diff || '').split('\n').map((line) => {
+        if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@')) return `<span class="diff-line-hdr">${escHtml(line)}</span>`;
+        if (line.startsWith('+')) return `<span class="diff-line-add">${escHtml(line)}</span>`;
+        if (line.startsWith('-')) return `<span class="diff-line-del">${escHtml(line)}</span>`;
+        return `<span class="diff-line-ctx">${escHtml(line)}</span>`;
+      }).join('\n');
+    }
+    return lines.map((entry) => {
+      if (entry.kind === 'header' || entry.kind === 'hunk') {
+        return `<span class="diff-line-hdr">${escHtml(entry.text)}</span>`;
+      }
+      if (entry.kind === 'context') {
+        return `<span class="diff-line-ctx">${escHtml(entry.text)}</span>`;
+      }
+      const cls = entry.kind === 'removed' ? 'diff-line-del' : 'diff-line-add';
+      const tokens = (entry.tokens || []).map((token) => {
+        if (token.op === 'context') return escHtml(token.text);
+        const tcls = token.op === 'removed' ? 'diff-token-del' : 'diff-token-add';
+        return `<span class="${tcls}">${escHtml(token.text)}</span>`;
+      }).join('');
+      return `<span class="${cls}">${escHtml(entry.prefix || '')}${tokens}</span>`;
+    }).join('\n');
+  },
+
+  renderExperimentTab(body) {
+    // If we entered via "Edit recipe" on a cook log, use that as the target;
+    // otherwise fall back to the draft / active experiment.
+    let cookLogTarget = null;
+    if (this.cookLogEditingId) {
+      const log = (this.cookLogs || []).find((entry) => entry.id === this.cookLogEditingId);
+      if (log) cookLogTarget = this.cookLogToEditableTarget(log);
+      else this.cookLogEditingId = null;
+    }
+    const experimentTarget = cookLogTarget
+      || this.recipe.active_experiment
+      || this.recipe.draft
+      || null;
+    if (experimentTarget && experimentTarget !== this.activeVersion) {
+      this.activeVersion = experimentTarget;
+    }
     const editable = this.getEditableVersion();
     if (!editable) {
+      const best = this.recipe.current_best_release;
       body.innerHTML = `
         <div class="tab-content">
           <div class="empty-state" style="padding:32px 0">
-            <h2>No draft to edit</h2>
-            <p>Fork ${escHtml(this.activeVersion?.version_string || 'this version')} to start a new draft, or edit a beta directly.</p>
-            <button class="btn btn-primary" onclick="RecipeView.forkCurrentBranchHead()">Fork to draft</button>
+            <h2>No active experiment</h2>
+            <p>${best ? `Start the next experiment from <strong>${escHtml(best.version_string)}</strong>.` : 'Start a fresh draft to begin writing this recipe.'}</p>
+            <button class="btn btn-primary" onclick="RecipeView.${best ? 'forkCurrentBranchHead' : 'startExperimentFromScratch'}()">${best ? 'Start from current best' : 'Start a draft'}</button>
           </div>
         </div>`;
       return;
@@ -812,12 +997,16 @@ const RecipeView = {
     this.draftQuantityTokens = [];
     this.draftPreviewState = null;
     this.draftQuantityAnchor = null;
+    const isEditingCookLog = !!editable?._cookLogId;
     body.innerHTML = `
       <div class="editor-wrap">
         <div class="editor-toolbar">
           <span class="editor-hint">@ingredient{qty%unit} &nbsp;#cookware &nbsp;~{time%min}</span>
           <span class="text-muted" style="font-size:0.82rem">${escHtml(this.editTargetLabel())}</span>
-          <button class="btn btn-sm" onclick="RecipeView.saveDraft({ advanceBeta: true })">Save</button>
+          ${isEditingCookLog
+            ? `<button class="btn btn-sm" onclick="RecipeView.exitCookLogEdit()">← Back to cook logs</button>
+               <button class="btn btn-sm btn-primary" onclick="RecipeView.saveDraft({ advanceBeta: false })">Save</button>`
+            : `<button class="btn btn-sm" onclick="RecipeView.saveDraft({ advanceBeta: true })">Save</button>`}
         </div>
         <div class="editor-split">
           <div class="editor-code">
@@ -834,6 +1023,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
               <code>&gt;&gt; servings: 4</code>
               <code>&gt;&gt; notes: Your notes</code>
               <code>&gt;&gt; source: URL or book</code>
+              <code>&gt;&gt; metric.hydration: water.g / flour.g * 100 | %</code>
             </div>
           </div>
           <div class="editor-preview-pane">
@@ -853,7 +1043,14 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
             </div>
           </div>
         </div>
-        ${(isEditingDraft || editable?.status === 'beta') ? `
+        ${isEditingCookLog ? `
+        <div style="padding:16px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">
+          <div class="text-muted" style="font-size:0.84rem;line-height:1.5">Edits save to this cook log only — not the draft or any release.</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-sm" onclick="RecipeView.openPromoteLogModal('${escJs(editable._cookLogId)}')">Promote to release…</button>
+            <button class="btn btn-sm" onclick="RecipeView.exitCookLogEdit()">Done</button>
+          </div>
+        </div>` : (isEditingDraft || editable?.status === 'beta') ? `
         <div style="padding:16px;border-top:1px solid var(--border);background:var(--surface)">
           <button class="btn btn-primary" onclick="RecipeView.openReleaseModal()" style="width:100%">${editable?.status === 'beta' ? `Promote ${escHtml(editable.version_string || 'beta')}…` : 'Release version…'}</button>
         </div>` : `
@@ -872,7 +1069,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     } else {
       textarea?.classList.remove('editor-textarea-shadow');
       window.addEventListener('cooklang-editor-ready', () => {
-        if (!textarea || !editorHost || this.activeTab !== 'edit' || this.draftEditor) return;
+        if (!textarea || !editorHost || this.activeTab !== 'experiment' || this.draftEditor) return;
         if (!window.CooklangEditor?.createCooklangEditor) return;
         textarea.classList.add('editor-textarea-shadow');
         this.draftEditor = window.CooklangEditor.createCooklangEditor(editorHost, {
@@ -1056,6 +1253,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       const notes = normalizeNotes(meta.notes || meta.Notes || '');
       const servings = meta.servings || meta.Servings || meta.yield || '';
       let html = '';
+      html += CL.renderMetrics(preview.metrics);
       if (notes) html += `<div class="notes-box" style="margin-bottom:12px">${formatMultilineText(notes)}</div>`;
       if (servings) html += `<p class="text-muted" style="font-size:0.85rem;margin-bottom:12px">Serves ${escHtml(servings)}</p>`;
       if (preview.ingredients?.length) {
@@ -1094,9 +1292,22 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     const advanceBeta = options.advanceBeta === true;
     const text = document.getElementById('draft-text')?.value ?? '';
     const tags = [...document.querySelectorAll('#tag-list .tag-chip')].map((el) => el.dataset.tag);
+    let response = null;
     try {
+      if (editable?._cookLogId) {
+        await API.put(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(editable._cookLogId)}`, { cooklang_text: text, tags });
+        // Mirror back into local state so the preview stays consistent.
+        const nextTags = tags.slice();
+        const list = this.cookLogs || [];
+        const idx = list.findIndex((entry) => entry.id === editable._cookLogId);
+        if (idx >= 0) list[idx] = { ...list[idx], cooklang_text: text, tags: nextTags };
+        this.activeVersion = { ...this.activeVersion, cooklang_text: text, tags: JSON.stringify(nextTags) };
+        if (silent) return;
+        showToast('Cook log saved');
+        return;
+      }
       if (editable?.is_draft) {
-        await API.put(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/draft`, { cooklang_text: text, tags, advance_beta: advanceBeta });
+        response = await API.put(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/draft`, { cooklang_text: text, tags, advance_beta: advanceBeta });
       } else if (editable?.status === 'beta' && editable?.version_string) {
         await API.put(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(editable.version_string)}`, { cooklang_text: text, tags });
       } else {
@@ -1116,15 +1327,33 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       if (this.activeVersion) {
         this.activeVersion = { ...this.activeVersion, cooklang_text: text, tags: nextTags };
       }
-      if (silent) return;
+      if (silent) {
+        this.maybeShowUnresolvedWarning(response, true);
+        return;
+      }
       await this.refreshRecipe();
       const versionKey = editable?.is_draft ? 'draft' : editable?.version_string;
       if (versionKey) {
         await this.renderDetail(document.getElementById('view-container'), versionKey, { syncUrl: true, replaceUrl: true });
       }
       if (!silent) showToast(editable?.is_draft ? 'Draft saved' : 'Version saved');
+      this.maybeShowUnresolvedWarning(response, false);
     } catch (e) {
       if (!silent) showToast('Error saving: ' + e.message);
+    }
+  },
+
+  maybeShowUnresolvedWarning(response, silent) {
+    const list = response?.warnings?.unresolved_references;
+    if (!Array.isArray(list) || list.length === 0) return;
+    const names = list.map((entry) => entry.slug || entry.raw_path).filter(Boolean);
+    if (!names.length) return;
+    const message = `Unresolved references: ${names.join(', ')}`;
+    if (silent) {
+      // Surface even on autosave so the user notices typos right away
+      showToast(message);
+    } else {
+      showToast(message);
     }
   },
 
@@ -1312,31 +1541,54 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       return;
     }
     try {
-      await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/release`, { version_string: versionString, status, changelog, source_version: sourceVersion });
+      const response = await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/release`, { version_string: versionString, status, changelog, source_version: sourceVersion });
       closeModal();
       await this.refreshRecipe();
       await this.renderDetail(document.getElementById('view-container'), versionString, { syncUrl: true, replaceUrl: true });
       showToast(`Released ${versionString}`);
+      this.maybeShowUnresolvedWarning(response, false);
     } catch (e) {
       showToast('Error: ' + e.message);
     }
   },
 
-  renderSettingsTab(body) {
-    body.innerHTML = `
-      <div class="tab-content">
-        <div class="field-group">
-          <label class="field-label">Recipe title</label>
-          <input id="settings-title" class="field-input" value="${escHtml(this.recipe.title)}" />
+  openSettingsModal() {
+    const recipe = this.recipe;
+    const thumb = recipe.thumbnail_image_id
+      ? `<img class="settings-thumb-image" src="/api/images/${recipe.thumbnail_image_id}" alt="${escHtml(recipe.title)}" />`
+      : `<div class="settings-thumb-empty">No thumbnail set</div>`;
+    showModal(`
+      <div class="modal-title">Recipe menu</div>
+      <div class="settings-actions">
+        <button class="btn" onclick="closeModal(); RecipeView.openPrintView()">🖨 Print recipe</button>
+      </div>
+      <div class="field-group mt8">
+        <label class="field-label" for="settings-title">Recipe title</label>
+        <input id="settings-title" class="field-input" value="${escHtml(recipe.title)}" />
+      </div>
+      <div class="modal-actions" style="justify-content:flex-start;margin-top:12px">
+        <button class="btn btn-primary" onclick="RecipeView.saveSettings()">Save title</button>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title">Thumbnail</div>
+        <div class="settings-thumb-row">
+          ${thumb}
+          <div class="settings-thumb-actions">
+            <button class="btn btn-sm" onclick="document.getElementById('settings-thumb-file').click()">${recipe.thumbnail_image_id ? 'Replace' : 'Upload'}</button>
+            ${recipe.thumbnail_image_id ? `<button class="btn btn-sm btn-ghost" onclick="RecipeView.deleteThumbnail()">Remove</button>` : ''}
+          </div>
         </div>
-        <div class="action-row mt16">
-          <button class="btn btn-primary" onclick="RecipeView.saveSettings()">Save title</button>
-        </div>
-        <div style="margin-top:40px;padding-top:16px;border-top:1px solid var(--border)">
-          <div class="diff-title" style="margin-bottom:8px">Danger zone</div>
-          <button class="btn btn-danger" onclick="RecipeView.deleteRecipe()">Delete recipe</button>
-        </div>
-      </div>`;
+        <input type="file" id="settings-thumb-file" accept="image/*" style="display:none" onchange="RecipeView.uploadThumbnail(this)" />
+      </div>
+      <div class="settings-section settings-danger">
+        <div class="settings-section-title">Danger zone</div>
+        <p class="text-muted" style="font-size:0.85rem;margin-bottom:8px">Deleting removes the recipe, all versions, photos, and cook logs.</p>
+        <button class="btn btn-danger" onclick="RecipeView.deleteRecipe()">Delete recipe</button>
+      </div>
+      <div class="modal-actions" style="margin-top:18px">
+        <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      </div>`);
+    setTimeout(() => document.getElementById('settings-title')?.select(), 80);
   },
 
   async saveSettings() {
@@ -1348,7 +1600,551 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       if (res.slug && res.slug !== this.slug) {
         this.slug = res.slug;
         Router.go(this.recipePathFor(), true);
+        return;
       }
+      await this.refreshRecipe();
+      this.renderScaffold(document.getElementById('view-container'));
+      this.renderHeaderThumbnail();
+      this.renderTab();
+    } catch (e) {
+      showToast('Error: ' + e.message);
+    }
+  },
+
+  async renderOverviewTab(body) {
+    const recipe = this.recipe;
+    const expt = recipe.active_experiment;
+    const best = recipe.current_best_release;
+    if (!this.explicitVersionRequest) {
+      const desired = this.defaultActiveVersion();
+      if (desired && desired !== this.activeVersion) {
+        this.activeVersion = desired;
+        await this.loadParsed();
+        await this.loadImages();
+      }
+    }
+    const primary = this.activeVersion;
+    const hasRealPrimary = !!(expt || best || (primary && primary.cooklang_text && primary.cooklang_text.trim()));
+    if (!primary || !hasRealPrimary) {
+      body.innerHTML = `
+        <div class="tab-content">
+          <div class="empty-state" style="padding:48px 0">
+            <h2>No releases yet</h2>
+            <p>Start a fresh draft and release v1.0 to begin the improvement loop.</p>
+            <button class="btn btn-primary mt12" onclick="RecipeView.startExperimentFromScratch()">Start a draft</button>
+          </div>
+        </div>`;
+      return;
+    }
+    const isExperimentPrimary = !!(expt && primary === expt);
+    const primaryLabel = isExperimentPrimary
+      ? (primary.is_draft
+          ? 'Active experiment · Draft'
+          : `Active experiment · ${escHtml(primary.version_string || '')} (${escHtml(primary.status)})`)
+      : (primary.version_string
+          ? `Current best · ${escHtml(primary.version_string)} (${escHtml(primary.status)})`
+          : 'Current best');
+    const primaryBanner = this.overviewPrimaryBannerHtml(primary, primaryLabel, isExperimentPrimary, best);
+    const sidebarHtml = this.overviewSidebarHtml();
+    body.innerHTML = `
+      <div class="tab-content overview-tab">
+        <div class="overview-grid">
+          <div class="overview-primary">
+            ${primaryBanner}
+            ${this.recipeBodyHtml()}
+          </div>
+          <aside class="overview-sidebar">
+            ${sidebarHtml}
+          </aside>
+        </div>
+      </div>`;
+    this.renderImageManager();
+  },
+
+  overviewPrimaryBannerHtml(primary, primaryLabel, isExperimentPrimary, best) {
+    const badgeClass = primary.is_draft ? 'draft' : primary.status;
+    const actions = [];
+    if (isExperimentPrimary) {
+      const releaseLabel = primary.is_draft
+        ? 'Release version…'
+        : `Promote ${escHtml(primary.version_string || 'beta')}…`;
+      actions.push(`<button class="btn btn-sm btn-primary" onclick="RecipeView.openReleaseModal()">${releaseLabel}</button>`);
+      if (best) {
+        actions.push(`<button class="btn btn-sm" onclick="RecipeView.setTab('experiment')">Open Experiment</button>`);
+      }
+    }
+    return `<div class="overview-primary-banner">
+      <span class="badge badge-${badgeClass}">${primaryLabel}</span>
+      ${actions.length ? `<div class="overview-primary-banner-actions">${actions.join('')}</div>` : ''}
+    </div>`;
+  },
+
+  overviewSidebarHtml() {
+    const recipe = this.recipe;
+    const bestEmpty = !recipe.current_best_release;
+    const logEmpty = !recipe.latest_cook_log;
+    const backlinksCard = this.overviewBacklinksCardHtml();
+    if (bestEmpty && logEmpty) {
+      const expt = recipe.active_experiment;
+      const quiet = `<div class="overview-sidebar-card overview-sidebar-card-quiet">
+        <div class="overview-sidebar-card-title">Set a baseline</div>
+        <p class="text-muted" style="font-size:0.85rem;margin:0">Release this experiment to set a current best. Cook it to log feedback.</p>
+        <div class="overview-sidebar-card-actions">
+          ${expt ? `<button class="btn btn-sm" onclick="RecipeView.openReleaseModal()">Release…</button>` : ''}
+          <button class="btn btn-sm btn-ghost" onclick="RecipeView.setTab('cook-logs')">Cook Logs →</button>
+        </div>
+      </div>`;
+      return `${quiet}${backlinksCard}`;
+    }
+    return `${bestEmpty ? '' : this.overviewBestCardHtml()}${logEmpty ? '' : this.overviewCookCardHtml()}${backlinksCard}`;
+  },
+
+  overviewBacklinksCardHtml() {
+    const backlinks = Array.isArray(this.backlinks) ? this.backlinks : [];
+    if (!backlinks.length) return '';
+    const items = backlinks.map((entry) => {
+      const url = `/recipe/${encodeURIComponent(entry.from_slug)}`;
+      const jsUrl = String(url).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      const pinSuffix = entry.pinned && entry.from_version
+        ? ` <span class="ref-pin">@${escHtml(entry.from_version)}</span>`
+        : '';
+      return `<a href="${escHtml(url)}" onclick="event.preventDefault(); Router.go('${jsUrl}')">${escHtml(entry.from_title)}${pinSuffix}</a>`;
+    }).join('');
+    return `<div class="overview-sidebar-card">
+      <div class="overview-sidebar-card-title">Used by</div>
+      <div class="overview-backlinks-list">${items}</div>
+    </div>`;
+  },
+
+  overviewBestCardHtml() {
+    const recipe = this.recipe;
+    const best = recipe.current_best_release;
+    const expt = recipe.active_experiment;
+    if (!best) {
+      return `<div class="overview-sidebar-card">
+        <div class="overview-sidebar-card-title">Current Best</div>
+        <p class="text-muted" style="font-size:0.86rem">No release yet. Release the active experiment to set a current best.</p>
+        ${expt ? `<button class="btn btn-sm" onclick="RecipeView.setTab('experiment')">Open Experiment</button>` : ''}
+      </div>`;
+    }
+    const changelogSnippet = (best.changelog || '').trim().slice(0, 140);
+    const showOpen = expt; // only show "Open in History" when the primary isn't the current best
+    return `<div class="overview-sidebar-card">
+      <div class="overview-sidebar-card-title">Current Best</div>
+      <div class="overview-best-line"><span class="badge badge-released">${escHtml(best.version_string || '')}</span><span class="text-muted" style="font-size:0.82rem">${fmtDate(best.created_at)}</span></div>
+      ${changelogSnippet ? `<p class="overview-best-changelog">${escHtml(changelogSnippet)}${(best.changelog || '').length > 140 ? '…' : ''}</p>` : ''}
+      <div class="overview-sidebar-card-actions">
+        ${showOpen ? `<button class="btn btn-sm" onclick="RecipeView.focusVersionInHistory('${escJs(best.version_string)}')">Open in History →</button>` : ''}
+        <button class="btn btn-sm" onclick="RecipeView.startNextBetaFrom('${escJs(best.version_string)}')">Start next beta</button>
+      </div>
+    </div>`;
+  },
+
+  overviewCookCardHtml() {
+    const log = this.recipe.latest_cook_log;
+    if (!log) {
+      return `<div class="overview-sidebar-card">
+        <div class="overview-sidebar-card-title">Latest Cook Log</div>
+        <p class="text-muted" style="font-size:0.86rem">No cook logs yet.</p>
+        <div class="overview-sidebar-card-actions">
+          <button class="btn btn-sm" onclick="RecipeView.setTab('cook-logs')">Open Cook Logs →</button>
+        </div>
+      </div>`;
+    }
+    return `<div class="overview-sidebar-card">
+      <div class="overview-sidebar-card-title">Latest Cook Log</div>
+      <div class="overview-cook-outcome">${escHtml(log.outcome || '(no outcome)')}</div>
+      <div class="text-muted" style="font-size:0.82rem">${fmtDate(log.cooked_at)} · <span class="badge badge-released">${escHtml(log.version_string)}</span></div>
+      <div class="overview-sidebar-card-actions">
+        <button class="btn btn-sm" onclick="RecipeView.setTab('cook-logs')">View all →</button>
+      </div>
+    </div>`;
+  },
+
+  focusVersionInHistory(versionString) {
+    this.historyFocusVersion = versionString;
+    this.setTab('history');
+  },
+
+  renderHistoryTab(body) {
+    const variants = (this.recipe.branches || []).filter((branch) => branch.kind === 'variant');
+    body.innerHTML = `
+      <div class="tab-content history-tab">
+        <div class="history-section">
+          <div class="history-section-title">Releases &amp; betas</div>
+          ${this.renderVersionsListHtml()}
+        </div>
+        ${variants.length ? `
+        <div class="history-section">
+          <div class="history-section-title">Variant branches</div>
+          <div class="history-variant-list">
+            ${variants.map((variant) => `
+              <div class="history-variant-row">
+                <div>
+                  <div class="version-label">${escHtml(variant.name)}</div>
+                  <div class="version-date">forked from ${escHtml(variant.forked_from_version_id || 'unknown')}</div>
+                </div>
+                <button class="btn btn-sm" onclick="RecipeView.switchBranch('${escJs(variant.slug)}')">Open</button>
+              </div>`).join('')}
+          </div>
+        </div>` : ''}
+        <details class="history-section history-compare-section" ${this.historyFocusVersion ? '' : ''}>
+          <summary>Compare versions</summary>
+          <div class="history-compare-body">${this.compareSectionHtml()}</div>
+        </details>
+      </div>`;
+    if (this.compareSectionHtml().includes('cmp-from')) {
+      // user must open <details> first; do not auto-run compare on load
+    }
+    if (this.historyFocusVersion) {
+      const safeVersion = (window.CSS && CSS.escape) ? CSS.escape(this.historyFocusVersion) : this.historyFocusVersion.replace(/"/g, '\\"');
+      const target = body.querySelector(`.version-item[data-version="${safeVersion}"]`);
+      if (target) {
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        target.classList.add('version-item-focus');
+      }
+    }
+  },
+
+  async renderCookLogsTab(body) {
+    body.innerHTML = `<div class="tab-content"><div class="loading"><div class="spinner"></div></div></div>`;
+    try {
+      this.cookLogs = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs`);
+    } catch (e) {
+      body.innerHTML = `<div class="tab-content"><div class="empty-state"><p>Error: ${escHtml(e.message)}</p></div></div>`;
+      return;
+    }
+    await this.parseCookLogsAhead();
+    this.paintCookLogs(body);
+  },
+
+  async parseCookLogsAhead() {
+    const logs = Array.isArray(this.cookLogs) ? this.cookLogs : [];
+    if (!this.cookLogParsed) this.cookLogParsed = {};
+    const stale = Object.keys(this.cookLogParsed).filter((id) => !logs.some((log) => log.id === id));
+    for (const id of stale) delete this.cookLogParsed[id];
+    await Promise.all(logs.map(async (log) => {
+      const cached = this.cookLogParsed[log.id];
+      if (cached && cached.text === log.cooklang_text) return;
+      if (!log.cooklang_text) {
+        this.cookLogParsed[log.id] = { text: '', parsed: null };
+        return;
+      }
+      try {
+        const parsed = await API.post(`/recipes/${this.slug}/draft/parse`, { cooklang_text: log.cooklang_text });
+        this.cookLogParsed[log.id] = { text: log.cooklang_text, parsed };
+      } catch {
+        this.cookLogParsed[log.id] = { text: log.cooklang_text, parsed: null };
+      }
+    }));
+  },
+
+  cookLogSourceLabel(log) {
+    if (log.source_kind === 'draft') return 'from draft';
+    return log.source_version_string ? `from ${log.source_version_string}` : 'from draft';
+  },
+
+  cookLogSourceKey(log) {
+    return log.source_kind === 'draft' ? '__draft__' : (log.source_version_string || '__draft__');
+  },
+
+  paintCookLogs(body) {
+    const logs = Array.isArray(this.cookLogs) ? this.cookLogs : [];
+    const filter = this.cookLogsFilterVersion;
+    const filtered = filter ? logs.filter((log) => this.cookLogSourceKey(log) === filter) : logs;
+    const keysInUse = Array.from(new Set(logs.map((log) => this.cookLogSourceKey(log))));
+    const chips = keysInUse.length > 1 ? `
+      <div class="cook-log-version-chips">
+        <button class="cook-log-chip${!filter ? ' active' : ''}" onclick="RecipeView.setCookLogFilter(null)">All</button>
+        ${keysInUse.map((key) => {
+          const label = key === '__draft__' ? 'Draft' : key;
+          return `<button class="cook-log-chip${filter === key ? ' active' : ''}" onclick="RecipeView.setCookLogFilter('${escJs(key)}')">${escHtml(label)}</button>`;
+        }).join('')}
+      </div>` : '';
+    const newButton = `<button class="btn btn-primary" onclick="RecipeView.openCookLogModal()">New cook log</button>`;
+    const empty = filtered.length === 0
+      ? `<div class="empty-state" style="padding:36px 0">
+          <p>${logs.length === 0 ? 'No cook logs yet.' : 'No logs for this source.'}</p>
+        </div>`
+      : '';
+    body.innerHTML = `
+      <div class="tab-content cook-logs-tab">
+        <div class="cook-logs-head">
+          <div>
+            <div class="section-head">Cook Logs</div>
+            <div class="text-muted" style="font-size:0.85rem">${logs.length} log${logs.length === 1 ? '' : 's'} on this branch</div>
+          </div>
+          ${newButton}
+        </div>
+        ${chips}
+        ${empty || `<div class="cook-log-feed">${filtered.map((log) => this.cookLogCardHtml(log)).join('')}</div>`}
+      </div>`;
+  },
+
+  cookLogCardHtml(log) {
+    const fields = [
+      { key: 'what_worked', label: 'What worked' },
+      { key: 'problems_found', label: 'Problems found' },
+      { key: 'changes_to_try_next', label: 'Changes to try next' },
+    ];
+    const filledFields = fields.filter((f) => (log[f.key] || '').trim());
+    const detailHtml = filledFields.length || (log.freeform_notes || '').trim()
+      ? `<details class="cook-log-details">
+          <summary>Details</summary>
+          <dl class="cook-log-fields">
+            ${filledFields.map((f) => `<dt>${escHtml(f.label)}</dt><dd>${formatMultilineText(log[f.key])}</dd>`).join('')}
+            ${(log.freeform_notes || '').trim() ? `<dt>Notes</dt><dd>${formatMultilineText(log.freeform_notes)}</dd>` : ''}
+          </dl>
+        </details>`
+      : '';
+    const parsedEntry = this.cookLogParsed?.[log.id];
+    const parsed = parsedEntry?.parsed;
+    const recipeHtml = parsed
+      ? `<details class="cook-log-recipe">
+          <summary>Recipe as cooked</summary>
+          <div class="cook-log-recipe-body">
+            ${CL.renderMetrics(parsed.metrics)}
+            ${parsed.ingredients?.length ? `<div class="section-head">Ingredients</div>${CL.renderIngredientSummary(parsed.ingredient_summary, 1, { mode: this.ingredientSummaryMode })}` : ''}
+            ${parsed.steps?.length ? `<div class="section-head mt12">Steps</div>${CL.renderSteps(parsed.steps, 1, false, parsed.metadata, true, {})}` : ''}
+          </div>
+        </details>`
+      : (log.cooklang_text ? '<div class="cook-log-recipe-loading text-muted">Parsing recipe…</div>' : '');
+    return `<div class="cook-log-card" data-id="${escHtml(log.id)}">
+      <div class="cook-log-head">
+        <div class="cook-log-outcome">${escHtml(log.outcome || '(no outcome)')}</div>
+        <div class="cook-log-meta">${fmtDate(log.cooked_at)} · <span class="badge badge-released">${escHtml(this.cookLogSourceLabel(log))}</span></div>
+      </div>
+      ${recipeHtml}
+      ${detailHtml}
+      <div class="cook-log-actions">
+        <button class="btn btn-sm btn-primary" onclick="RecipeView.editCookLogRecipe('${escJs(log.id)}')">Edit recipe</button>
+        <button class="btn btn-sm" onclick="RecipeView.iterateFromCookLog('${escJs(log.id)}')">Iterate as next draft</button>
+        <button class="btn btn-sm" onclick="RecipeView.openCookLogModal('${escJs(log.id)}')">Edit notes</button>
+        <button class="btn btn-sm" onclick="RecipeView.compareCookLogToSource('${escJs(log.id)}')">Compare to source</button>
+        <button class="btn btn-sm" onclick="RecipeView.openPromoteLogModal('${escJs(log.id)}')">Promote to release</button>
+        <button class="btn btn-sm btn-danger" onclick="RecipeView.deleteCookLogConfirm('${escJs(log.id)}')">Delete</button>
+      </div>
+    </div>`;
+  },
+
+  async iterateFromCookLog(logId) {
+    const log = (this.cookLogs || []).find((entry) => entry.id === logId);
+    if (!log) return;
+    // Warn before overwriting a draft that has unreleased changes — losing work
+    // accidentally here would erase someone's planning iteration.
+    const draftText = this.recipe?.draft?.cooklang_text || '';
+    if (draftText.trim() && this.recipe?.has_unreleased_changes) {
+      const sourceLabel = log.source_version_string || 'draft';
+      if (!confirm(`The current draft has unreleased changes. Overwrite it with this cook log's recipe (forked from ${sourceLabel})?`)) {
+        return;
+      }
+    }
+    try {
+      await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/fork-to-draft`, {});
+      await this.refreshRecipe();
+      // Clear any cook-log edit state so the experiment tab opens on the draft,
+      // not back on the cook log we just forked.
+      this.cookLogEditingId = null;
+      this.activeVersion = this.recipe.draft || null;
+      this.setTab('experiment');
+      showToast('Draft replaced with this cook log — Save advances the next beta');
+    } catch (e) {
+      showToast('Error: ' + e.message);
+    }
+  },
+
+  async compareCookLogToSource(logId) {
+    const log = (this.cookLogs || []).find((entry) => entry.id === logId);
+    if (!log) return;
+    const fromLabel = log.source_kind === 'draft'
+      ? 'Source snapshot (draft at log creation)'
+      : `Source snapshot (${log.source_version_string})`;
+    showModal(`
+      <div class="modal-title">Compare cook log to source</div>
+      <div class="text-muted" style="font-size:0.85rem;margin-bottom:10px">
+        ${escHtml(fromLabel)} → recipe as cooked
+      </div>
+      <div id="cl-compare-result"><div class="loading"><div class="spinner"></div></div></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      </div>`);
+    const target = document.getElementById('cl-compare-result');
+    if (!target) return;
+    try {
+      const fromKey = `cooklog-source:${logId}`;
+      const toKey = `cooklog:${logId}`;
+      const cmp = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/compare?from=${encodeURIComponent(fromKey)}&to=${encodeURIComponent(toKey)}`);
+      this.renderCompareResult(target, cmp);
+    } catch (e) {
+      target.innerHTML = `<p class="text-muted">Error: ${escHtml(e.message)}</p>`;
+    }
+  },
+
+  setCookLogFilter(versionString) {
+    this.cookLogsFilterVersion = versionString;
+    const body = document.getElementById('tab-body');
+    if (body) this.paintCookLogs(body);
+  },
+
+  openCookLogModal(existingId) {
+    const existing = existingId ? (this.cookLogs || []).find((log) => log.id === existingId) : null;
+    const versions = (this.recipe.versions || []).filter((v) => !v.is_draft && v.version_string);
+    const defaultSourceKey = existing
+      ? (existing.source_kind === 'draft' ? '__draft__' : (existing.source_version_string || '__draft__'))
+      : (this.recipe.current_best_release?.version_string
+          || this.recipe.active_experiment?.version_string
+          || versions[0]?.version_string
+          || '__draft__');
+    const sourceOptions = [`<option value="__draft__" ${defaultSourceKey === '__draft__' ? 'selected' : ''}>Current draft</option>`]
+      .concat(versions.map((v) => `<option value="${escHtml(v.version_string)}" ${v.version_string === defaultSourceKey ? 'selected' : ''}>${escHtml(v.version_string)} (${escHtml(v.status)})</option>`))
+      .join('');
+    const cookedAtDefault = (existing?.cooked_at || new Date().toISOString()).slice(0, 16);
+    showModal(`
+      <div class="modal-title">${existing ? 'Edit cook log notes' : 'New cook log'}</div>
+      <div class="cook-log-modal-row">
+        <div class="field-group mt8" style="flex:1">
+          <label class="field-label" for="cl-source">Source</label>
+          <select id="cl-source" class="field-input" ${existing ? 'disabled' : ''}>${sourceOptions}</select>
+          ${existing ? '' : '<small style="color:var(--ink3);font-size:0.78rem">The recipe is snapshotted from this source on create. Edit measurements in the full recipe editor afterwards.</small>'}
+        </div>
+        <div class="field-group mt8" style="flex:1">
+          <label class="field-label" for="cl-cooked-at">Cooked at</label>
+          <input id="cl-cooked-at" class="field-input" type="datetime-local" value="${escHtml(cookedAtDefault)}" />
+        </div>
+      </div>
+      <div class="field-group mt12">
+        <label class="field-label" for="cl-outcome">Outcome (one line)</label>
+        <input id="cl-outcome" class="field-input" placeholder="e.g. crust burnt, crumb good" value="${escHtml(existing?.outcome || '')}" />
+      </div>
+      <div class="field-group mt12">
+        <label class="field-label" for="cl-worked">What worked</label>
+        <textarea id="cl-worked" class="field-input" rows="2">${escHtml(existing?.what_worked || '')}</textarea>
+      </div>
+      <div class="field-group mt12">
+        <label class="field-label" for="cl-problems">Problems found</label>
+        <textarea id="cl-problems" class="field-input" rows="2">${escHtml(existing?.problems_found || '')}</textarea>
+      </div>
+      <div class="field-group mt12">
+        <label class="field-label" for="cl-changes">Changes to try next</label>
+        <textarea id="cl-changes" class="field-input" rows="2">${escHtml(existing?.changes_to_try_next || '')}</textarea>
+      </div>
+      <div class="field-group mt12">
+        <label class="field-label" for="cl-notes">Freeform notes (optional)</label>
+        <textarea id="cl-notes" class="field-input" rows="2">${escHtml(existing?.freeform_notes || '')}</textarea>
+      </div>
+      ${existing ? '' : `
+      <div class="text-muted" style="font-size:0.82rem;margin-top:10px;padding:10px;background:var(--bg2);border-radius:8px">
+        After creating, hit <strong>Edit recipe</strong> on the new log card to adjust quantities in the full editor.
+      </div>`}
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="RecipeView.saveCookLog('${escJs(existingId || '')}')">${existing ? 'Save notes' : 'Create cook log'}</button>
+      </div>`);
+    setTimeout(() => document.getElementById('cl-outcome')?.focus(), 80);
+  },
+
+  async saveCookLog(existingId) {
+    const sourceKey = document.getElementById('cl-source')?.value || '__draft__';
+    const cookedAtLocal = document.getElementById('cl-cooked-at')?.value;
+    const outcome = (document.getElementById('cl-outcome')?.value || '').trim();
+    if (!outcome) {
+      showToast('Outcome is required');
+      return;
+    }
+    const body = {
+      cooked_at: cookedAtLocal ? new Date(cookedAtLocal).toISOString() : undefined,
+      outcome,
+      what_worked: document.getElementById('cl-worked')?.value || '',
+      problems_found: document.getElementById('cl-problems')?.value || '',
+      changes_to_try_next: document.getElementById('cl-changes')?.value || '',
+      freeform_notes: document.getElementById('cl-notes')?.value || '',
+    };
+    try {
+      let created = null;
+      if (existingId) {
+        await API.put(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(existingId)}`, body);
+      } else {
+        const source = sourceKey === '__draft__'
+          ? { kind: 'draft' }
+          : { kind: 'version', version_string: sourceKey };
+        created = await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs`, { ...body, source });
+      }
+      closeModal();
+      await this.refreshRecipe();
+      this.renderScaffold(document.getElementById('view-container'));
+      this.renderHeaderThumbnail();
+      if (created?.id) {
+        // Send the user straight into the rich recipe editor for the new log.
+        this.editCookLogRecipe(created.id);
+      } else {
+        await this.renderCookLogsTab(document.getElementById('tab-body'));
+      }
+      showToast(existingId ? 'Cook log saved' : 'Cook log added — edit measurements next');
+    } catch (e) {
+      showToast('Error: ' + e.message);
+    }
+  },
+
+  openPromoteLogModal(logId) {
+    const log = (this.cookLogs || []).find((entry) => entry.id === logId);
+    if (!log) return;
+    const versions = (this.recipe.versions || []).filter((v) => !v.is_draft && v.version_string);
+    const lastVersion = versions[0]?.version_string;
+    showModal(`
+      <div class="modal-title">Promote cook log to release</div>
+      <div class="field-group mt8">
+        <label class="field-label">Version number</label>
+        <input id="rel-version" class="field-input" placeholder="e.g. v1.0, v1.1" value="${lastVersion ? suggestNextVersion(lastVersion) : 'v1.0'}" />
+        ${lastVersion ? `<small style="color:var(--ink3);font-size:0.78rem;margin-top:4px">Previous: ${escHtml(lastVersion)}</small>` : ''}
+      </div>
+      <div class="field-group mt12">
+        <label class="field-label">Status</label>
+        <select id="rel-status" class="field-input">
+          <option value="released">Released (stable)</option>
+          <option value="beta">Beta</option>
+          <option value="archived">Archived</option>
+        </select>
+      </div>
+      <div class="field-group mt12">
+        <label class="field-label">Changelog</label>
+        <textarea id="rel-changelog" class="field-input" placeholder="What changed in this version?">${escHtml((log.outcome || ''))}</textarea>
+      </div>
+      <div class="text-muted" style="font-size:0.82rem;margin-top:10px">Source: cook log "${escHtml(log.outcome || log.id)}" (${escHtml(this.cookLogSourceLabel(log))})</div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="RecipeView.promoteLog('${escJs(logId)}')">Promote</button>
+      </div>`);
+    setTimeout(() => document.getElementById('rel-version')?.select(), 100);
+  },
+
+  async promoteLog(logId) {
+    const versionString = document.getElementById('rel-version')?.value.trim();
+    const status = document.getElementById('rel-status')?.value;
+    const changelog = document.getElementById('rel-changelog')?.value.trim();
+    if (!versionString) {
+      showToast('Version number required');
+      return;
+    }
+    try {
+      await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/promote`, { version_string: versionString, status, changelog });
+      closeModal();
+      await this.refreshRecipe();
+      await this.renderDetail(document.getElementById('view-container'), versionString, { syncUrl: true, replaceUrl: true });
+      showToast(`Released ${versionString}`);
+    } catch (e) {
+      showToast('Error: ' + e.message);
+    }
+  },
+
+  async deleteCookLogConfirm(id) {
+    if (!confirm('Delete this cook log?')) return;
+    try {
+      await API.delete(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(id)}`);
+      await this.refreshRecipe();
+      this.renderScaffold(document.getElementById('view-container'));
+      this.renderHeaderThumbnail();
+      await this.renderCookLogsTab(document.getElementById('tab-body'));
+      showToast('Cook log deleted');
     } catch (e) {
       showToast('Error: ' + e.message);
     }
@@ -1403,6 +2199,7 @@ const PrintView = {
             <span>${fmtDate(version?.updated_at || version?.created_at)}</span>
           </div>
           ${servings ? `<div class="print-servings">Serves ${escHtml(servings)}</div>` : ''}
+          ${CL.renderMetrics(parsed.metrics)}
           ${parsed.ingredients?.length ? `<div class="section-head">Ingredients</div>${CL.renderIngredientSummary(parsed.ingredient_summary, 1, { mode: ingredientSummaryMode })}` : ''}
           ${parsed.steps?.length ? `<div class="section-head mt16">Steps</div>${CL.renderSteps(parsed.steps, 1, false, parsed.metadata, true, {
             temperatureUnit: RecipeView.temperatureUnit,
