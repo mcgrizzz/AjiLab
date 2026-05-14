@@ -1,4 +1,8 @@
 import * as Diff from "diff";
+import { spawn } from "child_process";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { Hono } from "hono";
 import { parseCooklang } from "./cooklang.ts";
 import { buildInlineDiffLines, diffStepBlocks } from "./compare.ts";
@@ -502,6 +506,60 @@ api.get("/images/:id", async (c) => {
 api.delete("/images/:id", async (c) => {
   await deleteRecipeImage(c.req.param("id"));
   return c.json({ ok: true });
+});
+
+// ── System: restore from a pg_dump backup ────────────────────────────────────
+api.post("/system/restore", async (c) => {
+  const formData = await c.req.formData();
+  const file = formData.get("backup") as File | null;
+  if (!file) return c.json({ error: "backup file required (field: backup)" }, 400);
+
+  // Verify magic bytes: Postgres custom-format dumps start with "PGDMP"
+  const header = await file.slice(0, 5).arrayBuffer();
+  if (Buffer.from(header).toString() !== "PGDMP") {
+    return c.json({ error: "file does not look like a pg_dump -Fc backup" }, 400);
+  }
+
+  const tmpPath = path.join(os.tmpdir(), `ajilab-restore-${Date.now()}.dump`);
+  try {
+    fs.writeFileSync(tmpPath, Buffer.from(await file.arrayBuffer()));
+
+    const { applySchema } = await import("./db.ts");
+
+    const DATABASE_URL = process.env.DATABASE_URL
+      || "postgresql://ajilab:ajilab@ajilab-db:5432/ajilab";
+
+    // --clean --if-exists: pg_restore drops each object before recreating it.
+    // This avoids manually wiping the schema (which would invalidate the
+    // connection pool's prepared statements).
+    const stderr: string[] = [];
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      const child = spawn("pg_restore", [
+        "--dbname", DATABASE_URL,
+        "--clean", "--if-exists",
+        "--no-owner", "--no-acl",
+        tmpPath,
+      ]);
+      child.stderr.on("data", (d) => stderr.push(d.toString()));
+      child.on("error", (err) => reject(new Error(`spawn failed: ${err.message} — is postgresql-client-18 installed?`)));
+      child.on("exit", (code) => resolve(code ?? 1));
+    });
+
+    const stderrText = stderr.join("").trim();
+    console.log(`[restore] pg_restore exit ${exitCode}${stderrText ? `\n${stderrText}` : ""}`);
+
+    if (exitCode > 1) {
+      throw new Error(`pg_restore failed (exit ${exitCode}): ${stderrText || "unknown error"}`);
+    }
+
+    // Ensure any schema additions since the backup are applied
+    await applySchema();
+    return c.json({ ok: true, warnings: stderrText || null });
+  } catch (error: any) {
+    return c.json({ error: error?.message || "restore failed" }, 500);
+  } finally {
+    fs.rmSync(tmpPath, { force: true });
+  }
 });
 
 export default api;

@@ -22,16 +22,62 @@ const IndexView = {
     await this.loadList('');
   },
 
+  async handleBackupFile(input) {
+    const file = input.files?.[0];
+    console.log('[import] file:', file?.name, file?.size);
+    if (!file) return;
+
+    const setStatus = (msg, isError = false) => {
+      // Re-query each time in case the DOM changed
+      const el = document.getElementById('backup-status');
+      console.log('[import]', isError ? 'error:' : 'status:', msg, '| el found:', !!el);
+      if (el) { el.style.color = isError ? 'var(--red,#c0392b)' : ''; el.textContent = msg; }
+      else if (isError) alert('Import error: ' + msg);
+    };
+
+    setStatus('Importing… this may take a moment.');
+
+    try {
+      console.log('[import] building FormData');
+      const form = new FormData();
+      form.append('backup', file);
+
+      console.log('[import] sending to /api/system/restore');
+      const res = await fetch('/api/system/restore', { method: 'POST', body: form });
+      console.log('[import] response:', res.status);
+
+      const json = await res.json();
+      console.log('[import] body:', json);
+
+      if (!res.ok) throw new Error(json.error || `Server returned ${res.status}`);
+
+      setStatus('Import complete — loading your recipes…');
+      await this.loadList('');
+    } catch (e) {
+      console.error('[import] failed:', e);
+      setStatus(e.message, true);
+    }
+  },
+
   async loadList(q) {
     const list = document.getElementById('recipe-list');
     list.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
     try {
       const recipes = await API.get(`/recipes${q ? '?q=' + encodeURIComponent(q) : ''}`);
       if (recipes.length === 0) {
-        list.innerHTML = `<div class="empty-state">
-          <h2>${q ? 'No results' : 'No recipes yet'}</h2>
-          <p>${q ? 'Try a different search.' : 'Tap + to add your first recipe.'}</p>
-        </div>`;
+        list.innerHTML = q
+          ? `<div class="empty-state"><h2>No results</h2><p>Try a different search.</p></div>`
+          : `<div class="empty-state">
+              <h2>No recipes yet</h2>
+              <p>Tap + to add your first recipe, or import from a backup.</p>
+              <label for="backup-file-input" class="btn btn-sm mt12" style="cursor:pointer;display:inline-block">
+                Import from backup
+              </label>
+              <input type="file" id="backup-file-input" accept=".dump"
+                style="opacity:0;position:absolute;width:1px;height:1px;overflow:hidden"
+                onchange="IndexView.handleBackupFile(this)" />
+              <p id="backup-status" style="margin-top:12px;font-size:0.85rem;color:var(--ink3)"></p>
+            </div>`;
         return;
       }
       list.innerHTML = recipes.map(r => {
