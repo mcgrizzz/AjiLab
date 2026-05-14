@@ -137,7 +137,7 @@ async function createRecipe() {
   try {
     const r = await API.post('/recipes', { title });
     closeModal();
-    await Router.go(`/recipe/${r.slug}?tab=experiment`);
+    await Router.go(`/recipe/${r.slug}?tab=editor`);
   } catch (e) {
     showToast('Error: ' + e.message);
   }

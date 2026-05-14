@@ -167,7 +167,7 @@ const RecipeView = {
   },
 
   defaultActiveVersion() {
-    if (this.activeTab === 'experiment') {
+    if (this.activeTab === 'editor') {
       return this.recipe.active_experiment || this.recipe.draft || this.recipe.current_best_release || (this.recipe.source_version ? { ...this.recipe.source_version, is_inherited_source: true } : null);
     }
     return this.recipe.active_experiment
@@ -221,7 +221,7 @@ const RecipeView = {
     const cookLogsCount = recipe.counts?.cook_logs_count || 0;
     const tabs = [
       { id: 'overview', label: 'Overview' },
-      { id: 'experiment', label: this.experimentTabLabel() },
+      { id: 'editor', label: 'Editor' },
       { id: 'history', label: `History${tabCount(historyCount)}` },
       { id: 'cook-logs', label: `Cook Logs${tabCount(cookLogsCount)}` },
     ];
@@ -268,14 +268,10 @@ const RecipeView = {
     return bits.join('');
   },
 
-  experimentTabLabel() {
-    return 'Experiment';
-  },
-
   setTab(tab) {
-    // Leaving the experiment tab exits cook-log edit mode so the next entry
+    // Leaving the editor tab exits cook-log edit mode so the next entry
     // doesn't re-bind to a stale log.
-    if (tab !== 'experiment' && this.cookLogEditingId) {
+    if (tab !== 'editor' && this.cookLogEditingId) {
       this.cookLogEditingId = null;
       this.activeVersion = null;
     }
@@ -306,7 +302,7 @@ const RecipeView = {
     this.destroyDraftEditor();
     switch (this.activeTab) {
       case 'overview': this.renderOverviewTab(body); break;
-      case 'experiment': this.renderExperimentTab(body); break;
+      case 'editor': this.renderEditorTab(body); break;
       case 'history': this.renderHistoryTab(body); break;
       case 'cook-logs': this.renderCookLogsTab(body); break;
       default: this.renderOverviewTab(body);
@@ -401,7 +397,7 @@ const RecipeView = {
         </div>` : ''}
       ${!hasIngredients && !hasSteps ? `
         <div class="empty-state" style="padding:32px 0">
-          <p>This version is empty. <button class="btn btn-sm" onclick="RecipeView.setTab('experiment')">Open Experiment →</button></p>
+          <p>This version is empty. <button class="btn btn-sm" onclick="RecipeView.setTab('editor')">Open Editor →</button></p>
         </div>` : ''}
       <div class="media-strip-card">
         <div class="media-strip-head">
@@ -502,7 +498,7 @@ const RecipeView = {
       this.renderTab();
       return;
     }
-    if (this.activeTab === 'experiment') {
+    if (this.activeTab === 'editor') {
       this.updatePreview();
     }
   },
@@ -627,7 +623,7 @@ const RecipeView = {
     }
     this.cookLogEditingId = logId;
     this.activeVersion = this.cookLogToEditableTarget(log);
-    this.setTab('experiment');
+    this.setTab('editor');
   },
 
   exitCookLogEdit() {
@@ -664,7 +660,7 @@ const RecipeView = {
       }
       await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(target)}/fork`, {});
       await this.refreshRecipe();
-      this.activeTab = 'experiment';
+      this.activeTab = 'editor';
       await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
       showToast('Forked to draft');
     } catch (e) {
@@ -688,7 +684,7 @@ const RecipeView = {
       }
       await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/draft/fork`, {});
       await this.refreshRecipe();
-      this.activeTab = 'experiment';
+      this.activeTab = 'editor';
       await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
       showToast('Forked to draft');
     } catch (e) {
@@ -696,12 +692,12 @@ const RecipeView = {
     }
   },
 
-  async startExperimentFromScratch() {
+  async startFreshDraft() {
     if (this.recipe.current_best_release) {
       await this.forkCurrentBranchHead();
       return;
     }
-    this.activeTab = 'experiment';
+    this.activeTab = 'editor';
     this.activeVersion = this.recipe.draft;
     await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
   },
@@ -743,8 +739,8 @@ const RecipeView = {
     const versions = (this.recipe.versions || []).filter((entry) => !entry.is_draft);
     if (versions.length === 0) {
       return `<div class="empty-state" style="padding:40px 0">
-        <p>No released versions yet. Open Experiment to start a draft and release it.</p>
-        <button class="btn mt12" onclick="RecipeView.setTab('experiment')">Open Experiment</button>
+        <p>No released versions yet. Open the Editor to start writing.</p>
+        <button class="btn mt12" onclick="RecipeView.setTab('editor')">Open Editor</button>
       </div>`;
     }
     return `<div id="versions-list">${versions.map((version) => `
@@ -961,7 +957,7 @@ const RecipeView = {
     }).join('\n');
   },
 
-  renderExperimentTab(body) {
+  renderEditorTab(body) {
     // If we entered via "Edit recipe" on a cook log, use that as the target;
     // otherwise fall back to the draft / active experiment.
     let cookLogTarget = null;
@@ -983,9 +979,9 @@ const RecipeView = {
       body.innerHTML = `
         <div class="tab-content">
           <div class="empty-state" style="padding:32px 0">
-            <h2>No active experiment</h2>
-            <p>${best ? `Start the next experiment from <strong>${escHtml(best.version_string)}</strong>.` : 'Start a fresh draft to begin writing this recipe.'}</p>
-            <button class="btn btn-primary" onclick="RecipeView.${best ? 'forkCurrentBranchHead' : 'startExperimentFromScratch'}()">${best ? 'Start from current best' : 'Start a draft'}</button>
+            <h2>Nothing to edit yet</h2>
+            <p>${best ? `Continue from <strong>${escHtml(best.version_string)}</strong>.` : 'Start writing this recipe.'}</p>
+            <button class="btn btn-primary" onclick="RecipeView.${best ? 'forkCurrentBranchHead' : 'startFreshDraft'}()">${best ? 'Start from current best' : 'Start writing'}</button>
           </div>
         </div>`;
       return;
@@ -1069,7 +1065,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     } else {
       textarea?.classList.remove('editor-textarea-shadow');
       window.addEventListener('cooklang-editor-ready', () => {
-        if (!textarea || !editorHost || this.activeTab !== 'experiment' || this.draftEditor) return;
+        if (!textarea || !editorHost || this.activeTab !== 'editor' || this.draftEditor) return;
         if (!window.CooklangEditor?.createCooklangEditor) return;
         textarea.classList.add('editor-textarea-shadow');
         this.draftEditor = window.CooklangEditor.createCooklangEditor(editorHost, {
@@ -1631,7 +1627,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
           <div class="empty-state" style="padding:48px 0">
             <h2>No releases yet</h2>
             <p>Start a fresh draft and release v1.0 to begin the improvement loop.</p>
-            <button class="btn btn-primary mt12" onclick="RecipeView.startExperimentFromScratch()">Start a draft</button>
+            <button class="btn btn-primary mt12" onclick="RecipeView.startFreshDraft()">Start a draft</button>
           </div>
         </div>`;
       return;
@@ -1639,8 +1635,8 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     const isExperimentPrimary = !!(expt && primary === expt);
     const primaryLabel = isExperimentPrimary
       ? (primary.is_draft
-          ? 'Active experiment · Draft'
-          : `Active experiment · ${escHtml(primary.version_string || '')} (${escHtml(primary.status)})`)
+          ? 'In progress · Draft'
+          : `In progress · ${escHtml(primary.version_string || '')} (${escHtml(primary.status)})`)
       : (primary.version_string
           ? `Current best · ${escHtml(primary.version_string)} (${escHtml(primary.status)})`
           : 'Current best');
@@ -1670,7 +1666,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
         : `Promote ${escHtml(primary.version_string || 'beta')}…`;
       actions.push(`<button class="btn btn-sm btn-primary" onclick="RecipeView.openReleaseModal()">${releaseLabel}</button>`);
       if (best) {
-        actions.push(`<button class="btn btn-sm" onclick="RecipeView.setTab('experiment')">Open Experiment</button>`);
+        actions.push(`<button class="btn btn-sm" onclick="RecipeView.setTab('editor')">Open Editor</button>`);
       }
     }
     return `<div class="overview-primary-banner">
@@ -1688,7 +1684,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       const expt = recipe.active_experiment;
       const quiet = `<div class="overview-sidebar-card overview-sidebar-card-quiet">
         <div class="overview-sidebar-card-title">Set a baseline</div>
-        <p class="text-muted" style="font-size:0.85rem;margin:0">Release this experiment to set a current best. Cook it to log feedback.</p>
+        <p class="text-muted" style="font-size:0.85rem;margin:0">Release this version to set a current best. Cook it to log feedback.</p>
         <div class="overview-sidebar-card-actions">
           ${expt ? `<button class="btn btn-sm" onclick="RecipeView.openReleaseModal()">Release…</button>` : ''}
           <button class="btn btn-sm btn-ghost" onclick="RecipeView.setTab('cook-logs')">Cook Logs →</button>
@@ -1723,8 +1719,8 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     if (!best) {
       return `<div class="overview-sidebar-card">
         <div class="overview-sidebar-card-title">Current Best</div>
-        <p class="text-muted" style="font-size:0.86rem">No release yet. Release the active experiment to set a current best.</p>
-        ${expt ? `<button class="btn btn-sm" onclick="RecipeView.setTab('experiment')">Open Experiment</button>` : ''}
+        <p class="text-muted" style="font-size:0.86rem">No releases yet. Open the Editor to start writing and release this recipe.</p>
+        ${expt ? `<button class="btn btn-sm" onclick="RecipeView.setTab('editor')">Open Editor</button>` : ''}
       </div>`;
     }
     const changelogSnippet = (best.changelog || '').trim().slice(0, 140);
@@ -1946,7 +1942,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       // not back on the cook log we just forked.
       this.cookLogEditingId = null;
       this.activeVersion = this.recipe.draft || null;
-      this.setTab('experiment');
+      this.setTab('editor');
       showToast('Draft replaced with this cook log — Save advances the next beta');
     } catch (e) {
       showToast('Error: ' + e.message);
