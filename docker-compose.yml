@@ -67,30 +67,28 @@ services:
       BACKUP_RETENTION_DAYS: "${BACKUP_RETENTION_DAYS:-30}"
     entrypoint: >
       /bin/sh -c '
-        set -e
         run_backup() {
           FILE=/backups/ajilab-$$(date +%Y%m%d-%H%M%S).dump
           echo "[backup] writing $$FILE"
-          if pg_dump -Fc -f $$FILE; then
-            ln -sf $$(basename $$FILE) /backups/latest.dump
-            find /backups -name "ajilab-*.dump" -mtime +$$BACKUP_RETENTION_DAYS -delete
+          if pg_dump -Fc -f "$$FILE"; then
+            ln -sf "$$(basename $$FILE)" /backups/latest.dump
+            find /backups -name "ajilab-*.dump" -mtime +"$$BACKUP_RETENTION_DAYS" -delete
             echo "[backup] ok"
           else
-            echo "[backup] failed" >&2
-            rm -f $$FILE
+            echo "[backup] pg_dump failed" >&2
+            rm -f "$$FILE"
           fi
         }
-        # Run once at startup so a fresh install has a backup within minutes.
         run_backup
-        # Sleep until 02:00 each night. Uses BusyBox-compatible arithmetic
-        # (Alpine does not have GNU date -d).
         while true; do
-          H=$$(date +%H); M=$$(date +%M); S=$$(date +%S)
-          SECS_PAST_MIDNIGHT=$$((10#$$H * 3600 + 10#$$M * 60 + 10#$$S))
-          SECS_TILL_2AM=$$((7200 - SECS_PAST_MIDNIGHT))
-          if [ $$SECS_TILL_2AM -le 0 ]; then SECS_TILL_2AM=$$((SECS_TILL_2AM + 86400)); fi
+          H=$$(date +%H)
+          M=$$(date +%M)
+          S=$$(date +%S)
+          SECS_PAST=$$((H * 3600 + M * 60 + S))
+          SECS_TILL_2AM=$$((7200 - SECS_PAST))
+          if [ "$$SECS_TILL_2AM" -le 0 ]; then SECS_TILL_2AM=$$((SECS_TILL_2AM + 86400)); fi
           echo "[backup] sleeping $$SECS_TILL_2AM s until 02:00"
-          sleep $$SECS_TILL_2AM
+          sleep "$$SECS_TILL_2AM"
           run_backup
         done
       '
