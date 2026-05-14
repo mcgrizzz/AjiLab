@@ -50,7 +50,7 @@ services:
   # Writes -Fc (custom format, compressed, includes BYTEA images).
   # ---------------------------------------------------------------------------
   backup:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     depends_on:
       db:
