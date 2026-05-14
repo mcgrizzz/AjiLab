@@ -2,80 +2,96 @@
 
 A self-hosted recipe manager with first-class versioning. Write recipes in [Cooklang](https://cooklang.org), release named versions, track cook sessions, and compare changes over time.
 
+All content — recipes, branches, versions, cook logs, images — lives in a single PostgreSQL database. Back up with `pg_dump`, scale with replication, recover anywhere Postgres runs.
+
 ---
 
-## Quick start
-
-**Option A — Node.js 22+ (default):**
+## Quick start (Docker)
 
 ```bash
+git clone <repo-url> recipevault && cd recipevault
+echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" > .env
+docker compose up -d
+```
+
+Open **http://localhost:3000**.
+
+The `app` service auto-pulls from git on every restart, so deploying an update is just `docker compose restart app`.
+
+---
+
+## Local development (no Docker)
+
+```bash
+# 1. Start Postgres locally (or point at an existing instance)
+docker run -d --name pg -p 5432:5432 \
+  -e POSTGRES_DB=recipevault \
+  -e POSTGRES_USER=recipevault \
+  -e POSTGRES_PASSWORD=recipevault \
+  postgres:16-alpine
+
+# 2. Install + run
 npm install
-npm start
+DATABASE_URL=postgresql://recipevault:recipevault@localhost:5432/recipevault npm start
 ```
-
-**Option B — Bun:**
-
-```bash
-bun install
-bun run src/server.ts
-```
-
-Then open **http://localhost:3000** in your browser or on your phone.
 
 ---
 
 ## Configuration
 
-| Variable   | Default   | Description                         |
-|------------|-----------|-------------------------------------|
-| `PORT`     | `3000`    | Port to listen on                   |
-| `DATA_DIR` | `./data`  | Directory where the SQLite DB lives |
+| Variable          | Default                                                            | Description                |
+|-------------------|--------------------------------------------------------------------|----------------------------|
+| `PORT`            | `3000`                                                             | HTTP port                  |
+| `DATABASE_URL`    | `postgresql://recipevault:recipevault@localhost:5432/recipevault`  | Postgres connection string |
+| `DATABASE_POOL_MAX` | `10`                                                             | Max pool connections       |
 
-```bash
-PORT=8080 DATA_DIR=/var/recipevault npm start
-```
+The server applies `src/schema.sql` on startup (idempotent — safe to restart).
 
 ---
 
 ## How it works
 
-**Versioning:**
+**Versioning** — git for recipes:
 
-1. Every recipe has one mutable **draft** — edit it freely in the built-in CodeMirror editor
-2. When you're happy, hit **Release** → give it a name (`v1.0`, `v1.1-beta`, etc.) and an optional changelog
-3. Released versions have a **status**: `released`, `beta`, or `archived`
-4. The draft continues from where you left off, pre-populated with the just-released content
-5. You can **fork** any old version back into the draft at any time
-6. **Compare** any two versions (or cook logs) to see what changed — ingredients + full text diff
+1. Every recipe has one mutable **draft** per branch — edit it freely
+2. **Release** turns the draft into an immutable version with a status (`released` / `beta` / `archived`) and an optional changelog
+3. The draft remains, ready for the next iteration
+4. **Fork** any version back into the draft at any time
+5. **Compare** any two versions to see what changed (ingredients + full text diff)
 
-**Branches:**
+**Branches** — variants of a recipe with independent draft + version history, forked from a chosen source version. A branch can be **synced** back to main via 3-way merge.
 
-Recipes support multiple branches, each with their own independent draft and version history. Branches are forked from an existing version. You can sync a branch back to main when ready.
+**Cook logs** — record each cooking session against a draft or version. Each log captures outcome, what worked, problems, and changes to try, plus an editable snapshot of the recipe as actually cooked. Cook logs can be **forked** back to the draft or **promoted** straight to a new release.
 
-**Cook logs:**
-
-After cooking a recipe, log the session against any version or draft. Each cook log captures outcome, what worked, problems found, and changes to try next — plus an editable copy of the recipe text you actually used. Cook logs can be forked back to the draft or promoted directly to a new release.
-
-**Cross-references:**
-
-Recipes can reference other recipes. The API tracks backlinks so you can see which recipes depend on a given one.
+**Cross-references** — recipes can reference other recipes (`@<recipe-slug>{}`). The `recipe_references` table is maintained automatically whenever an entry is saved; the `/backlinks` endpoint surfaces incoming references.
 
 ---
 
-## Versioning convention
+## Data model
 
-- `v1.0` — first stable version
-- `v1.1` — meaningful improvement
-- `v1.1.1` — typo or unit correction
-- `v2.0` — fundamentally different approach
-- `v2.0-beta.1` — testable but not final
+The schema lives in [`src/schema.sql`](src/schema.sql). Six tables:
+
+| Table              | Purpose |
+|--------------------|---------|
+| `recipes`          | Top-level recipe (id, slug, title) |
+| `branches`         | Branches per recipe; `forked_from_entry_id` points at the source version |
+| `entries`          | **Unified draft + version table.** `version_string IS NULL ↔ draft` |
+| `images`           | `BYTEA` payload + metadata; `is_thumbnail` flag (DB-enforced unique per recipe) |
+| `cook_logs`        | One row per cooking session, with source entry + actual-as-cooked text |
+| `recipe_references`| Backlink graph between entries and target recipes |
+
+Notes and servings live in the cooklang frontmatter and are parsed on read — no dedicated columns. Tags are native `TEXT[]`. Full-text search is built in via a `tsvector GENERATED ALWAYS AS` column on `entries`.
 
 ---
 
 ## Cooklang syntax
 
 ```
->> servings: 4
+---
+servings: 4
+notes: |-
+  Source: Grandma's notebook, p. 47
+---
 
 Melt @butter{100%g} in a #saucepan{}.
 Add @flour{2%tbsp} and whisk for ~{2%minutes}.
@@ -89,13 +105,14 @@ Season with @salt{} and @pepper{}.
 | `@name{}` | Ingredient (no quantity) |
 | `#name{}` | Cookware |
 | `~{qty%unit}` | Timer |
-| `>> key: value` | Metadata (servings, source, etc.) |
+| `@<other-recipe>{}` | Reference another recipe |
+| YAML frontmatter | Servings, notes, etc. |
 
 ---
 
 ## API
 
-All endpoints are under `/api`. Branch-scoped routes work on both the main branch (`/recipes/:slug/...`) and named branches (`/recipes/:slug/branches/:branch/...`).
+All endpoints under `/api`. Branch-scoped routes work on both the main branch (`/recipes/:slug/...`) and named branches (`/recipes/:slug/branches/:branch/...`).
 
 **Recipes**
 
@@ -104,112 +121,186 @@ All endpoints are under `/api`. Branch-scoped routes work on both the main branc
 | `GET` | `/recipes` | List all recipes (supports `?q=search`) |
 | `POST` | `/recipes` | Create recipe `{title}` |
 | `GET` | `/recipes/:slug` | Get recipe with all versions |
-| `PUT` | `/recipes/:slug` | Update recipe title |
-| `DELETE` | `/recipes/:slug` | Delete recipe |
+| `PUT` | `/recipes/:slug` | Update title |
+| `DELETE` | `/recipes/:slug` | Delete recipe (cascades) |
 
 **Branches**
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/recipes/:slug/branches` | List branches |
-| `POST` | `/recipes/:slug/branches` | Create branch `{name, source_version}` |
-| `GET` | `/recipes/:slug/branches/:branch` | Get branch with versions |
+| `GET` | `/recipes/:slug/branches` | List |
+| `POST` | `/recipes/:slug/branches` | Create `{name, source_version}` |
+| `GET` | `/recipes/:slug/branches/:branch` | Get with versions |
 
-**Draft** *(branch-scoped)*
+**Draft / Versions** *(branch-scoped)*
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `…/draft` | Get current draft |
-| `PUT` | `…/draft` | Save draft `{cooklang_text, tags}` |
-| `PUT` | `…/draft/notes` | Save draft notes `{notes}` |
-| `POST` | `…/draft/fork` | Fork branch head into draft |
-| `POST` | `…/draft/parse` | Parse cooklang text, return structured JSON |
-
-**Versions** *(branch-scoped)*
-
-| Method | Path | Description |
-|--------|------|-------------|
+| `PUT` | `…/draft` | Save `{cooklang_text, tags, advance_beta?}` |
+| `PUT` | `…/draft/notes` | Set draft notes |
+| `POST` | `…/draft/fork` | Fork branch head → draft |
+| `POST` | `…/draft/parse` | Parse cooklang text → JSON |
 | `GET` | `…/versions` | List released versions |
-| `GET` | `…/versions/:v` | Get specific version |
-| `PUT` | `…/versions/:v` | Edit version content `{cooklang_text, tags}` |
-| `PUT` | `…/versions/:v/notes` | Edit version notes `{notes}` |
-| `DELETE` | `…/versions/:v` | Delete a version |
+| `GET` | `…/versions/:v` | Get version |
+| `PUT` | `…/versions/:v` | Edit version content |
+| `PUT` | `…/versions/:v/notes` | Edit notes |
+| `DELETE` | `…/versions/:v` | Delete |
+| `POST` | `…/versions/:v/fork` | Fork → draft |
 | `POST` | `…/release` | Release `{version_string, status, changelog, source_version?}` |
-| `GET` | `…/compare` | Compare two versions `?from=v1.0&to=v1.1` |
-| `POST` | `…/versions/:v/fork` | Fork version into draft |
+| `GET` | `…/compare` | `?from=v1.0&to=v1.1` |
 
 **Cook logs** *(branch-scoped)*
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `…/cook-logs` | List all cook logs on branch |
-| `POST` | `…/cook-logs` | Create cook log `{source, cooked_at, outcome, …}` |
-| `GET` | `…/versions/:v/cook-logs` | List cook logs for a specific version |
-| `PUT` | `…/cook-logs/:id` | Update cook log |
-| `DELETE` | `…/cook-logs/:id` | Delete cook log |
-| `POST` | `…/cook-logs/:id/fork-to-draft` | Fork cook log text into draft |
-| `POST` | `…/cook-logs/:id/promote` | Promote cook log to a release `{version_string, status}` |
+| `GET` | `…/cook-logs` | List branch logs |
+| `POST` | `…/cook-logs` | Create `{source, cooked_at, outcome, …}` |
+| `GET` | `…/versions/:v/cook-logs` | Filter by version |
+| `PUT` | `…/cook-logs/:id` | Update |
+| `DELETE` | `…/cook-logs/:id` | Delete |
+| `POST` | `…/cook-logs/:id/fork-to-draft` | Fork to draft |
+| `POST` | `…/cook-logs/:id/promote` | Promote to release |
 
 **Images** *(branch-scoped)*
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `…/images` | List images (supports `?version=v1.0`) |
-| `POST` | `…/images` | Upload image (multipart, field `image`) |
-| `POST` | `/recipes/:slug/thumbnail` | Set recipe thumbnail |
-| `DELETE` | `/recipes/:slug/thumbnail` | Remove recipe thumbnail |
-| `GET` | `/images/:id` | Serve image |
-| `DELETE` | `/images/:id` | Delete image |
+| `GET` | `…/images` | List (`?version=v1.0`) |
+| `POST` | `…/images` | Upload (multipart, field `image`) |
+| `POST` | `/recipes/:slug/thumbnail` | Set thumbnail |
+| `DELETE` | `/recipes/:slug/thumbnail` | Remove thumbnail |
+| `GET` | `/images/:id` | Serve binary |
+| `DELETE` | `/images/:id` | Delete |
 
-**Other** *(branch-scoped)*
+**Other**
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `…/backlinks` | Recipes that reference this recipe |
-| `POST` | `…/sync/preview` | Preview branch sync to main |
-| `POST` | `…/sync/apply` | Apply branch sync to main |
+| `POST` | `…/sync/preview` | Preview branch → main 3-way merge |
+| `POST` | `…/sync/apply` | Apply merge |
 
 ---
 
-## Backup
+## Backup & restore
 
-The entire database is one file:
+Everything is one Postgres database. The `docker-compose.yml` ships with three backup layers, each optional.
 
-```bash
-# Simple copy
-cp data/recipevault.db backup/recipevault-$(date +%Y%m%d).db
+### 1. Automatic nightly local backup *(on by default)*
 
-# With sqlite3 hot backup
-sqlite3 data/recipevault.db ".backup backup.db"
+The `backup` service runs as a sidecar. It:
+
+- Takes a `pg_dump -Fc` snapshot at **02:00 local time** every day
+- Writes to `./backups/recipevault-<timestamp>.dump`
+- Symlinks `./backups/latest.dump` to the newest file
+- Prunes dumps older than `BACKUP_RETENTION_DAYS` (default 30)
+- Takes an immediate snapshot at container start so a fresh install has a backup within minutes
+
+Override retention in `.env`:
+
+```env
+BACKUP_RETENTION_DAYS=90
 ```
 
-For continuous backup, [Litestream](https://litestream.io/) can stream to S3/R2/local disk with zero config.
+### 2. Off-site cloud backup *(opt-in)*
+
+Uncomment the `cloud-backup` service in `docker-compose.yml` to sync `./backups/` to any cloud provider via [rclone](https://rclone.org/): S3, Cloudflare R2, Backblaze B2, GCS, SFTP, Dropbox, Google Drive, …
+
+```bash
+# 1. Configure a remote once
+rclone config
+
+# 2. Copy the config into the repo
+cp ~/.config/rclone/rclone.conf ./rclone.conf
+
+# 3. Set the destination in .env
+echo 'RCLONE_REMOTE=r2:my-bucket/recipevault' >> .env
+
+# 4. Uncomment the cloud-backup block in docker-compose.yml, then:
+docker compose up -d
+```
+
+The sidecar resyncs hourly. Both the local and the cloud copy survive — the cloud is just a mirror.
+
+### 3. Manual ad-hoc backup
+
+```bash
+docker compose exec -T db pg_dump -U recipevault -Fc recipevault > my-backup.dump
+```
+
+### Restore
+
+```bash
+# Restores into the running stack, dropping existing data first
+npm run restore -- ./backups/latest.dump
+
+# Or, manually
+docker compose exec -T db pg_restore -U recipevault -d recipevault --clean --if-exists < backup.dump
+docker compose restart app
+```
+
+`scripts/restore.ts` verifies the dump's magic header, wipes the target schema, streams the file into `pg_restore` via `docker compose exec`, and leaves you a clean DB. The app should be idle during restore.
+
+### Point-in-time recovery
+
+The nightly dump model gives you at-most-24h data loss. If you need finer granularity, swap the `backup` sidecar for [`pgBackRest`](https://pgbackrest.org/) or [`wal-g`](https://github.com/wal-g/wal-g) — both run as additional Postgres-side services that archive WAL segments continuously to object storage and replay them on restore. Overkill for a recipe app but documented in case.
 
 ---
 
-## Running as a service (Linux/systemd)
+## Migrating from the legacy file-based version
+
+If you're upgrading from a pre-Postgres install (when data lived in `data/recipes/*` + a SQLite index), there's a one-shot migration:
+
+```bash
+# 1. Stop the old app
+docker compose stop app
+
+# 2. Snapshot the legacy data
+cp -r data data.pre-postgres.bak
+
+# 3. Boot Postgres
+docker compose up -d db
+
+# 4. Dry-run the migration to validate
+docker compose run --rm app npm run migrate -- --dry-run
+
+# 5. Run it for real
+docker compose run --rm app npm run migrate
+
+# 6. Start the new app
+docker compose up -d app
+```
+
+The script reads `data/recipes/*` and `data/recipevault.db`, writes to Postgres in a single transaction, and prints row counts. Keep `data.pre-postgres.bak` for at least a month.
+
+To validate before cutover, boot the old and new apps on different ports and run:
+
+```bash
+OLD_URL=http://localhost:3001 NEW_URL=http://localhost:3000 npm run diff-api
+```
+
+---
+
+## Running outside Docker
 
 ```ini
 # /etc/systemd/system/recipevault.service
 [Unit]
 Description=RecipeVault
-After=network.target
+After=network.target postgresql.service
 
 [Service]
 Type=simple
 User=youruser
 WorkingDirectory=/opt/recipevault
-ExecStart=node_modules/.bin/tsx --experimental-sqlite --experimental-wasm-modules src/server.ts
+ExecStart=/usr/bin/npm start
 Restart=on-failure
 Environment=PORT=3000
-Environment=DATA_DIR=/opt/recipevault/data
+Environment=DATABASE_URL=postgresql://recipevault:secret@localhost:5432/recipevault
 
 [Install]
 WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl enable --now recipevault
 ```
 
 ---
@@ -218,32 +309,32 @@ sudo systemctl enable --now recipevault
 
 ```
 recipevault/
+├── Dockerfile
+├── docker-compose.yml      # app + db + nightly pg_dump
+├── entrypoint.sh
 ├── src/
-│   ├── server.ts              # Hono server + static file serving
-│   ├── routes.ts              # All API route handlers
-│   ├── db.ts                  # SQLite schema, queries, helpers
-│   ├── recipe-store.ts        # Business logic for recipes, versions, cook logs
-│   ├── cooklang.ts            # Server-side Cooklang parser wrapper
-│   ├── compare.ts             # Inline diff + step-block diff
-│   ├── ingredient-compare.js  # Ingredient diff logic
-│   ├── metric-expr.ts         # Unit/quantity expression handling
-│   └── draft-quantity.js      # Draft quantity utilities
-├── public/
-│   ├── index.html             # SPA shell
-│   ├── manifest.json          # PWA manifest
-│   ├── css/
-│   │   └── app.css            # All styles (mobile-first, light/dark)
-│   ├── js/
-│   │   ├── api.js             # Thin fetch wrapper
-│   │   ├── cooklang-render.js # Client-side recipe renderer + timers
-│   │   ├── cooklang-editor.js # CodeMirror editor integration
-│   │   ├── views.js           # All screens: index, detail, editor, compare
-│   │   └── app.js             # Router, modal, toast, bootstrap
-│   └── vendor/
-│       └── codemirror.js      # Bundled CodeMirror (built via npm run build:editor)
-├── data/
-│   └── recipevault.db         # SQLite database (auto-created on first run)
-├── test/                      # Unit tests
-├── package.json
-└── README.md
+│   ├── server.ts           # Hono server bootstrap
+│   ├── routes.ts           # All HTTP handlers
+│   ├── db.ts               # postgres.js client + applySchema()
+│   ├── schema.sql          # Full DB schema
+│   ├── recipe-store.ts     # All DB access; preserves a stable function API
+│   ├── cooklang.ts         # Server-side Cooklang parser
+│   ├── compare.ts          # Inline + step-block diff
+│   ├── ingredient-compare.js
+│   ├── metric-expr.ts
+│   └── draft-quantity.js
+├── scripts/
+│   ├── migrate-to-postgres.ts  # One-shot legacy → Postgres migration
+│   ├── restore.ts              # Restore a pg_dump into the running stack
+│   └── diff-api.ts             # Response-diff validator
+├── public/                 # SPA + PWA + CodeMirror bundle
+├── test/                   # node:test unit suites
+└── package.json
 ```
+
+---
+
+## Known gaps from the v2 rewrite
+
+- The legacy `test/recipe-store.test.js` (moved to `.legacy`) was built around the synchronous file-based API and needs to be rewritten against a test Postgres database. Other test suites (`cooklang`, `compare`, `draft-quantity`, `metric-expr`) are pure and unaffected.
+- The `scripts/migrate-to-postgres.ts` migration script has not been exercised against a large real dataset yet — run it with `--dry-run` first and check the row counts before committing.

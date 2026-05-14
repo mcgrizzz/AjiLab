@@ -62,35 +62,24 @@ function activeBranch(c: any): string {
   return c.req.param("branch") || MAIN_BRANCH;
 }
 
-function resolveCompareOperand(recipe: any, branch: string, key: string): any | null {
-  // Cook log operands. Two flavours:
-  //   - "cooklog:<id>"        → the log's current (editable) cooklang_text
-  //   - "cooklog-source:<id>" → the immutable snapshot the log was forked from
-  // Both are treated as synthetic version-like objects so the rest of the diff
-  // pipeline works unchanged.
+async function resolveCompareOperand(recipe: any, branch: string, key: string): Promise<any | null> {
   if (key.startsWith("cooklog-source:")) {
-    const log = getCookLog(recipe.slug, key.slice("cooklog-source:".length), branch);
+    const log = await getCookLog(recipe.slug, key.slice("cooklog-source:".length), branch);
     if (!log) return null;
-    return {
-      cooklang_text: log.source_cooklang_text || "",
-      status: "cook-log-source",
-    };
+    return { cooklang_text: log.source_cooklang_text || "", status: "cook-log-source" };
   }
   if (key.startsWith("cooklog:")) {
-    const log = getCookLog(recipe.slug, key.slice("cooklog:".length), branch);
+    const log = await getCookLog(recipe.slug, key.slice("cooklog:".length), branch);
     if (!log) return null;
-    return {
-      cooklang_text: log.cooklang_text || "",
-      status: "cook-log",
-    };
+    return { cooklang_text: log.cooklang_text || "", status: "cook-log" };
   }
   if (key === "draft") return recipe.draft || null;
   return recipe.versions.find((version: any) => version.version_string === key) || null;
 }
 
-function compareVersions(recipe: any, branch: string, fromStr: string, toStr: string) {
-  const fromV = resolveCompareOperand(recipe, branch, fromStr);
-  const toV = resolveCompareOperand(recipe, branch, toStr);
+async function compareVersions(recipe: any, branch: string, fromStr: string, toStr: string) {
+  const fromV = await resolveCompareOperand(recipe, branch, fromStr);
+  const toV = await resolveCompareOperand(recipe, branch, toStr);
   if (!fromV || !toV) return null;
 
   const textDiff = Diff.createTwoFilesPatch(fromStr, toStr, fromV.cooklang_text || "", toV.cooklang_text || "", "", "", { context: 3 });
@@ -111,46 +100,46 @@ function compareVersions(recipe: any, branch: string, fromStr: string, toStr: st
 
 function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
   if (includeRecipeCrud) {
-    api.get("/recipes", (c) => c.json(listRecipes(c.req.query("q"))));
+    api.get("/recipes", async (c) => c.json(await listRecipes(c.req.query("q"))));
 
     api.post("/recipes", async (c) => {
       const body = await c.req.json();
       if (!body.title?.trim()) return c.json({ error: "title required" }, 400);
-      return c.json(createRecipe(body.title.trim()), 201);
+      return c.json(await createRecipe(body.title.trim()), 201);
     });
 
-    api.get("/recipes/:slug", (c) => {
-      const recipe = getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH);
+    api.get("/recipes/:slug", async (c) => {
+      const recipe = await getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH);
       if (!recipe) return c.json({ error: "not found" }, 404);
       return c.json(recipe);
     });
 
     api.put("/recipes/:slug", async (c) => {
-      const recipe = getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH);
+      const recipe = await getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH);
       if (!recipe) return c.json({ error: "not found" }, 404);
       const body = await c.req.json();
-      if (body.title?.trim()) return c.json(updateRecipeTitle(recipe.slug, body.title.trim()));
+      if (body.title?.trim()) return c.json(await updateRecipeTitle(recipe.slug, body.title.trim()));
       return c.json({ ok: true });
     });
 
-    api.delete("/recipes/:slug", (c) => {
-      if (!getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH)) return c.json({ error: "not found" }, 404);
-      deleteRecipe(c.req.param("slug"));
+    api.delete("/recipes/:slug", async (c) => {
+      if (!(await getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH))) return c.json({ error: "not found" }, 404);
+      await deleteRecipe(c.req.param("slug"));
       return c.json({ ok: true });
     });
 
-    api.get("/recipes/:slug/branches", (c) => {
-      if (!getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH)) return c.json({ error: "not found" }, 404);
-      return c.json(listRecipeBranches(c.req.param("slug")));
+    api.get("/recipes/:slug/branches", async (c) => {
+      if (!(await getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH))) return c.json({ error: "not found" }, 404);
+      return c.json(await listRecipeBranches(c.req.param("slug")));
     });
 
     api.post("/recipes/:slug/branches", async (c) => {
-      if (!getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH)) return c.json({ error: "not found" }, 404);
+      if (!(await getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH))) return c.json({ error: "not found" }, 404);
       const body = await c.req.json();
       if (!body.name?.trim()) return c.json({ error: "name required" }, 400);
       if (!body.source_version?.trim()) return c.json({ error: "source_version required" }, 400);
       try {
-        return c.json(createRecipeBranch(c.req.param("slug"), {
+        return c.json(await createRecipeBranch(c.req.param("slug"), {
           name: body.name.trim(),
           source_version: body.source_version.trim(),
         }), 201);
@@ -159,76 +148,74 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
       }
     });
 
-    api.get("/recipes/:slug/branches/:branch", (c) => {
-      const recipe = getRecipeBranch(c.req.param("slug"), c.req.param("branch"));
+    api.get("/recipes/:slug/branches/:branch", async (c) => {
+      const recipe = await getRecipeBranch(c.req.param("slug"), c.req.param("branch"));
       if (!recipe) return c.json({ error: "not found" }, 404);
       return c.json(recipe);
     });
   }
 
-  api.get(`${prefix}/draft`, (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+  api.get(`${prefix}/draft`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
     if (!recipe.draft) return c.json({ error: "no draft" }, 404);
     return c.json(recipe.draft);
   });
 
   api.put(`${prefix}/draft`, async (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
     const body = await c.req.json();
     const baseline = recipe.draft || recipe.source_version || recipe.versions[0] || { cooklang_text: "", tags: "[]" };
     const nextText = body.cooklang_text ?? baseline.cooklang_text ?? "";
-    const result = updateDraft(c.req.param("slug"), {
+    const result = await updateDraft(c.req.param("slug"), {
       cooklang_text: nextText,
       tags: body.tags ?? JSON.parse(baseline.tags || "[]"),
-    }, {
-      advance_beta: body.advance_beta === true,
-    }, activeBranch(c));
-    const unresolved = collectUnresolvedReferences(enrichRecipeReferences(parseCooklang(nextText)));
+    }, { advance_beta: body.advance_beta === true }, activeBranch(c));
+    const unresolved = await collectUnresolvedReferences(await enrichRecipeReferences(parseCooklang(nextText)));
     return c.json({
       ...result,
       warnings: unresolved.length ? { unresolved_references: unresolved } : undefined,
     });
   });
 
-  api.post(`${prefix}/draft/fork`, (c) => {
+  api.post(`${prefix}/draft/fork`, async (c) => {
     try {
-      return c.json(forkBranchHeadToDraft(c.req.param("slug"), activeBranch(c)));
+      return c.json(await forkBranchHeadToDraft(c.req.param("slug"), activeBranch(c)));
     } catch (error: any) {
       return c.json({ error: error?.message || "fork failed" }, 400);
     }
   });
 
   api.put(`${prefix}/draft/notes`, async (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
     const body = await c.req.json();
-    updateDraftNotes(recipe.slug, body.notes || "", activeBranch(c));
+    await updateDraftNotes(recipe.slug, body.notes || "", activeBranch(c));
     return c.json({ ok: true });
   });
 
   api.post(`${prefix}/draft/parse`, async (c) => {
     const body = await c.req.json();
-    return c.json(enrichRecipeReferences(parseCooklang(body.cooklang_text || "")));
+    return c.json(await enrichRecipeReferences(parseCooklang(body.cooklang_text || "")));
   });
 
-  api.get(`${prefix}/versions`, (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+  api.get(`${prefix}/versions`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
     return c.json((recipe.versions || []).filter((version) => !version.is_draft));
   });
 
-  api.get(`${prefix}/versions/:version`, (c) => {
-    const version = getVersionByString(c.req.param("slug"), c.req.param("version"), activeBranch(c));
+  api.get(`${prefix}/versions/:version`, async (c) => {
+    const version = await getVersionByString(c.req.param("slug"), c.req.param("version"), activeBranch(c));
     if (!version) return c.json({ error: "version not found" }, 404);
     return c.json(version);
   });
 
-  api.post(`${prefix}/versions/:version/fork`, (c) => {
-    if (!getRecipeBySlug(c.req.param("slug"), activeBranch(c))) return c.json({ error: "not found" }, 404);
+  api.post(`${prefix}/versions/:version/fork`, async (c) => {
+    if (!(await getRecipeBySlug(c.req.param("slug"), activeBranch(c)))) return c.json({ error: "not found" }, 404);
     try {
-      forkVersionToDraft(c.req.param("slug"), c.req.param("version"), activeBranch(c));
+      await forkVersionToDraft(c.req.param("slug"), c.req.param("version"), activeBranch(c));
     } catch (error: any) {
       return c.json({ error: error?.message || "version not found" }, 404);
     }
@@ -236,13 +223,13 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
   });
 
   api.put(`${prefix}/versions/:version`, async (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
-    const version = getVersionByString(recipe.slug, c.req.param("version"), activeBranch(c));
+    const version = await getVersionByString(recipe.slug, c.req.param("version"), activeBranch(c));
     if (!version) return c.json({ error: "version not found" }, 404);
     if (version.is_draft) return c.json({ error: "use draft endpoint" }, 400);
     const body = await c.req.json();
-    updateVersionContent(
+    await updateVersionContent(
       recipe.slug,
       version.version_string!,
       body.cooklang_text ?? version.cooklang_text,
@@ -253,19 +240,19 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
   });
 
   api.put(`${prefix}/versions/:version/notes`, async (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
-    if (!getVersionByString(recipe.slug, c.req.param("version"), activeBranch(c))) return c.json({ error: "version not found" }, 404);
+    if (!(await getVersionByString(recipe.slug, c.req.param("version"), activeBranch(c)))) return c.json({ error: "version not found" }, 404);
     const body = await c.req.json();
-    updateVersionNotes(recipe.slug, c.req.param("version"), body.notes || "", activeBranch(c));
+    await updateVersionNotes(recipe.slug, c.req.param("version"), body.notes || "", activeBranch(c));
     return c.json({ ok: true });
   });
 
-  api.delete(`${prefix}/versions/:version`, (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+  api.delete(`${prefix}/versions/:version`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
     try {
-      deleteVersion(recipe.slug, c.req.param("version"), activeBranch(c));
+      await deleteVersion(recipe.slug, c.req.param("version"), activeBranch(c));
     } catch (error: any) {
       const message = error?.message || "version not found";
       return c.json({ error: message }, message === "cannot delete draft" ? 400 : 404);
@@ -274,7 +261,7 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
   });
 
   api.post(`${prefix}/release`, async (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
     const body = await c.req.json();
     const { version_string, status, changelog, source_version } = body;
@@ -284,21 +271,17 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
       let result;
       let sourceText = "";
       if (source_version && source_version !== "draft") {
-        result = releaseVersion(recipe.slug, source_version, {
-          version_string: version_string.trim(),
-          status,
-          changelog,
+        result = await releaseVersion(recipe.slug, source_version, {
+          version_string: version_string.trim(), status, changelog,
         }, activeBranch(c));
         sourceText = recipe.versions.find((v) => v.version_string === source_version)?.cooklang_text || "";
       } else {
-        result = releaseDraft(recipe.slug, {
-          version_string: version_string.trim(),
-          status,
-          changelog,
+        result = await releaseDraft(recipe.slug, {
+          version_string: version_string.trim(), status, changelog,
         }, activeBranch(c));
         sourceText = recipe.draft?.cooklang_text || "";
       }
-      const unresolved = collectUnresolvedReferences(enrichRecipeReferences(parseCooklang(sourceText)));
+      const unresolved = await collectUnresolvedReferences(await enrichRecipeReferences(parseCooklang(sourceText)));
       return c.json({
         ...result,
         warnings: unresolved.length ? { unresolved_references: unresolved } : undefined,
@@ -309,35 +292,35 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     }
   });
 
-  api.get(`${prefix}/compare`, (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+  api.get(`${prefix}/compare`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
     const fromStr = c.req.query("from");
     const toStr = c.req.query("to");
     if (!fromStr || !toStr) return c.json({ error: "from and to required" }, 400);
-    const result = compareVersions(recipe, activeBranch(c), fromStr, toStr);
+    const result = await compareVersions(recipe, activeBranch(c), fromStr, toStr);
     if (!result) return c.json({ error: "version not found" }, 404);
     return c.json(result);
   });
 
-  api.get(`${prefix}/images`, (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+  api.get(`${prefix}/images`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
     const version = c.req.query("version");
     try {
-      return c.json(listRecipeImages(recipe.slug, version || null, activeBranch(c)));
+      return c.json(await listRecipeImages(recipe.slug, version || null, activeBranch(c)));
     } catch (error: any) {
       return c.json({ error: error?.message || "version not found" }, 404);
     }
   });
 
   api.post(`${prefix}/images`, async (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
     const upload = await readImageUpload(c);
     if ("error" in upload) return c.json({ error: upload.error }, 400);
     try {
-      return c.json(attachRecipeImage(recipe.slug, {
+      return c.json(await attachRecipeImage(recipe.slug, {
         filename: upload.file.name,
         mime_type: upload.file.type,
         data: upload.buffer,
@@ -348,20 +331,20 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     }
   });
 
-  api.get(`${prefix}/cook-logs`, (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+  api.get(`${prefix}/cook-logs`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
-    return c.json(listBranchCookLogs(recipe.slug, activeBranch(c)));
+    return c.json(await listBranchCookLogs(recipe.slug, activeBranch(c)));
   });
 
-  api.get(`${prefix}/versions/:version/cook-logs`, (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+  api.get(`${prefix}/versions/:version/cook-logs`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
-    return c.json(listVersionCookLogs(recipe.slug, c.req.param("version"), activeBranch(c)));
+    return c.json(await listVersionCookLogs(recipe.slug, c.req.param("version"), activeBranch(c)));
   });
 
   api.post(`${prefix}/cook-logs`, async (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
     const body = await c.req.json().catch(() => ({}));
     const rawSource = body && typeof body === "object" ? body.source : null;
@@ -373,7 +356,7 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
       return c.json({ error: "source.version_string required for version source" }, 400);
     }
     try {
-      return c.json(createCookLog(recipe.slug, source, {
+      return c.json(await createCookLog(recipe.slug, source, {
         cooked_at: body.cooked_at,
         outcome: body.outcome,
         what_worked: body.what_worked,
@@ -384,19 +367,16 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
         tags: Array.isArray(body.tags) ? body.tags : undefined,
       }, activeBranch(c)), 201);
     } catch (error: any) {
-      const message = error?.message || "cook log create failed";
-      return c.json({ error: message }, 400);
+      return c.json({ error: error?.message || "cook log create failed" }, 400);
     }
   });
 
-  // Back-compat shim: legacy version-scoped create. Forwards to the branch-scoped
-  // handler with source = { kind: 'version', version_string: <route param> }.
   api.post(`${prefix}/versions/:version/cook-logs`, async (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
     const body = await c.req.json().catch(() => ({}));
     try {
-      return c.json(createCookLog(recipe.slug, { kind: "version", version_string: c.req.param("version") }, {
+      return c.json(await createCookLog(recipe.slug, { kind: "version", version_string: c.req.param("version") }, {
         cooked_at: body.cooked_at,
         outcome: body.outcome,
         what_worked: body.what_worked,
@@ -407,17 +387,16 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
         tags: Array.isArray(body.tags) ? body.tags : undefined,
       }, activeBranch(c)), 201);
     } catch (error: any) {
-      const message = error?.message || "cook log create failed";
-      return c.json({ error: message }, 400);
+      return c.json({ error: error?.message || "cook log create failed" }, 400);
     }
   });
 
   api.put(`${prefix}/cook-logs/:id`, async (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
     const body = await c.req.json().catch(() => ({}));
     try {
-      return c.json(updateCookLog(recipe.slug, c.req.param("id"), {
+      return c.json(await updateCookLog(recipe.slug, c.req.param("id"), {
         cooked_at: body.cooked_at,
         outcome: body.outcome,
         what_worked: body.what_worked,
@@ -434,10 +413,10 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
   });
 
   api.post(`${prefix}/cook-logs/:id/fork-to-draft`, async (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
     try {
-      return c.json(forkCookLogToDraft(recipe.slug, c.req.param("id"), activeBranch(c)));
+      return c.json(await forkCookLogToDraft(recipe.slug, c.req.param("id"), activeBranch(c)));
     } catch (error: any) {
       const message = error?.message || "fork to draft failed";
       return c.json({ error: message }, message === "cook log not found" ? 404 : 400);
@@ -445,17 +424,15 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
   });
 
   api.post(`${prefix}/cook-logs/:id/promote`, async (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
     const body = await c.req.json().catch(() => ({}));
     const versionString = String(body?.version_string || "").trim();
     if (!versionString) return c.json({ error: "version_string required" }, 400);
     const status = body?.status === "beta" || body?.status === "archived" ? body.status : "released";
     try {
-      return c.json(promoteCookLog(recipe.slug, c.req.param("id"), {
-        version_string: versionString,
-        status,
-        changelog: body?.changelog || "",
+      return c.json(await promoteCookLog(recipe.slug, c.req.param("id"), {
+        version_string: versionString, status, changelog: body?.changelog || "",
       }, activeBranch(c)));
     } catch (error: any) {
       const message = error?.message || "promote failed";
@@ -463,30 +440,30 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     }
   });
 
-  api.delete(`${prefix}/cook-logs/:id`, (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+  api.delete(`${prefix}/cook-logs/:id`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
-    deleteCookLog(recipe.slug, c.req.param("id"), activeBranch(c));
+    await deleteCookLog(recipe.slug, c.req.param("id"), activeBranch(c));
     return c.json({ ok: true });
   });
 
-  api.get(`${prefix}/backlinks`, (c) => {
-    const recipe = getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+  api.get(`${prefix}/backlinks`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
-    return c.json(listBacklinks(recipe.slug));
+    return c.json(await listBacklinks(recipe.slug));
   });
 
-  api.post(`${prefix}/sync/preview`, (c) => {
+  api.post(`${prefix}/sync/preview`, async (c) => {
     try {
-      return c.json(previewBranchSync(c.req.param("slug"), activeBranch(c)));
+      return c.json(await previewBranchSync(c.req.param("slug"), activeBranch(c)));
     } catch (error: any) {
       return c.json({ error: error?.message || "sync preview failed" }, 400);
     }
   });
 
-  api.post(`${prefix}/sync/apply`, (c) => {
+  api.post(`${prefix}/sync/apply`, async (c) => {
     try {
-      return c.json(applyBranchSync(c.req.param("slug"), activeBranch(c)));
+      return c.json(await applyBranchSync(c.req.param("slug"), activeBranch(c)));
     } catch (error: any) {
       return c.json({ error: error?.message || "sync apply failed" }, 400);
     }
@@ -497,33 +474,33 @@ installBranchRoutes("/recipes/:slug", true);
 installBranchRoutes("/recipes/:slug/branches/:branch");
 
 api.post("/recipes/:slug/thumbnail", async (c) => {
-  const recipe = getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH);
+  const recipe = await getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH);
   if (!recipe) return c.json({ error: "not found" }, 404);
   const upload = await readImageUpload(c);
   if ("error" in upload) return c.json({ error: upload.error }, 400);
-  return c.json(setRecipeThumbnail(recipe.slug, {
+  return c.json(await setRecipeThumbnail(recipe.slug, {
     filename: upload.file.name,
     mime_type: upload.file.type,
     data: upload.buffer,
   }), 201);
 });
 
-api.delete("/recipes/:slug/thumbnail", (c) => {
-  const recipe = getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH);
+api.delete("/recipes/:slug/thumbnail", async (c) => {
+  const recipe = await getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH);
   if (!recipe) return c.json({ error: "not found" }, 404);
-  return c.json(setRecipeThumbnail(recipe.slug, null));
+  return c.json(await setRecipeThumbnail(recipe.slug, null));
 });
 
-api.get("/images/:id", (c) => {
-  const image = readRecipeImage(c.req.param("id"));
+api.get("/images/:id", async (c) => {
+  const image = await readRecipeImage(c.req.param("id"));
   if (!image) return c.json({ error: "not found" }, 404);
   return new Response(image.data, {
     headers: { "Content-Type": image.mime_type, "Cache-Control": "public, max-age=86400" },
   });
 });
 
-api.delete("/images/:id", (c) => {
-  deleteRecipeImage(c.req.param("id"));
+api.delete("/images/:id", async (c) => {
+  await deleteRecipeImage(c.req.param("id"));
   return c.json({ ok: true });
 });
 

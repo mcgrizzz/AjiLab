@@ -1,5 +1,9 @@
 node_modules/
 data/
-tmp-draft-beta-probe/
+data.pre-postgres.bak/
+backups/
+tmp-*/
 .claude/
 *.log
+data-backup/
+backup2/

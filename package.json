@@ -1,15 +1,15 @@
 {
   "name": "recipevault",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "start": "node_modules/.bin/tsx --experimental-sqlite --experimental-wasm-modules src/server.ts",
-    "dev": "node_modules/.bin/tsx --experimental-sqlite --experimental-wasm-modules --watch src/server.ts",
-    "start:node": "node_modules/.bin/tsx --experimental-sqlite --experimental-wasm-modules src/server.ts",
-    "dev:node": "node_modules/.bin/tsx --experimental-sqlite --experimental-wasm-modules --watch src/server.ts",
-    "build:editor": "node_modules/.bin/esbuild src/browser/codemirror-vendor.js --bundle --format=esm --platform=browser --outfile=public/vendor/codemirror.js",
-    "start:bun": "bun run src/server.ts",
-    "dev:bun": "bun --watch run src/server.ts"
+    "start": "tsx --experimental-wasm-modules src/server.ts",
+    "dev": "tsx --experimental-wasm-modules --watch src/server.ts",
+    "migrate": "tsx --experimental-sqlite --experimental-wasm-modules scripts/migrate-to-postgres.ts",
+    "restore": "tsx scripts/restore.ts",
+    "diff-api": "tsx scripts/diff-api.ts",
+    "build:editor": "esbuild src/browser/codemirror-vendor.js --bundle --format=esm --platform=browser --outfile=public/vendor/codemirror.js",
+    "test": "tsx --test test/"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",
@@ -17,16 +17,14 @@
     "@codemirror/view": "^6.42.1",
     "@cooklang/cooklang": "0.17.2",
     "@hono/node-server": "2.0.1",
-    "better-sqlite3": "9.4.3",
     "diff": "5.2.0",
     "hono": "^4.12.18",
-    "sql.js": "1.14.1",
+    "postgres": "^3.4.5",
     "tsx": "^4.21.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "7.6.8",
     "@types/diff": "5.2.1",
-    "bun-types": "latest",
+    "@types/node": "^22.10.0",
     "esbuild": "^0.28.0"
   }
 }
