@@ -43,13 +43,13 @@ The stack: Postgres 18, the Node app, and a nightly backup sidecar. The app auto
 
 **Update:**
 ```bash
-docker compose restart app
+docker compose restart ajilab
 ```
 
 **Logs:**
 ```bash
-docker compose logs -f app
-docker compose logs -f backup
+docker compose logs -f ajilab
+docker compose logs -f ajilab-backup
 ```
 
 ---

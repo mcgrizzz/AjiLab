@@ -60,7 +60,7 @@ async function main() {
   console.log("[restore] streaming dump into pg_restore");
   await new Promise<void>((resolve, reject) => {
     const child = spawn("docker", [
-      "compose", "exec", "-T", "db",
+      "compose", "exec", "-T", "ajilab-db",
       "pg_restore", "-U", "ajilab", "-d", "ajilab",
       "--no-owner", "--no-acl",
     ], { stdio: ["pipe", "inherit", "inherit"] });

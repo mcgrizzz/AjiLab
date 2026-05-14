@@ -1,5 +1,5 @@
 services:
-  db:
+  ajilab-db:
     image: postgres:18-alpine
     restart: unless-stopped
     environment:
@@ -24,11 +24,11 @@ services:
       -c maintenance_work_mem=64MB
       -c max_connections=50
 
-  app:
+  ajilab:
     build: .
     restart: unless-stopped
     depends_on:
-      db:
+      ajilab-db:
         condition: service_healthy
     ports:
       - "${PORT:-3000}:3000"
@@ -38,7 +38,7 @@ services:
     environment:
       AUTO_PULL: "${AUTO_PULL:-true}"
       PORT: "3000"
-      DATABASE_URL: "postgresql://ajilab:${POSTGRES_PASSWORD:-ajilab}@db:5432/ajilab"
+      DATABASE_URL: "postgresql://ajilab:${POSTGRES_PASSWORD:-ajilab}@ajilab-db:5432/ajilab"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000"]
       interval: 30s
@@ -49,16 +49,16 @@ services:
   # Nightly pg_dump to ./backups at 02:00 local time. Retains 30 days.
   # Writes -Fc (custom format, compressed, includes BYTEA images).
   # ---------------------------------------------------------------------------
-  backup:
+  ajilab-backup:
     image: postgres:18-alpine
     restart: unless-stopped
     depends_on:
-      db:
+      ajilab-db:
         condition: service_healthy
     volumes:
       - ./backups:/backups
     environment:
-      PGHOST: db
+      PGHOST: ajilab-db
       PGUSER: ajilab
       PGPASSWORD: "${POSTGRES_PASSWORD:-ajilab}"
       PGDATABASE: ajilab
@@ -101,11 +101,11 @@ services:
   #   3. Set RCLONE_REMOTE in .env (e.g. "r2:my-bucket/ajilab")
   #   4. Uncomment the block below and run: docker compose up -d
   # ---------------------------------------------------------------------------
-  # cloud-backup:
+  # ajilab-cloud-backup:
   #   image: rclone/rclone:latest
   #   restart: unless-stopped
   #   depends_on:
-  #     - backup
+  #     - ajilab-backup
   #   volumes:
   #     - ./backups:/backups:ro
   #     - ./rclone.conf:/config/rclone/rclone.conf:ro
