@@ -15,5 +15,5 @@ app.get("*", serveStatic({ path: "./public/index.html" }));
 
 await applySchema();
 
-console.log(`\n🍳 RecipeVault running at http://localhost:${PORT}\n`);
+console.log(`\n🍳 AjiLab running at http://localhost:${PORT}\n`);
 serve({ fetch: app.fetch, port: PORT });

@@ -1,4 +1,4 @@
-# RecipeVault HTTP API
+# AjiLab HTTP API
 
 All endpoints are under `/api`. Branch-scoped routes are exposed twice — once on the main branch (`/recipes/:slug/...`) and once on named branches (`/recipes/:slug/branches/:branch/...`). They share identical request/response shapes.
 

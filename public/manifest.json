@@ -1,6 +1,6 @@
 {
-  "name": "RecipeVault",
-  "short_name": "RecipeVault",
+  "name": "AjiLab",
+  "short_name": "AjiLab",
   "description": "Versioned recipe management with Cooklang",
   "start_url": "/",
   "display": "standalone",

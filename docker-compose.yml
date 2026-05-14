@@ -67,11 +67,11 @@ services:
       /bin/sh -c '
         set -e
         run_backup() {
-          FILE=/backups/recipevault-$$(date +%Y%m%d-%H%M%S).dump
+          FILE=/backups/ajilab-$$(date +%Y%m%d-%H%M%S).dump
           echo "[backup] writing $$FILE"
           if pg_dump -Fc -f $$FILE; then
             ln -sf $$(basename $$FILE) /backups/latest.dump
-            find /backups -name "recipevault-*.dump" -mtime +$$BACKUP_RETENTION_DAYS -delete
+            find /backups \( -name "ajilab-*.dump" -o -name "recipevault-*.dump" \) -mtime +$$BACKUP_RETENTION_DAYS -delete
             echo "[backup] ok"
           else
             echo "[backup] failed" >&2
@@ -99,7 +99,7 @@ services:
   # To enable:
   #   1. Configure rclone locally: `rclone config` → creates ~/.config/rclone/rclone.conf
   #   2. Copy it to ./rclone.conf in this directory
-  #   3. Set RCLONE_REMOTE in .env (e.g. "r2:my-bucket/recipevault")
+  #   3. Set RCLONE_REMOTE in .env (e.g. "r2:my-bucket/ajilab")
   #   4. Uncomment the block below and run: docker compose up -d
   # ---------------------------------------------------------------------------
   # cloud-backup:
@@ -116,7 +116,7 @@ services:
   #     /bin/sh -c '
   #       while true; do
   #         echo "[cloud-backup] syncing /backups -> $$RCLONE_REMOTE"
-  #         rclone sync /backups "$$RCLONE_REMOTE" --include "recipevault-*.dump" || echo "[cloud-backup] failed"
+  #         rclone sync /backups "$$RCLONE_REMOTE" --include "*.dump" || echo "[cloud-backup] failed"
   #         sleep 3600
   #       done
   #     '

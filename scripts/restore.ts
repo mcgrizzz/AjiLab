@@ -2,7 +2,7 @@
  * Restore a pg_dump backup into the running Postgres container.
  *
  * Usage:
- *   npm run restore -- ./backups/recipevault-20260514-020000.dump
+ *   npm run restore -- ./backups/ajilab-20260514-020000.dump
  *   npm run restore -- ./backups/latest.dump
  *
  * What it does:

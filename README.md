@@ -1,4 +1,4 @@
-# RecipeVault
+# AjiLab
 
 A self-hosted recipe manager with first-class versioning. Write recipes in [Cooklang](https://cooklang.org), release named versions, track cook sessions, and compare changes over time.
 
@@ -9,7 +9,7 @@ All content — recipes, branches, versions, cook logs, images — lives in a si
 ## Quick start (Docker)
 
 ```bash
-git clone <repo-url> recipevault && cd recipevault
+git clone <repo-url> ajilab && cd ajilab
 echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" > .env
 docker compose up -d
 ```
@@ -118,9 +118,9 @@ Season with @salt{} and @pepper{}.
 | `~{qty%unit}` | Timer |
 | YAML frontmatter | Servings, notes, metadata |
 
-### RecipeVault Cooklang extensions
+### AjiLab Cooklang extensions
 
-On top of stock Cooklang, RecipeVault adds a handful of extensions. They all live in either YAML frontmatter (parsed before the recipe body) or ingredient modifier sigils.
+On top of stock Cooklang, AjiLab adds a handful of extensions. They all live in either YAML frontmatter (parsed before the recipe body) or ingredient modifier sigils.
 
 #### Computed metrics
 
@@ -180,7 +180,7 @@ Backlinks are populated automatically: every time an entry's text is saved, refe
 
 #### Sections
 
-Group steps under named headings. RecipeVault tracks sections separately for both the UI and the diff:
+Group steps under named headings. AjiLab tracks sections separately for both the UI and the diff:
 
 ```
 = Levain
@@ -215,7 +215,7 @@ Everything is one Postgres database. The `docker-compose.yml` ships with three b
 The `backup` service runs as a sidecar. It:
 
 - Takes a `pg_dump -Fc` snapshot at **02:00 local time** every day
-- Writes to `./backups/recipevault-<timestamp>.dump`
+- Writes to `./backups/ajilab-<timestamp>.dump`
 - Symlinks `./backups/latest.dump` to the newest file
 - Prunes dumps older than `BACKUP_RETENTION_DAYS` (default 30)
 - Takes an immediate snapshot at container start so a fresh install has a backup within minutes
@@ -238,7 +238,7 @@ rclone config
 cp ~/.config/rclone/rclone.conf ./rclone.conf
 
 # 3. Set the destination in .env
-echo 'RCLONE_REMOTE=r2:my-bucket/recipevault' >> .env
+echo 'RCLONE_REMOTE=r2:my-bucket/ajilab' >> .env
 
 # 4. Uncomment the cloud-backup block in docker-compose.yml, then:
 docker compose up -d
@@ -274,15 +274,15 @@ The nightly dump model gives you at-most-24h data loss. If you need finer granul
 ## Running outside Docker
 
 ```ini
-# /etc/systemd/system/recipevault.service
+# /etc/systemd/system/ajilab.service
 [Unit]
-Description=RecipeVault
+Description=AjiLab
 After=network.target postgresql.service
 
 [Service]
 Type=simple
 User=youruser
-WorkingDirectory=/opt/recipevault
+WorkingDirectory=/opt/ajilab
 ExecStart=/usr/bin/npm start
 Restart=on-failure
 Environment=PORT=3000
@@ -297,7 +297,7 @@ WantedBy=multi-user.target
 ## Project structure
 
 ```
-recipevault/
+ajilab/
 ├── Dockerfile
 ├── docker-compose.yml      # app + db + nightly pg_dump
 ├── entrypoint.sh

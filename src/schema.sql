@@ -1,4 +1,4 @@
--- RecipeVault schema (PostgreSQL 16+)
+-- AjiLab schema (PostgreSQL 16+)
 -- All content lives in this database. No filesystem dependency.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
