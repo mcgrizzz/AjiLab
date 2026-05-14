@@ -65,6 +65,17 @@ The server applies `src/schema.sql` on startup (idempotent — safe to restart).
 
 **Cross-references** — recipes can reference other recipes (`@<recipe-slug>{}`). The `recipe_references` table is maintained automatically whenever an entry is saved; the `/backlinks` endpoint surfaces incoming references.
 
+**Structural diff** — the compare view doesn't just show a text patch. It produces three layers:
+- Inline character-level diff per changed line
+- Step-block diff (changes grouped by `= section` boundaries)
+- Ingredient diff (added / removed / quantity-changed, unit-normalized so `0.5 kg` vs `500 g` is *not* a change)
+
+See [`src/compare.ts`](src/compare.ts) and [`src/ingredient-compare.js`](src/ingredient-compare.js).
+
+**Full-text search** — the `entries` table has a `tsvector GENERATED ALWAYS AS (to_tsvector('english', cooklang_text)) STORED` column with a GIN index. `?q=…` on `/recipes` uses a simple substring match today, but the underlying schema is ready for `to_tsquery` / `plainto_tsquery` upgrades without a migration.
+
+**3-way merge** — branches can sync from main using a true 3-way diff against the common ancestor (the branch's `forked_from_entry_id` or `last_merged_upstream_entry_id`). Non-overlapping edits merge cleanly; overlapping edits surface as structured `conflicts` in the response. See [`src/recipe-store.ts`](src/recipe-store.ts) `mergeCooklangText`.
+
 ---
 
 ## Data model
@@ -105,81 +116,93 @@ Season with @salt{} and @pepper{}.
 | `@name{}` | Ingredient (no quantity) |
 | `#name{}` | Cookware |
 | `~{qty%unit}` | Timer |
-| `@<other-recipe>{}` | Reference another recipe |
-| YAML frontmatter | Servings, notes, etc. |
+| YAML frontmatter | Servings, notes, metadata |
+
+### RecipeVault Cooklang extensions
+
+On top of stock Cooklang, RecipeVault adds a handful of extensions. They all live in either YAML frontmatter (parsed before the recipe body) or ingredient modifier sigils.
+
+#### Computed metrics
+
+Define derived values from ingredient quantities using `metric.<name>` keys in the frontmatter. Each formula is a tiny arithmetic expression with safe variable lookups (no `eval`, no library — just a tokenizer + recursive-descent parser in [`src/metric-expr.ts`](src/metric-expr.ts)).
+
+```
+---
+servings: 4
+metric.total flour: flour.g + whole_wheat_flour.g | g
+metric.hydration: 100 * water.g / metric.total_flour | %
+metric.salt pct: 100 * salt.g / metric.total_flour | %
+metric._total mass: flour.g + water.g + salt.g + yeast.g
+metric.bakers pct: 100 * water.g / metric._total_mass | %
+---
+
+Mix @flour{400%g}, @whole wheat flour{100%g}, @water{350%ml}, @salt{10%g}, @yeast{3%g}.
+```
+
+| Feature | Detail |
+|---------|--------|
+| Reference an ingredient | `<name>.<unit>` — `flour.g`, `water.ml`. Multi-word names use underscores: `whole_wheat_flour.g`. Case-insensitive |
+| Unit conversion | Mass: `mg`/`g`/`kg` cross-convert. Volume: `ml`/`l` cross-convert. Mixing categories errors |
+| Reference another metric | `metric.<name>` — resolved in declaration order, so forward references fail intentionally |
+| Format hint | Trailing `\| %`, `\| g`, etc. — controls display, not the value |
+| Hidden intermediates | Prefix the name with `_` (e.g. `metric._total_mass`) — value is computed and available to later metrics but not rendered in the UI |
+| `&` deduplication | `@&flour{300%g}` after `@flour{200%g}` sums to 500g for the metric layer |
+
+Metrics surface in the API as `parsed.metrics: ComputedMetric[]` with `value`, `display`, and `error` fields. Errors are per-metric — one bad formula doesn't break the others.
+
+#### Recipe references
+
+Reference another recipe from your library, optionally pinned to a version:
+
+```
+Use @./mother-doughs/sourdough-starter{50%g} as the levain.
+Top with a dollop of @./sauces/aioli/v1.2{}.
+```
+
+| Pattern | Meaning |
+|---------|---------|
+| `@<slug>{}` | Bare reference — resolves to the recipe's latest released version |
+| `@./<category>/<slug>{}` | Path-style reference. The leading `./` flags it as a recipe ref so the parser doesn't treat it as an ingredient |
+| `@./<category>/<slug>/<version>{}` | Version-pinned. `<version>` matches `v1.0`, `v1.2.3`, `v2.0-beta.1`, … |
+
+Backlinks are populated automatically: every time an entry's text is saved, references are extracted and the `recipe_references` table is updated. `GET /backlinks` returns recipes that point at the current one.
+
+#### Ingredient annotations
+
+| Sigil | Meaning |
+|-------|---------|
+| `@ingredient{}` | Required ingredient |
+| `@?ingredient{}` | **Optional** — flagged in the UI, omitted from "you'll need" lists |
+| `@-ingredient{}` | **Hidden** — counts in totals but not shown in the ingredient summary |
+| `@&ingredient{}` | **Reference to prior** — totals merge with the earlier definition (stock Cooklang) |
+| `@&(~1)ingredient{}` | **Intermediate prep** — points at a prior section; shown in the section that consumes it, excluded from flat totals |
+| `@@recipe-slug{}` or `@./path/{}` | Recipe reference (see above) |
+
+#### Sections
+
+Group steps under named headings. RecipeVault tracks sections separately for both the UI and the diff:
+
+```
+= Levain
+
+Mix @starter{20%g} + @flour{50%g} + @water{50%g}. Rest for ~{8%hours}.
+
+= Dough
+
+Combine @&(=1)levain{}, @flour{450%g}, @water{300%ml}, @salt{10%g}.
+```
+
+Section headers (`= Title`) drive the **step-block diff** — the compare view groups changes by section instead of showing a flat line-by-line patch.
+
+#### Editable quantities
+
+Every `{qty%unit}` token in the body is also surfaced in the API as a typed `EditableQuantityToken` with `numericValue`, `units`, and `rangeStart`/`rangeEnd` text offsets. The editor uses these for inline scale-up/down without rewriting the underlying text. Live in [`src/draft-quantity.js`](src/draft-quantity.js).
 
 ---
 
 ## API
 
-All endpoints under `/api`. Branch-scoped routes work on both the main branch (`/recipes/:slug/...`) and named branches (`/recipes/:slug/branches/:branch/...`).
-
-**Recipes**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/recipes` | List all recipes (supports `?q=search`) |
-| `POST` | `/recipes` | Create recipe `{title}` |
-| `GET` | `/recipes/:slug` | Get recipe with all versions |
-| `PUT` | `/recipes/:slug` | Update title |
-| `DELETE` | `/recipes/:slug` | Delete recipe (cascades) |
-
-**Branches**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/recipes/:slug/branches` | List |
-| `POST` | `/recipes/:slug/branches` | Create `{name, source_version}` |
-| `GET` | `/recipes/:slug/branches/:branch` | Get with versions |
-
-**Draft / Versions** *(branch-scoped)*
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `…/draft` | Get current draft |
-| `PUT` | `…/draft` | Save `{cooklang_text, tags, advance_beta?}` |
-| `PUT` | `…/draft/notes` | Set draft notes |
-| `POST` | `…/draft/fork` | Fork branch head → draft |
-| `POST` | `…/draft/parse` | Parse cooklang text → JSON |
-| `GET` | `…/versions` | List released versions |
-| `GET` | `…/versions/:v` | Get version |
-| `PUT` | `…/versions/:v` | Edit version content |
-| `PUT` | `…/versions/:v/notes` | Edit notes |
-| `DELETE` | `…/versions/:v` | Delete |
-| `POST` | `…/versions/:v/fork` | Fork → draft |
-| `POST` | `…/release` | Release `{version_string, status, changelog, source_version?}` |
-| `GET` | `…/compare` | `?from=v1.0&to=v1.1` |
-
-**Cook logs** *(branch-scoped)*
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `…/cook-logs` | List branch logs |
-| `POST` | `…/cook-logs` | Create `{source, cooked_at, outcome, …}` |
-| `GET` | `…/versions/:v/cook-logs` | Filter by version |
-| `PUT` | `…/cook-logs/:id` | Update |
-| `DELETE` | `…/cook-logs/:id` | Delete |
-| `POST` | `…/cook-logs/:id/fork-to-draft` | Fork to draft |
-| `POST` | `…/cook-logs/:id/promote` | Promote to release |
-
-**Images** *(branch-scoped)*
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `…/images` | List (`?version=v1.0`) |
-| `POST` | `…/images` | Upload (multipart, field `image`) |
-| `POST` | `/recipes/:slug/thumbnail` | Set thumbnail |
-| `DELETE` | `/recipes/:slug/thumbnail` | Remove thumbnail |
-| `GET` | `/images/:id` | Serve binary |
-| `DELETE` | `/images/:id` | Delete |
-
-**Other**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `…/backlinks` | Recipes that reference this recipe |
-| `POST` | `…/sync/preview` | Preview branch → main 3-way merge |
-| `POST` | `…/sync/apply` | Apply merge |
+HTTP API surface — recipes, branches, draft/versions, cook logs, images, backlinks, sync — is documented in **[docs/API.md](docs/API.md)**. All endpoints under `/api`. Branch-scoped routes are mirrored on `/recipes/:slug/branches/:branch/...`.
 
 ---
 
@@ -248,40 +271,6 @@ The nightly dump model gives you at-most-24h data loss. If you need finer granul
 
 ---
 
-## Migrating from the legacy file-based version
-
-If you're upgrading from a pre-Postgres install (when data lived in `data/recipes/*` + a SQLite index), there's a one-shot migration:
-
-```bash
-# 1. Stop the old app
-docker compose stop app
-
-# 2. Snapshot the legacy data
-cp -r data data.pre-postgres.bak
-
-# 3. Boot Postgres
-docker compose up -d db
-
-# 4. Dry-run the migration to validate
-docker compose run --rm app npm run migrate -- --dry-run
-
-# 5. Run it for real
-docker compose run --rm app npm run migrate
-
-# 6. Start the new app
-docker compose up -d app
-```
-
-The script reads `data/recipes/*` and `data/recipevault.db`, writes to Postgres in a single transaction, and prints row counts. Keep `data.pre-postgres.bak` for at least a month.
-
-To validate before cutover, boot the old and new apps on different ports and run:
-
-```bash
-OLD_URL=http://localhost:3001 NEW_URL=http://localhost:3000 npm run diff-api
-```
-
----
-
 ## Running outside Docker
 
 ```ini
@@ -312,21 +301,21 @@ recipevault/
 ├── Dockerfile
 ├── docker-compose.yml      # app + db + nightly pg_dump
 ├── entrypoint.sh
+├── docs/
+│   └── API.md              # HTTP API reference
 ├── src/
-│   ├── server.ts           # Hono server bootstrap
+│   ├── server.ts           # Hono bootstrap + applySchema()
 │   ├── routes.ts           # All HTTP handlers
-│   ├── db.ts               # postgres.js client + applySchema()
+│   ├── db.ts               # postgres.js client
 │   ├── schema.sql          # Full DB schema
-│   ├── recipe-store.ts     # All DB access; preserves a stable function API
-│   ├── cooklang.ts         # Server-side Cooklang parser
+│   ├── recipe-store.ts     # All DB access
+│   ├── cooklang.ts         # Cooklang parser + metrics + references
+│   ├── metric-expr.ts      # Safe arithmetic evaluator for metrics
 │   ├── compare.ts          # Inline + step-block diff
 │   ├── ingredient-compare.js
-│   ├── metric-expr.ts
 │   └── draft-quantity.js
 ├── scripts/
-│   ├── migrate-to-postgres.ts  # One-shot legacy → Postgres migration
-│   ├── restore.ts              # Restore a pg_dump into the running stack
-│   └── diff-api.ts             # Response-diff validator
+│   └── restore.ts          # Restore a pg_dump into the running stack
 ├── public/                 # SPA + PWA + CodeMirror bundle
 ├── test/                   # node:test unit suites
 └── package.json
@@ -334,7 +323,14 @@ recipevault/
 
 ---
 
-## Known gaps from the v2 rewrite
+## Performance notes
 
-- The legacy `test/recipe-store.test.js` (moved to `.legacy`) was built around the synchronous file-based API and needs to be rewritten against a test Postgres database. Other test suites (`cooklang`, `compare`, `draft-quantity`, `metric-expr`) are pure and unaffected.
-- The `scripts/migrate-to-postgres.ts` migration script has not been exercised against a large real dataset yet — run it with `--dry-run` first and check the row counts before committing.
+`recipe-store.ts` is optimized for the network round-trip cost of Postgres:
+
+- **Parallel loads** — `loadRecipeRecord` runs the entries, cook-log-count, and latest-cook-log queries in parallel via `Promise.all`
+- **No hidden N+1** — `listRecipes` parallelizes the per-recipe hydration
+- **Branch IDs are cached on the loaded record** — write paths reuse `recipe.branch.id` instead of round-tripping for it
+- **Batched reference syncs** — `recipe_references` updates use a single multi-row `INSERT … ON CONFLICT` instead of a loop
+- **Schema indexes** — GIN on `search_vector` and `tags`, btree on `branch_id`, `recipe_id`, and `cook_logs(branch_id, cooked_at DESC)`
+- **Tuned Postgres defaults** — the `db` service in docker-compose ships with `shared_buffers=128MB`, `effective_cache_size=384MB`, `work_mem=4MB`, `max_connections=50` — sized for a single VPS
+

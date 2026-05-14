@@ -5,9 +5,7 @@
   "scripts": {
     "start": "tsx --experimental-wasm-modules src/server.ts",
     "dev": "tsx --experimental-wasm-modules --watch src/server.ts",
-    "migrate": "tsx --experimental-sqlite --experimental-wasm-modules scripts/migrate-to-postgres.ts",
     "restore": "tsx scripts/restore.ts",
-    "diff-api": "tsx scripts/diff-api.ts",
     "build:editor": "esbuild src/browser/codemirror-vendor.js --bundle --format=esm --platform=browser --outfile=public/vendor/codemirror.js",
     "test": "tsx --test test/"
   },

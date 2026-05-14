@@ -1,8 +1,5 @@
 node_modules/
-data/
-data.pre-postgres.bak/
 backups/
-tmp-*/
 .claude/
 *.log
 data-backup/

@@ -1,11 +1,5 @@
 node_modules
-data
-data.pre-postgres.bak
 backups
-tmp-*
 .git
-*.db
-*.db-shm
-*.db-wal
 .claude
 *.log
