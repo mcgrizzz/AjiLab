@@ -6,6 +6,7 @@
     "start": "tsx --experimental-wasm-modules src/server.ts",
     "dev": "tsx --experimental-wasm-modules --watch src/server.ts",
     "restore": "tsx scripts/restore.ts",
+    "transfer": "tsx --experimental-wasm-modules scripts/transfer.ts",
     "build:editor": "esbuild src/browser/codemirror-vendor.js --bundle --format=esm --platform=browser --outfile=public/vendor/codemirror.js",
     "test": "tsx --test test/"
   },

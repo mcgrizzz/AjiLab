@@ -3,15 +3,17 @@ services:
     image: postgres:18-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: recipevault
-      POSTGRES_USER: recipevault
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-recipevault}"
+      POSTGRES_DB: ajilab
+      POSTGRES_USER: ajilab
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-ajilab}"
     volumes:
       - pg_data:/var/lib/postgresql
       # Optional: bind-mount postgresql.conf overrides here
       # - ./postgres.conf:/etc/postgresql/postgresql.conf:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U recipevault -d recipevault"]
+      test: ["CMD-SHELL", "pg_isready -U ajilab -d ajilab"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -38,7 +40,7 @@ services:
     environment:
       AUTO_PULL: "${AUTO_PULL:-true}"
       PORT: "3000"
-      DATABASE_URL: "postgresql://recipevault:${POSTGRES_PASSWORD:-recipevault}@db:5432/recipevault"
+      DATABASE_URL: "postgresql://ajilab:${POSTGRES_PASSWORD:-ajilab}@db:5432/ajilab"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000"]
       interval: 30s
@@ -59,9 +61,9 @@ services:
       - ./backups:/backups
     environment:
       PGHOST: db
-      PGUSER: recipevault
-      PGPASSWORD: "${POSTGRES_PASSWORD:-recipevault}"
-      PGDATABASE: recipevault
+      PGUSER: ajilab
+      PGPASSWORD: "${POSTGRES_PASSWORD:-ajilab}"
+      PGDATABASE: ajilab
       BACKUP_RETENTION_DAYS: "${BACKUP_RETENTION_DAYS:-30}"
     entrypoint: >
       /bin/sh -c '
@@ -71,7 +73,7 @@ services:
           echo "[backup] writing $$FILE"
           if pg_dump -Fc -f $$FILE; then
             ln -sf $$(basename $$FILE) /backups/latest.dump
-            find /backups \( -name "ajilab-*.dump" -o -name "recipevault-*.dump" \) -mtime +$$BACKUP_RETENTION_DAYS -delete
+            find /backups -name "ajilab-*.dump" -mtime +$$BACKUP_RETENTION_DAYS -delete
             echo "[backup] ok"
           else
             echo "[backup] failed" >&2
@@ -80,14 +82,15 @@ services:
         }
         # Run once at startup so a fresh install has a backup within minutes.
         run_backup
-        # Then loop, sleeping until the next 02:00.
+        # Sleep until 02:00 each night. Uses BusyBox-compatible arithmetic
+        # (Alpine does not have GNU date -d).
         while true; do
-          NOW=$$(date +%s)
-          NEXT=$$(date -d "tomorrow 02:00" +%s 2>/dev/null || date -j -f "%Y-%m-%d %H:%M:%S" "$$(date +%Y-%m-%d) 02:00:00" +%s)
-          if [ $$NEXT -le $$NOW ]; then NEXT=$$((NEXT + 86400)); fi
-          SLEEP=$$((NEXT - NOW))
-          echo "[backup] sleeping $$SLEEP s until next run"
-          sleep $$SLEEP
+          H=$$(date +%H); M=$$(date +%M); S=$$(date +%S)
+          SECS_PAST_MIDNIGHT=$$((10#$$H * 3600 + 10#$$M * 60 + 10#$$S))
+          SECS_TILL_2AM=$$((7200 - SECS_PAST_MIDNIGHT))
+          if [ $$SECS_TILL_2AM -le 0 ]; then SECS_TILL_2AM=$$((SECS_TILL_2AM + 86400)); fi
+          echo "[backup] sleeping $$SECS_TILL_2AM s until 02:00"
+          sleep $$SECS_TILL_2AM
           run_backup
         done
       '

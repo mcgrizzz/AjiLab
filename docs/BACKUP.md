@@ -46,7 +46,7 @@ The sidecar resyncs hourly.
 ## Manual backup
 
 ```bash
-docker compose exec -T db pg_dump -U recipevault -Fc recipevault > my-backup.dump
+docker compose exec -T db pg_dump -U ajilab -Fc ajilab > my-backup.dump
 ```
 
 ---
@@ -70,7 +70,7 @@ docker compose start app
 
 ```bash
 docker compose exec -T db pg_restore \
-  -U recipevault -d recipevault \
+  -U ajilab -d ajilab \
   --clean --if-exists --no-owner --no-acl \
   < backup.dump
 docker compose restart app
@@ -79,7 +79,7 @@ docker compose restart app
 **Sanity check after restore:**
 
 ```bash
-docker compose exec db psql -U recipevault -d recipevault -c "
+docker compose exec db psql -U ajilab -d ajilab -c "
   SELECT 'recipes'   AS t, COUNT(*) FROM recipes
   UNION ALL
   SELECT 'entries',  COUNT(*) FROM entries
@@ -99,7 +99,7 @@ docker compose exec db psql -U recipevault -d recipevault -c "
 docker compose up -d db
 
 # Wait for it to be ready
-docker compose exec db pg_isready -U recipevault
+docker compose exec db pg_isready -U ajilab
 
 # Restore from your most recent backup
 npm run restore -- ./backups/latest.dump

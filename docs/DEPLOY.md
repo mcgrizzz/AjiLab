@@ -1,5 +1,36 @@
 # Deployment & configuration
 
+## Moving data between databases
+
+Copy all data from one AjiLab Postgres database to another:
+
+```bash
+SOURCE_DATABASE_URL=postgres://user:pass@old-host/db npm run transfer
+```
+
+`TARGET_DATABASE_URL` defaults to `DATABASE_URL` (the current app's database). Set it explicitly to copy in either direction.
+
+```bash
+# Remote → local Docker (most common: switching from hosted to self-hosted)
+SOURCE_DATABASE_URL=postgres://user:pass@remote-host/db \
+npm run transfer
+
+# Local → remote
+SOURCE_DATABASE_URL=postgres://localhost/ajilab \
+TARGET_DATABASE_URL=postgres://user:pass@remote-host/db \
+npm run transfer
+```
+
+The script is safe to run multiple times — it skips rows already in the target. Pass `--overwrite` to replace them:
+
+```bash
+SOURCE_DATABASE_URL=postgres://... npm run transfer -- --overwrite
+```
+
+The target schema is applied automatically so the target database can be completely empty.
+
+---
+
 ## Docker (recommended)
 
 ```bash
@@ -28,15 +59,15 @@ docker compose logs -f backup
 ```bash
 # Spin up just Postgres
 docker run -d --name pg -p 5432:5432 \
-  -e POSTGRES_DB=recipevault \
-  -e POSTGRES_USER=recipevault \
-  -e POSTGRES_PASSWORD=recipevault \
+  -e POSTGRES_DB=ajilab \
+  -e POSTGRES_USER=ajilab \
+  -e POSTGRES_PASSWORD=ajilab \
   postgres:18-alpine
 
 npm install
-DATABASE_URL=postgresql://recipevault:recipevault@localhost:5432/recipevault npm start
+DATABASE_URL=postgresql://ajilab:ajilab@localhost:5432/ajilab npm start
 # or for watch mode:
-DATABASE_URL=postgresql://recipevault:recipevault@localhost:5432/recipevault npm run dev
+DATABASE_URL=postgresql://ajilab:ajilab@localhost:5432/ajilab npm run dev
 ```
 
 ---
@@ -46,7 +77,7 @@ DATABASE_URL=postgresql://recipevault:recipevault@localhost:5432/recipevault npm
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3000` | HTTP port |
-| `DATABASE_URL` | `postgresql://recipevault:recipevault@localhost:5432/recipevault` | Postgres connection string |
+| `DATABASE_URL` | `postgresql://ajilab:ajilab@localhost:5432/ajilab` | Postgres connection string |
 | `DATABASE_POOL_MAX` | `10` | Max pool connections |
 | `AUTO_PULL` | `true` | Git pull on container start |
 | `BACKUP_RETENTION_DAYS` | `30` | Days to keep nightly dumps |
@@ -71,7 +102,7 @@ WorkingDirectory=/opt/ajilab
 ExecStart=/usr/bin/npm start
 Restart=on-failure
 Environment=PORT=3000
-Environment=DATABASE_URL=postgresql://recipevault:secret@localhost:5432/recipevault
+Environment=DATABASE_URL=postgresql://ajilab:secret@localhost:5432/ajilab
 
 [Install]
 WantedBy=multi-user.target

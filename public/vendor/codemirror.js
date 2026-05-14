@@ -4002,10 +4002,11 @@ function addRange(from, to, ranges, margin = 0) {
     ranges.push(from, to);
 }
 var BlockWrapper = class _BlockWrapper extends RangeValue {
-  constructor(tagName, attributes) {
+  constructor(tagName, attributes, rank) {
     super();
     this.tagName = tagName;
     this.attributes = attributes;
+    this.rank = rank;
   }
   eq(other) {
     return other == this || other instanceof _BlockWrapper && this.tagName == other.tagName && attrsEq(this.attributes, other.attributes);
@@ -4015,7 +4016,7 @@ var BlockWrapper = class _BlockWrapper extends RangeValue {
   attributes.
   */
   static create(spec) {
-    return new _BlockWrapper(spec.tagName, spec.attributes || noAttrs);
+    return new _BlockWrapper(spec.tagName, spec.attributes || noAttrs, spec.rank == null ? 50 : Math.max(0, Math.min(spec.rank, 100)));
   }
   /**
   Create a range set from the given block wrapper ranges.
@@ -5839,7 +5840,8 @@ var TileBuilder = class {
         this.wrappers.splice(i, 1);
     for (let cur = this.blockWrappers; cur.value && cur.from <= this.pos; cur.next())
       if (cur.to >= this.pos) {
-        let wrap = new OpenWrapper(cur.from, cur.to, cur.value, cur.rank), i = this.wrappers.length;
+        let rank = cur.rank * 102 + cur.value.rank;
+        let wrap = new OpenWrapper(cur.from, cur.to, cur.value, rank), i = this.wrappers.length;
         while (i > 0 && (this.wrappers[i - 1].rank - wrap.rank || this.wrappers[i - 1].to - wrap.to) < 0)
           i--;
         this.wrappers.splice(i, 0, wrap);

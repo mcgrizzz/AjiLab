@@ -54,14 +54,14 @@ async function main() {
   console.log("[restore] wiping target schema");
   await sql`DROP SCHEMA IF EXISTS public CASCADE`;
   await sql`CREATE SCHEMA public`;
-  await sql`GRANT ALL ON SCHEMA public TO recipevault`;
+  await sql`GRANT ALL ON SCHEMA public TO ajilab`;
   await sql.end();
 
   console.log("[restore] streaming dump into pg_restore");
   await new Promise<void>((resolve, reject) => {
     const child = spawn("docker", [
       "compose", "exec", "-T", "db",
-      "pg_restore", "-U", "recipevault", "-d", "recipevault",
+      "pg_restore", "-U", "ajilab", "-d", "ajilab",
       "--no-owner", "--no-acl",
     ], { stdio: ["pipe", "inherit", "inherit"] });
     const stream = fs.createReadStream(resolved);

@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import postgres from "postgres";
 
 const DATABASE_URL = process.env.DATABASE_URL
-  || "postgresql://recipevault:recipevault@localhost:5432/recipevault";
+  || "postgresql://ajilab:ajilab@localhost:5432/ajilab";
 
 export const sql = postgres(DATABASE_URL, {
   max: parseInt(process.env.DATABASE_POOL_MAX || "10"),
