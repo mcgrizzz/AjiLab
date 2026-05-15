@@ -21,14 +21,15 @@ const RecipeView = {
   draftQuantityAnchor: null,
   cookLogs: [],
   cookLogsFilterVersion: null,
-  historyFocusVersion: null,
+  focusedVersion: null,
   explicitVersionRequest: null,
   backlinks: [],
 
   async render(container, slug, opts = {}) {
     this.slug = slug;
     this.branchSlug = opts.branch || 'main';
-    this.activeTab = opts.tab || 'overview';
+    // Backward compat: old bookmarks used ?tab=history before the rename.
+    this.activeTab = opts.tab === 'history' ? 'versions' : (opts.tab || 'overview');
     this.scale = 1;
     this.cookMode = false;
     this.showAmounts = true;
@@ -43,7 +44,7 @@ const RecipeView = {
     this.draftQuantityAnchor = null;
     this.cookLogs = [];
     this.cookLogsFilterVersion = null;
-    this.historyFocusVersion = null;
+    this.focusedVersion = null;
     this.explicitVersionRequest = opts.version || null;
     this.backlinks = [];
     container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
@@ -153,14 +154,32 @@ const RecipeView = {
     const branchSelect = branches.length > 1
       ? `<select class="version-select" onchange="RecipeView.switchBranch(this.value)">${branchOptions}</select>`
       : '';
+
+    // Version selector: shows the currently selected version, with all versions
+    // (and the draft when present) as options. Changing it calls switchVersion,
+    // which keeps activeVersion + URL + explicitVersionRequest in sync.
+    const versionList = [
+      ...(recipe.draft ? [{ val: 'draft', label: 'Draft' }] : []),
+      ...(recipe.versions || []).filter((v) => !v.is_draft).map((v) => ({
+        val: v.version_string,
+        label: `${v.version_string} (${v.status})`,
+      })),
+    ];
+    const selectedKey = this.selectedVersionKey();
+    const versionSelect = versionList.length > 0
+      ? `<select class="version-select" onchange="RecipeView.switchVersion(this.value)" aria-label="Select version">
+          ${versionList.map((opt) => `<option value="${escHtml(opt.val)}" ${opt.val === selectedKey ? 'selected' : ''}>${escHtml(opt.label)}</option>`).join('')}
+        </select>`
+      : '';
+
     const statusBits = this.headerStatusBits();
     const tabCount = (n) => n > 0 ? `<span class="tab-count">· ${n}</span>` : '';
-    const historyCount = recipe.counts ? (recipe.counts.releases_count + recipe.counts.betas_count) : 0;
+    const versionsCount = recipe.counts ? (recipe.counts.releases_count + recipe.counts.betas_count) : 0;
     const cookLogsCount = recipe.counts?.cook_logs_count || 0;
     const tabs = [
       { id: 'overview', label: 'Overview' },
       { id: 'editor', label: 'Editor' },
-      { id: 'history', label: `History${tabCount(historyCount)}` },
+      { id: 'versions', label: `Versions${tabCount(versionsCount)}` },
       { id: 'cook-logs', label: `Cook Logs${tabCount(cookLogsCount)}` },
     ];
 
@@ -172,6 +191,7 @@ const RecipeView = {
             <h1 class="recipe-title-lg">${escHtml(recipe.title)}</h1>
             <div class="recipe-status-row">
               ${statusBits}
+              ${versionSelect}
               ${branchSelect}
             </div>
           </div>
@@ -212,7 +232,7 @@ const RecipeView = {
       this.activeVersion = null;
     }
     this.activeTab = tab;
-    if (tab !== 'history') this.historyFocusVersion = null;
+    if (tab !== 'versions') this.focusedVersion = null;
     document.querySelectorAll('.tab[data-tab]').forEach((el) => {
       el.classList.toggle('active', el.dataset.tab === tab);
     });
@@ -239,7 +259,7 @@ const RecipeView = {
     switch (this.activeTab) {
       case 'overview': this.renderOverviewTab(body); break;
       case 'editor': this.renderEditorTab(body); break;
-      case 'history': this.renderHistoryTab(body); break;
+      case 'versions': this.renderVersionsTab(body); break;
       case 'cook-logs': this.renderCookLogsTab(body); break;
       default: this.renderOverviewTab(body);
     }

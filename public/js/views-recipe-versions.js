@@ -1,25 +1,25 @@
-// ── History tab — version list, version editing/deleting, compare ─────────────
+// ── Versions tab — version list, version editing/deleting, compare ───────────
 Object.assign(RecipeView, {
 
-  focusVersionInHistory(versionString) {
-    this.historyFocusVersion = versionString;
-    this.setTab('history');
+  focusVersion(versionString) {
+    this.focusedVersion = versionString;
+    this.setTab('versions');
   },
 
-  renderHistoryTab(body) {
+  renderVersionsTab(body) {
     const variants = (this.recipe.branches || []).filter((branch) => branch.kind === 'variant');
     body.innerHTML = `
-      <div class="tab-content history-tab">
-        <div class="history-section">
-          <div class="history-section-title">Releases &amp; betas</div>
+      <div class="tab-content versions-tab">
+        <div class="versions-section">
+          <div class="versions-section-title">Releases &amp; betas</div>
           ${this.renderVersionsListHtml()}
         </div>
         ${variants.length ? `
-        <div class="history-section">
-          <div class="history-section-title">Variant branches</div>
-          <div class="history-variant-list">
+        <div class="versions-section">
+          <div class="versions-section-title">Variant branches</div>
+          <div class="versions-variant-list">
             ${variants.map((variant) => `
-              <div class="history-variant-row">
+              <div class="versions-variant-row">
                 <div>
                   <div class="version-label">${escHtml(variant.name)}</div>
                   <div class="version-date">forked from ${escHtml(variant.forked_from_version_id || 'unknown')}</div>
@@ -28,13 +28,13 @@ Object.assign(RecipeView, {
               </div>`).join('')}
           </div>
         </div>` : ''}
-        <details class="history-section history-compare-section">
+        <details class="versions-section versions-compare-section">
           <summary>Compare versions</summary>
-          <div class="history-compare-body">${this.compareSectionHtml()}</div>
+          <div class="versions-compare-body">${this.compareSectionHtml()}</div>
         </details>
       </div>`;
-    if (this.historyFocusVersion) {
-      const safeVersion = (window.CSS && CSS.escape) ? CSS.escape(this.historyFocusVersion) : this.historyFocusVersion.replace(/"/g, '\\"');
+    if (this.focusedVersion) {
+      const safeVersion = (window.CSS && CSS.escape) ? CSS.escape(this.focusedVersion) : this.focusedVersion.replace(/"/g, '\\"');
       const target = body.querySelector(`.version-item[data-version="${safeVersion}"]`);
       if (target) {
         target.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -52,7 +52,7 @@ Object.assign(RecipeView, {
       </div>`;
     }
     return `<div id="versions-list">${versions.map((version) => `
-      <div class="version-item${this.historyFocusVersion === version.version_string ? ' version-item-focus' : ''}" data-version="${escHtml(version.version_string)}">
+      <div class="version-item${this.focusedVersion === version.version_string ? ' version-item-focus' : ''}" data-version="${escHtml(version.version_string)}">
         <div class="version-dot ${version.status}"></div>
         <div style="flex:1">
           <div class="version-label">${escHtml(version.version_string)}</div>

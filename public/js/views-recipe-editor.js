@@ -8,9 +8,26 @@ Object.assign(RecipeView, {
       if (log) cookLogTarget = this.cookLogToEditableTarget(log);
       else this.cookLogEditingId = null;
     }
-    const experimentTarget = cookLogTarget || this.recipe.active_experiment || this.recipe.draft || null;
-    if (experimentTarget && experimentTarget !== this.activeVersion) {
-      this.activeVersion = experimentTarget;
+    if (cookLogTarget) {
+      this.activeVersion = cookLogTarget;
+    } else {
+      // Only switch the active version if the current selection isn't editable.
+      // A draft or a beta can be edited directly; released/archived versions can't,
+      // so we fall back to the editable target (active experiment → draft).
+      const isCurrentEditable = !!(this.activeVersion?._cookLogId
+        || this.activeVersion?.is_draft
+        || this.activeVersion?.status === 'beta');
+      if (!isCurrentEditable) {
+        const experimentTarget = this.recipe.active_experiment || this.recipe.draft || null;
+        if (experimentTarget && experimentTarget !== this.activeVersion) {
+          this.activeVersion = experimentTarget;
+          // Sync URL + explicit request so the address bar matches what we're editing.
+          this.explicitVersionRequest = experimentTarget.is_draft
+            ? 'draft'
+            : (experimentTarget.version_string || null);
+          this.syncVersionUrl(true);
+        }
+      }
     }
     const editable = this.getEditableVersion();
     if (!editable) {

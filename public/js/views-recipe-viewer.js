@@ -233,12 +233,16 @@ Object.assign(RecipeView, {
   },
 
   async switchVersion(value) {
+    // Remember the explicit pick so tab renderers (overview, editor) don't
+    // override activeVersion back to their default.
+    this.explicitVersionRequest = value || null;
     await this.renderDetail(document.getElementById('view-container'), value, { syncUrl: true });
   },
 
   async switchBranch(value) {
     this.branchSlug = value || 'main';
     this.activeVersion = null;
+    this.explicitVersionRequest = null;
     await this.refreshRecipe();
     await this.renderDetail(document.getElementById('view-container'), null, { syncUrl: true });
   },

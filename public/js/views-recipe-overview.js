@@ -26,14 +26,29 @@ Object.assign(RecipeView, {
         </div>`;
       return;
     }
-    const isExperimentPrimary = !!(expt && primary === expt);
-    const primaryLabel = isExperimentPrimary
-      ? (primary.is_draft
-          ? 'In progress · Draft'
-          : `In progress · ${escHtml(primary.version_string || '')} (${escHtml(primary.status)})`)
-      : (primary.version_string
-          ? `Current best · ${escHtml(primary.version_string)} (${escHtml(primary.status)})`
-          : 'Current best');
+    // Compare by version_string / draft flag, not object identity. switchVersion
+    // re-fetches the version which produces a new object even when it represents
+    // the same release.
+    const sameVersion = (a, b) => {
+      if (!a || !b) return false;
+      if (a === b) return true;
+      if (a.is_draft && b.is_draft) return true;
+      return !!a.version_string && a.version_string === b.version_string;
+    };
+    const isExperimentPrimary = sameVersion(expt, primary);
+    const isCurrentBest = sameVersion(best, primary);
+    let primaryLabel;
+    if (isExperimentPrimary) {
+      primaryLabel = primary.is_draft
+        ? 'In progress · Draft'
+        : `In progress · ${escHtml(primary.version_string || '')} (${escHtml(primary.status)})`;
+    } else if (isCurrentBest) {
+      primaryLabel = `Current best · ${escHtml(primary.version_string)} (${escHtml(primary.status)})`;
+    } else if (primary.version_string) {
+      primaryLabel = `Viewing · ${escHtml(primary.version_string)} (${escHtml(primary.status)})`;
+    } else {
+      primaryLabel = 'Viewing';
+    }
     const primaryBanner = this.overviewPrimaryBannerHtml(primary, primaryLabel, isExperimentPrimary, best);
     const sidebarHtml = this.overviewSidebarHtml();
     body.innerHTML = `
@@ -124,7 +139,7 @@ Object.assign(RecipeView, {
       <div class="overview-best-line"><span class="badge badge-released">${escHtml(best.version_string || '')}</span><span class="text-muted" style="font-size:0.82rem">${fmtDate(best.created_at)}</span></div>
       ${changelogSnippet ? `<p class="overview-best-changelog">${escHtml(changelogSnippet)}${(best.changelog || '').length > 140 ? '…' : ''}</p>` : ''}
       <div class="overview-sidebar-card-actions">
-        ${showOpen ? `<button class="btn btn-sm" onclick="RecipeView.focusVersionInHistory('${escJs(best.version_string)}')">Open in History →</button>` : ''}
+        ${showOpen ? `<button class="btn btn-sm" onclick="RecipeView.focusVersion('${escJs(best.version_string)}')">Open in Versions →</button>` : ''}
         <button class="btn btn-sm" onclick="RecipeView.startNextBetaFrom('${escJs(best.version_string)}')">Start next beta</button>
       </div>
     </div>`;
