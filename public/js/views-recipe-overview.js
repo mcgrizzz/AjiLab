@@ -40,8 +40,8 @@ Object.assign(RecipeView, {
     let primaryLabel;
     if (isExperimentPrimary) {
       primaryLabel = primary.is_draft
-        ? 'In progress · Draft'
-        : `In progress · ${escHtml(primary.version_string || '')} (${escHtml(primary.status)})`;
+        ? 'Latest · Draft'
+        : `Latest · ${escHtml(primary.version_string || '')} (${escHtml(primary.status)})`;
     } else if (isCurrentBest) {
       primaryLabel = `Current best · ${escHtml(primary.version_string)} (${escHtml(primary.status)})`;
     } else if (primary.version_string) {

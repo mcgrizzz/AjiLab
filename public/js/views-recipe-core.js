@@ -166,11 +166,22 @@ const RecipeView = {
       })),
     ];
     const selectedKey = this.selectedVersionKey();
-    const versionSelect = versionList.length > 0
-      ? `<select class="version-select" onchange="RecipeView.switchVersion(this.value)" aria-label="Select version">
-          ${versionList.map((opt) => `<option value="${escHtml(opt.val)}" ${opt.val === selectedKey ? 'selected' : ''}>${escHtml(opt.label)}</option>`).join('')}
-        </select>`
-      : '';
+    // When editing a cook log, the version selector is misleading — show a
+    // non-interactive label that names the log's source instead.
+    let versionSelect;
+    if (this.cookLogEditingId) {
+      const log = (this.cookLogs || []).find((l) => l.id === this.cookLogEditingId);
+      const sourceLabel = log
+        ? (log.source_kind === 'draft' ? 'Cook log · from draft' : `Cook log · from ${log.source_version_string || 'unknown'}`)
+        : 'Cook log';
+      versionSelect = `<span class="badge" style="font-weight:500;cursor:default">${escHtml(sourceLabel)}</span>`;
+    } else {
+      versionSelect = versionList.length > 0
+        ? `<select class="version-select" onchange="RecipeView.switchVersion(this.value)" aria-label="Select version">
+            ${versionList.map((opt) => `<option value="${escHtml(opt.val)}" ${opt.val === selectedKey ? 'selected' : ''}>${escHtml(opt.label)}</option>`).join('')}
+          </select>`
+        : '';
+    }
 
     const statusBits = this.headerStatusBits();
     const tabCount = (n) => n > 0 ? `<span class="tab-count">· ${n}</span>` : '';
@@ -310,12 +321,16 @@ const RecipeView = {
     if (!log) { showToast('Cook log not found'); return; }
     this.cookLogEditingId = logId;
     this.activeVersion = this.cookLogToEditableTarget(log);
+    this.renderScaffold(document.getElementById('view-container'));
+    this.renderHeaderThumbnail();
     this.setTab('editor');
   },
 
   exitCookLogEdit() {
     this.cookLogEditingId = null;
     this.activeVersion = null;
+    this.renderScaffold(document.getElementById('view-container'));
+    this.renderHeaderThumbnail();
     this.setTab('cook-logs');
   },
 
