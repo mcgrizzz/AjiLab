@@ -132,7 +132,13 @@ const CL = {
       const dataAttrs = stepId
         ? ` data-step-id="${escHtml(stepId)}"`
         : '';
-      return `<li class="step-item"${dataAttrs}><span class="step-num"></span><span class="step-text">${html}</span></li>`;
+      const deviation = getStepDeviation(step);
+      const deviationClass = deviation ? ` step-deviation step-deviation-${deviation}` : '';
+      const badge = deviation
+        ? `<span class="step-deviation-badge step-deviation-badge-${deviation}">${DEVIATION_LABELS[deviation]}</span>`
+        : '';
+      const bodyHtml = deviation ? `<span class="step-text-body">${html}</span>` : html;
+      return `<li class="step-item${deviationClass}"${dataAttrs}><span class="step-num"></span><span class="step-text">${badge}${bodyHtml}</span></li>`;
     }).filter(s => s !== '').join('');
     return `<ol class="step-list">${items}</ol>`;
   },
@@ -368,6 +374,20 @@ function getRenderedStepId(step) {
   for (const token of step || []) {
     if (typeof token === 'string') continue;
     if (token?.step_id) return token.step_id;
+  }
+  return null;
+}
+
+const DEVIATION_LABELS = {
+  added: '+ Added',
+  modified: '~ Modified',
+  skipped: '– Skipped',
+};
+
+function getStepDeviation(step) {
+  for (const token of step || []) {
+    if (typeof token === 'string') continue;
+    if (token?.deviation) return token.deviation;
   }
   return null;
 }

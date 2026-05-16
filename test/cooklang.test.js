@@ -658,3 +658,76 @@ test("prose scalar temperatures still parse (regression)", () => {
   assert.equal(inline.range, null);
   assert.equal(inline.kind, "temperature");
 });
+
+// ── Cook log deviation markers ────────────────────────────────────────────────
+
+test("!+ prefix tags a step as an addition and strips the marker", () => {
+  const parsed = parseCooklang(`!+ Added @bread flour{15%g} mid-mix.`);
+  const step = parsed.steps[0];
+  // Every token in the step carries the deviation flag
+  assert.ok(step.length > 0);
+  for (const t of step) assert.equal(t.deviation, "added");
+  // First text token has the marker stripped (no leading "!+ ")
+  const firstText = step.find((t) => t.type === "text");
+  assert.ok(firstText);
+  assert.ok(!/^\s*!\+/.test(firstText.value), `marker should be stripped, got: "${firstText.value}"`);
+  // Ingredient still parses normally
+  const ing = step.find((t) => t.type === "ingredient");
+  assert.ok(ing);
+  assert.equal(ing.name, "bread flour");
+  assert.equal(ing.quantity, 15);
+});
+
+test("!~ prefix tags a step as modified", () => {
+  const parsed = parseCooklang(`!~ Folded twice instead of three times.`);
+  const step = parsed.steps[0];
+  for (const t of step) assert.equal(t.deviation, "modified");
+});
+
+test("!- prefix tags a step as skipped", () => {
+  const parsed = parseCooklang(`!- Skipped the final fold.`);
+  const step = parsed.steps[0];
+  for (const t of step) assert.equal(t.deviation, "skipped");
+});
+
+test("steps without a deviation marker have no deviation field", () => {
+  const parsed = parseCooklang(`Mix @flour{500%g}.`);
+  const step = parsed.steps[0];
+  for (const t of step) assert.equal(t.deviation, undefined);
+});
+
+test("`!+` without trailing space is treated as normal text, not a marker", () => {
+  const parsed = parseCooklang(`!+No space means literal text.`);
+  const step = parsed.steps[0];
+  for (const t of step) assert.equal(t.deviation, undefined);
+});
+
+test("marker appearing mid-step is not a deviation marker", () => {
+  const parsed = parseCooklang(`Mix flour !+ this is just text.`);
+  const step = parsed.steps[0];
+  for (const t of step) assert.equal(t.deviation, undefined);
+});
+
+test("deviation marker survives temperature placeholders in same step", () => {
+  const parsed = parseCooklang(`!+ Heat to ^{350°F} as a new step.`);
+  const step = parsed.steps[0];
+  for (const t of step) assert.equal(t.deviation, "added");
+  const temp = step.find((t) => t.type === "inlineQuantity");
+  assert.ok(temp);
+  assert.equal(temp.kind, "temperature");
+});
+
+test("!~ marker is not eaten by Cooklang's `~` timer sigil", () => {
+  // Without the preprocess step Cooklang would treat `~ Did 4 folds at 30 min`
+  // as a timer body, leaving items[0] as just "!" and producing a spurious
+  // timer chip for "30 min".
+  const parsed = parseCooklang(`!~ Did 4 folds at 30 min intervals instead of 3.`);
+  const step = parsed.steps[0];
+  for (const t of step) assert.equal(t.deviation, "modified");
+  // No spurious timer should be in the step
+  const timers = step.filter((t) => t.type === "timer");
+  assert.equal(timers.length, 0);
+  // Marker should be stripped from the rendered text
+  const text = step.filter((t) => t.type === "text").map((t) => t.value).join("");
+  assert.ok(!/!~/.test(text), `marker leaked into rendered text: "${text}"`);
+});

@@ -63,6 +63,9 @@ export interface ParsedStep {
   units?: string;
   range?: QuantityRange | null;
   kind?: "temperature";
+  // Cook log deviation marker — set on every token in a step prefixed with
+  // `!+ ` / `!~ ` / `!- `. The prefix is stripped from the rendered text.
+  deviation?: "added" | "modified" | "skipped";
   step_id?: string;
   step_number?: number;
   section_index?: number;
@@ -502,6 +505,28 @@ function formatTemperatureDisplay(quantity: string | number, units: string): str
   return `${q} ${u}`;
 }
 
+// Cook log deviation markers: `!+ ` (added) / `!~ ` (modified) / `!- ` (skipped)
+// at the start of a step. `~` is Cooklang's timer sigil, so a literal `!~ ` at
+// line start gets mangled by the parser (`~ rest of line` becomes a timer).
+// preprocessDeviationMarkers swaps `!~ ` → `! ` before parsing so the
+// parser sees plain text; detectDeviation accepts the swapped char as well.
+const DEVIATION_MOD_MARKER = "";
+
+function preprocessDeviationMarkers(text: string): string {
+  // Only swap when followed by whitespace — `!~name` (no space) isn't a
+  // deviation marker and shouldn't be touched.
+  return text.replace(/^!~(?=\s)/gm, `!${DEVIATION_MOD_MARKER}`);
+}
+
+function detectDeviation(items: any[]): "added" | "modified" | "skipped" | undefined {
+  const first = items?.[0];
+  if (!first || first.type !== "text" || typeof first.value !== "string") return undefined;
+  const m = first.value.match(/^\s*!([+\-])\s+/);
+  if (!m) return undefined;
+  first.value = first.value.slice(m[0].length);
+  return m[1] === "+" ? "added" : m[1] === DEVIATION_MOD_MARKER ? "modified" : "skipped";
+}
+
 function extractTemperatures(text: string): { cleaned: string; extractions: TemperatureExtraction[] } {
   const extractions: TemperatureExtraction[] = [];
   const cleaned = text.replace(/\^\{([^}]*)\}/g, (fullMatch, body, offset) => {
@@ -540,7 +565,11 @@ export function parseCooklang(text: string): ParsedRecipe {
     };
   }
   try {
-    const { cleaned, extractions: temperatureExtractions } = extractTemperatures(text);
+    const { cleaned: tempCleaned, extractions: temperatureExtractions } = extractTemperatures(text);
+    // `!~ ` at line start would otherwise be eaten by Cooklang's `~` timer
+    // sigil. Swap to a private-use char (offset-preserved) so the parser sees
+    // plain text; detectDeviation reads the marker back at step emission time.
+    const cleaned = preprocessDeviationMarkers(tempCleaned);
     const [recipe] = parser.parse(cleaned);
     // Annotation scans use the ORIGINAL text — `@` / `#` patterns are
     // untouched by temperature extraction.
@@ -625,6 +654,10 @@ export function parseCooklang(text: string): ParsedRecipe {
         } else if (content.type === "step") {
           const stepNumber = content.value.number;
           const stepId = makeStepId(sectionIndex, stepNumber);
+          // Detect a deviation marker at the start of the step. The marker
+          // lives in the first text item; strip it and tag every emitted
+          // token so the renderer can style the whole step.
+          const deviation = detectDeviation(content.value.items);
           const tokens: ParsedStep[] = content.value.items.flatMap((item: any) => {
             switch (item.type) {
               case "text":
@@ -733,6 +766,9 @@ export function parseCooklang(text: string): ParsedRecipe {
                 return [{ type: "text" as const, value: "" }];
             }
           });
+          if (deviation) {
+            for (const t of tokens) t.deviation = deviation;
+          }
           steps.push(tokens);
         }
       }
