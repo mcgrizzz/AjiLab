@@ -22,10 +22,16 @@ export interface RecipeReferenceResolution {
   url: string | null;
 }
 
+export interface QuantityRange {
+  min: number;
+  max: number;
+}
+
 export interface ParsedIngredient {
   name: string;
   quantity: string | number;
   units: string;
+  range?: QuantityRange | null;
   note?: string | null;
   optional?: boolean;
   recipe_reference?: boolean;
@@ -55,6 +61,8 @@ export interface ParsedStep {
   intermediate?: boolean;
   quantity?: string | number;
   units?: string;
+  range?: QuantityRange | null;
+  kind?: "temperature";
   step_id?: string;
   step_number?: number;
   section_index?: number;
@@ -77,6 +85,8 @@ export interface EditableQuantityToken {
   quantityText: string;
   units: string;
   numericValue: number | null;
+  range?: QuantityRange | null;
+  measurementKind?: "temperature";
   rangeStart: number;
   rangeEnd: number;
 }
@@ -139,6 +149,7 @@ function toParsedIngredient(ingredient: any): ParsedIngredient {
     name: ingredient_display_name(ingredient),
     quantity: extractQty(ingredient.quantity),
     units: getQuantityUnit(ingredient.quantity) || "",
+    range: extractRange(ingredient.quantity),
     note: ingredientNote(ingredient),
   };
 }
@@ -269,10 +280,11 @@ function toGroupedParsedIngredient(ingredient: any, groupedQuantity: any, annota
     ...parsed,
     quantity: normalized.quantity,
     units: normalized.units,
+    range: normalized.range,
   };
 }
 
-function normalizeGroupedQuantity(groupedQuantity: any): { quantity: string | number; units: string } | null {
+function normalizeGroupedQuantity(groupedQuantity: any): { quantity: string | number; units: string; range: QuantityRange | null } | null {
   if (!groupedQuantity) return null;
   const known = groupedQuantity.known || {};
   const knownValues = [
@@ -288,17 +300,20 @@ function normalizeGroupedQuantity(groupedQuantity: any): { quantity: string | nu
     return {
       quantity: extractQty(knownValues[0]),
       units: getQuantityUnit(knownValues[0]) || "",
+      range: extractRange(knownValues[0]),
     };
   }
   if (knownValues.length === 0 && unknownValues.length === 0 && groupedQuantity.no_unit && !(groupedQuantity.other || []).length) {
     return {
       quantity: extractQty(groupedQuantity.no_unit),
       units: getQuantityUnit(groupedQuantity.no_unit) || "",
+      range: extractRange(groupedQuantity.no_unit),
     };
   }
   return {
     quantity: grouped_quantity_display(groupedQuantity),
     units: "",
+    range: null,
   };
 }
 
@@ -406,6 +421,112 @@ function extractQty(quantity: any): string | number {
   return display;
 }
 
+// Returns { min, max } when the underlying Cooklang Value is a range, else null.
+// Accepts either a Quantity (has `.value`) or a raw Value object.
+function extractRange(quantity: any): QuantityRange | null {
+  const value = quantity?.value ?? null;
+  if (!value || value.type !== "range") return null;
+  const r = value.value;
+  const min = Number(r?.start);
+  const max = Number(r?.end);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+  return { min, max };
+}
+
+// `^{...}` is our extension for explicit temperature/measurement specs. The
+// Cooklang parser doesn't know `^`, and we don't want to rewrite `^` to `%`
+// because if the parser fails to recognize the result it leaks the wrong char
+// back to the user. Instead, we extract `^{...}` ourselves before parsing,
+// replace each occurrence with a private-use Unicode placeholder Cooklang
+// treats as plain text, and splice synthesized temperature tokens back into
+// the step output during emission.
+const TEMP_MARK_START = "";
+const TEMP_MARK_END = "";
+const TEMP_PLACEHOLDER_RE = new RegExp(`${TEMP_MARK_START}(\\d+)${TEMP_MARK_END}`, "g");
+
+interface TemperatureExtraction {
+  rangeStart: number;
+  rangeEnd: number;
+  body: string;
+  quantity: string | number;
+  units: string;
+  range: QuantityRange | null;
+  display: string;
+}
+
+// Parses the body of a `^{...}` token. Accepts canonical `value%unit` form and
+// natural notation like `550°F`, `20-22°C`, `200 fahrenheit`.
+function parseTemperatureBody(body: string): { quantity: string | number; units: string; range: QuantityRange | null } {
+  const trimmed = String(body || "").trim();
+  if (!trimmed) return { quantity: "", units: "", range: null };
+  let valuePart = trimmed;
+  let unitPart = "";
+  const pctIdx = trimmed.indexOf("%");
+  if (pctIdx >= 0) {
+    valuePart = trimmed.slice(0, pctIdx).trim();
+    unitPart = trimmed.slice(pctIdx + 1).trim();
+  } else {
+    const m = trimmed.match(/^\s*([\d.]+(?:\s*[-–]\s*[\d.]+)?)\s*(.+?)\s*$/);
+    if (m) {
+      valuePart = m[1].trim();
+      unitPart = m[2].trim();
+    }
+  }
+  const rangeMatch = valuePart.match(/^([\d.]+)\s*[-–]\s*([\d.]+)$/);
+  if (rangeMatch) {
+    const min = Number(rangeMatch[1]);
+    const max = Number(rangeMatch[2]);
+    if (Number.isFinite(min) && Number.isFinite(max)) {
+      return { quantity: valuePart, units: unitPart, range: { min, max } };
+    }
+  }
+  const num = Number(valuePart);
+  return {
+    quantity: Number.isFinite(num) && valuePart !== "" ? num : valuePart,
+    units: unitPart,
+    range: null,
+  };
+}
+
+// Build the human-readable string we render in step text. For known temperature
+// units we normalize to `°F` / `°C` regardless of how the source spelled it; for
+// other units we space-separate. The raw `^{540-550%F}` source becomes `540-550°F`
+// on screen, not the literal body with `%`.
+function formatTemperatureDisplay(quantity: string | number, units: string): string {
+  const q = String(quantity);
+  const u = String(units || "").trim();
+  if (!u) return q;
+  const lower = u.toLowerCase();
+  if (lower === "f" || lower === "°f" || lower === "fahrenheit") return `${q}°F`;
+  if (lower === "c" || lower === "°c" || lower === "celsius") return `${q}°C`;
+  return `${q} ${u}`;
+}
+
+function extractTemperatures(text: string): { cleaned: string; extractions: TemperatureExtraction[] } {
+  const extractions: TemperatureExtraction[] = [];
+  const cleaned = text.replace(/\^\{([^}]*)\}/g, (fullMatch, body, offset) => {
+    const parsed = parseTemperatureBody(body);
+    const i = extractions.length;
+    // Locate the quantity text inside the original match so editable tokens
+    // can replace just the number rather than the whole `^{...}` block.
+    const valueText = typeof parsed.quantity === "number" ? String(parsed.quantity) : parsed.quantity;
+    const relativeStart = valueText ? fullMatch.indexOf(valueText) : -1;
+    const rangeStart = relativeStart >= 0 ? offset + relativeStart : offset;
+    const rangeEnd = relativeStart >= 0 ? rangeStart + valueText.length : offset + fullMatch.length;
+    extractions.push({
+      rangeStart,
+      rangeEnd,
+      body,
+      quantity: parsed.quantity,
+      units: parsed.units,
+      range: parsed.range,
+      display: formatTemperatureDisplay(parsed.quantity, parsed.units),
+    });
+    return `${TEMP_MARK_START}${i}${TEMP_MARK_END}`;
+  });
+  return { cleaned, extractions };
+}
+
 export function parseCooklang(text: string): ParsedRecipe {
   if (!text || !text.trim()) {
     return {
@@ -419,7 +540,10 @@ export function parseCooklang(text: string): ParsedRecipe {
     };
   }
   try {
-    const [recipe] = parser.parse(text);
+    const { cleaned, extractions: temperatureExtractions } = extractTemperatures(text);
+    const [recipe] = parser.parse(cleaned);
+    // Annotation scans use the ORIGINAL text — `@` / `#` patterns are
+    // untouched by temperature extraction.
     const ingredientAnnotations = collectComponentAnnotations(text, "@");
     const cookwareAnnotations = collectComponentAnnotations(text, "#");
 
@@ -481,7 +605,7 @@ export function parseCooklang(text: string): ParsedRecipe {
     const cookwares: string[] = recipe.cookware
       .filter((_: any, index: number) => !cookwareAnnotations[index]?.hidden)
       .map((cw: any) => cookware_display_name(cw));
-    const editableTokens = extractEditableTokens(text, recipe);
+    const editableTokens = extractEditableTokens(text, recipe, temperatureExtractions);
 
     // Flatten sections → step token arrays (same shape the client expects)
     const steps: ParsedStep[][] = [];
@@ -504,11 +628,11 @@ export function parseCooklang(text: string): ParsedRecipe {
           const tokens: ParsedStep[] = content.value.items.flatMap((item: any) => {
             switch (item.type) {
               case "text":
-                return splitTextIntoParsedSteps(item.value, {
+                return splitTextWithTemperatures(item.value, {
                   step_id: stepId,
                   step_number: stepNumber,
                   section_index: sectionIndex,
-                });
+                }, temperatureExtractions);
               case "ingredient": {
                 const ing = recipe.ingredients[item.index];
                 const annotation = ingredientAnnotations[item.index];
@@ -538,6 +662,7 @@ export function parseCooklang(text: string): ParsedRecipe {
                   intermediate: isIntermediate,
                   quantity: extractQty(ing.quantity),
                   units: getQuantityUnit(ing.quantity) || "",
+                  range: extractRange(ing.quantity),
                   step_id: stepId,
                   step_number: stepNumber,
                   section_index: sectionIndex,
@@ -565,13 +690,22 @@ export function parseCooklang(text: string): ParsedRecipe {
               }
               case "timer": {
                 const tm = recipe.timers[item.index];
-                const q = getQuantityValue(tm.quantity);
+                const range = extractRange(tm.quantity);
                 const u = getQuantityUnit(tm.quantity) || "";
+                const displayQty = tm.quantity ? quantity_display(tm.quantity) : "";
+                // Ranges: prefer the display string so we don't silently truncate to start.
+                const quantity = range
+                  ? displayQty
+                  : ((): string | number => {
+                      const n = getQuantityValue(tm.quantity);
+                      return n !== null ? n : displayQty;
+                    })();
                 return [{
                   type: "timer",
-                  value: tm.quantity ? quantity_display(tm.quantity) : "",
-                  quantity: q !== null ? q : (tm.quantity ? quantity_display(tm.quantity) : ""),
+                  value: displayQty,
+                  quantity,
                   units: u,
+                  range,
                   step_id: stepId,
                   step_number: stepNumber,
                   section_index: sectionIndex,
@@ -579,11 +713,17 @@ export function parseCooklang(text: string): ParsedRecipe {
               }
               case "inlineQuantity": {
                 const iq = recipe.inlineQuantities[item.index];
+                const range = extractRange(iq);
+                const display = quantity_display(iq);
+                const quantity: string | number = range
+                  ? display
+                  : (getQuantityValue(iq.value) ?? display);
                 return [{
                   type: "inlineQuantity",
-                  value: quantity_display(iq),
-                  quantity: getQuantityValue(iq.value) ?? quantity_display(iq),
+                  value: display,
+                  quantity,
                   units: getQuantityUnit(iq) || "",
+                  range,
                   step_id: stepId,
                   step_number: stepNumber,
                   section_index: sectionIndex,
@@ -801,10 +941,50 @@ function stripTrailingZeros(s: string): string {
   return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
 }
 
+// Walks a text item from the parser output, splits on temperature placeholders
+// inserted by extractTemperatures, and injects synthesized temperature tokens.
+// Surrounding text segments are run through the prose temp splitter so inline
+// `200°C` mentions still surface as structured tokens.
+function splitTextWithTemperatures(
+  text: string,
+  meta: Partial<ParsedStep>,
+  extractions: TemperatureExtraction[],
+): ParsedStep[] {
+  if (!text) return [{ type: "text", value: "", ...meta }];
+  const tokens: ParsedStep[] = [];
+  TEMP_PLACEHOLDER_RE.lastIndex = 0;
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TEMP_PLACEHOLDER_RE.exec(text))) {
+    if (m.index > lastIdx) {
+      tokens.push(...splitTextIntoParsedSteps(text.slice(lastIdx, m.index), meta));
+    }
+    const temp = extractions[Number(m[1])];
+    if (temp) {
+      tokens.push({
+        type: "inlineQuantity",
+        value: temp.display,
+        quantity: temp.quantity,
+        units: temp.units,
+        range: temp.range,
+        kind: "temperature",
+        ...meta,
+      });
+    }
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx < text.length) {
+    tokens.push(...splitTextIntoParsedSteps(text.slice(lastIdx), meta));
+  }
+  return tokens.length ? tokens : splitTextIntoParsedSteps(text, meta);
+}
+
 function splitTextIntoParsedSteps(text: string, meta: Partial<ParsedStep> = {}): ParsedStep[] {
   if (!text) return [{ type: "text", value: "", ...meta }];
   const tokens: ParsedStep[] = [];
-  const pattern = /(\d+(?:\.\d+)?)\s*(°|º)\s*([FCfc])\b/g;
+  // Matches single temps (`200°C`) and ranges with a trailing unit (`20-22°C`).
+  // A two-unit form like `20°C-22°C` falls back to two separate scalar tokens.
+  const pattern = /(\d+(?:\.\d+)?)(?:\s*([-–])\s*(\d+(?:\.\d+)?))?\s*(°|º)\s*([FCfc])\b/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -813,13 +993,17 @@ function splitTextIntoParsedSteps(text: string, meta: Partial<ParsedStep> = {}):
       tokens.push({ type: "text", value: text.slice(lastIndex, match.index), ...meta });
     }
     const value = match[0];
-    const quantity = Number(match[1]);
-    const unit = `°${match[3].toUpperCase()}`;
+    const startVal = Number(match[1]);
+    const endVal = match[3] ? Number(match[3]) : null;
+    const unit = `°${match[5].toUpperCase()}`;
+    const isRange = endVal !== null && Number.isFinite(endVal);
     tokens.push({
       type: "inlineQuantity",
       value,
-      quantity,
+      quantity: isRange ? `${match[1]}${match[2] || "-"}${match[3]}` : startVal,
       units: unit,
+      range: isRange ? { min: startVal, max: endVal as number } : null,
+      kind: "temperature",
       ...meta,
     });
     lastIndex = match.index + value.length;
@@ -851,9 +1035,15 @@ function resolveReferenceStepNumber(section: any, referenceIndex: number | null 
   return undefined;
 }
 
-function extractEditableTokens(text: string, recipe: any): EditableQuantityToken[] {
+function extractEditableTokens(
+  text: string,
+  recipe: any,
+  temperatureExtractions: TemperatureExtraction[] = [],
+): EditableQuantityToken[] {
   const ingredientMatches = collectQuantityMatches(text, /@([^{}]+?)\{([^}]*)\}/g);
   const timerMatches = collectQuantityMatches(text, /~\{([^}]*)\}/g);
+  // Only `%{...}` survives into recipe.inlineQuantities — `^{...}` is extracted
+  // separately by extractTemperatures before parsing.
   const inlineMatches = collectQuantityMatches(text, /%\{([^}]*)\}/g);
 
   const tokens: EditableQuantityToken[] = [];
@@ -872,6 +1062,7 @@ function extractEditableTokens(text: string, recipe: any): EditableQuantityToken
       quantityText: match.quantityText,
       units: getQuantityUnit(ingredient.quantity) || match.units,
       numericValue: getQuantityValue(ingredient.quantity),
+      range: extractRange(ingredient.quantity),
       rangeStart: match.rangeStart,
       rangeEnd: match.rangeEnd,
     });
@@ -888,6 +1079,7 @@ function extractEditableTokens(text: string, recipe: any): EditableQuantityToken
       quantityText: match.quantityText,
       units: getQuantityUnit(timer.quantity) || match.units,
       numericValue: getQuantityValue(timer.quantity),
+      range: extractRange(timer.quantity),
       rangeStart: match.rangeStart,
       rangeEnd: match.rangeEnd,
     });
@@ -903,8 +1095,26 @@ function extractEditableTokens(text: string, recipe: any): EditableQuantityToken
       quantityText: match.quantityText,
       units: getQuantityUnit(inlineQuantity) || match.units,
       numericValue: getQuantityValue(inlineQuantity),
+      range: extractRange(inlineQuantity),
       rangeStart: match.rangeStart,
       rangeEnd: match.rangeEnd,
+    });
+  }
+
+  for (let i = 0; i < temperatureExtractions.length; i++) {
+    const temp = temperatureExtractions[i];
+    const quantityText = typeof temp.quantity === "number" ? String(temp.quantity) : temp.quantity;
+    tokens.push({
+      id: `temperature:${i}`,
+      kind: "inlineQuantity",
+      measurementKind: "temperature",
+      label: "Temperature",
+      quantityText,
+      units: temp.units,
+      numericValue: typeof temp.quantity === "number" ? temp.quantity : null,
+      range: temp.range,
+      rangeStart: temp.rangeStart,
+      rangeEnd: temp.rangeEnd,
     });
   }
 

@@ -55,13 +55,10 @@ Object.assign(RecipeView, {
             <button class="btn btn-sm" id="temp-btn" onclick="RecipeView.toggleTemperatureUnit()">
               Temps: °${this.temperatureUnit}
             </button>
-            <button class="btn btn-sm" id="cook-btn" onclick="RecipeView.toggleCookMode()">
-              ${this.cookMode ? '✓ Exit cook mode' : '▶ Cook mode'}
-            </button>
             ${inlineAddNotes}
           </div>
         </div>
-        <div id="steps-list">${CL.renderSteps(parsed.steps, this.scale, this.cookMode, parsed.metadata, this.showAmounts, {
+        <div id="steps-list">${CL.renderSteps(parsed.steps, this.scale, parsed.metadata, this.showAmounts, {
           temperatureUnit: this.temperatureUnit,
         })}</div>
       </div>` : '';
@@ -161,7 +158,7 @@ Object.assign(RecipeView, {
     }
     const stepsList = document.getElementById('steps-list');
     if (stepsList && this.parsed) {
-      stepsList.innerHTML = CL.renderSteps(this.parsed.steps, s, this.cookMode, this.parsed.metadata, this.showAmounts, { temperatureUnit: this.temperatureUnit });
+      stepsList.innerHTML = CL.renderSteps(this.parsed.steps, s, this.parsed.metadata, this.showAmounts, { temperatureUnit: this.temperatureUnit });
     }
   },
 
@@ -177,23 +174,13 @@ Object.assign(RecipeView, {
     if (this.activeTab === 'editor') this.updatePreview();
   },
 
-  toggleCookMode() {
-    this.cookMode = !this.cookMode;
-    const button = document.getElementById('cook-btn');
-    if (button) button.textContent = this.cookMode ? '✓ Exit cook mode' : '▶ Cook mode';
-    const stepsList = document.getElementById('steps-list');
-    if (stepsList && this.parsed) {
-      stepsList.innerHTML = CL.renderSteps(this.parsed.steps, this.scale, this.cookMode, this.parsed.metadata, this.showAmounts, { temperatureUnit: this.temperatureUnit });
-    }
-  },
-
   toggleAmounts() {
     this.showAmounts = !this.showAmounts;
     const button = document.getElementById('amounts-btn');
     if (button) button.textContent = this.showAmounts ? '✓ Hide amounts' : '⊕ Show amounts';
     const stepsList = document.getElementById('steps-list');
     if (stepsList && this.parsed) {
-      stepsList.innerHTML = CL.renderSteps(this.parsed.steps, this.scale, this.cookMode, this.parsed.metadata, this.showAmounts, { temperatureUnit: this.temperatureUnit });
+      stepsList.innerHTML = CL.renderSteps(this.parsed.steps, this.scale, this.parsed.metadata, this.showAmounts, { temperatureUnit: this.temperatureUnit });
     }
   },
 
@@ -203,7 +190,7 @@ Object.assign(RecipeView, {
     if (button) button.textContent = `Temps: °${this.temperatureUnit}`;
     const stepsList = document.getElementById('steps-list');
     if (stepsList && this.parsed) {
-      stepsList.innerHTML = CL.renderSteps(this.parsed.steps, this.scale, this.cookMode, this.parsed.metadata, this.showAmounts, { temperatureUnit: this.temperatureUnit });
+      stepsList.innerHTML = CL.renderSteps(this.parsed.steps, this.scale, this.parsed.metadata, this.showAmounts, { temperatureUnit: this.temperatureUnit });
     }
   },
 

@@ -532,3 +532,129 @@ Add the @&(2)wet mixture{} to the @&(1)dry mixture{}.
   assert.equal(parsed.steps[3][3].reference_step_number, 1);
   assert.equal(parsed.steps[3][3].reference_step_id, "section-0-step-1");
 });
+
+// ── Ranges (recipe specs) ─────────────────────────────────────────────────────
+
+test("ingredient ranges surface as structured {min, max} alongside the display string", () => {
+  const parsed = parseCooklang(`Add @water{20-30%g}.`);
+  const water = parsed.ingredients[0];
+  assert.equal(water.name, "water");
+  assert.equal(water.units, "g");
+  assert.deepEqual(water.range, { min: 20, max: 30 });
+  assert.equal(String(water.quantity).replace(/\s/g, ""), "20-30");
+});
+
+test("scalar ingredients have range: null (regression)", () => {
+  const parsed = parseCooklang(`Add @flour{500%g}.`);
+  const flour = parsed.ingredients[0];
+  assert.equal(flour.quantity, 500);
+  assert.equal(flour.units, "g");
+  assert.equal(flour.range, null);
+});
+
+test("timer ranges keep both endpoints instead of truncating to start", () => {
+  const parsed = parseCooklang(`Rest ~rest{20-30%min}.`);
+  const timer = parsed.steps[0].find((t) => t.type === "timer");
+  assert.ok(timer, "expected a timer token");
+  assert.equal(timer.units, "min");
+  assert.deepEqual(timer.range, { min: 20, max: 30 });
+  // quantity should NOT be the truncated start; it should reflect the range.
+  assert.notEqual(timer.quantity, 20);
+});
+
+test("inline %{...} ranges are recognized", () => {
+  const parsed = parseCooklang(`Heat to %{180-200%C}.`);
+  const inline = parsed.steps[0].find((t) => t.type === "inlineQuantity");
+  assert.ok(inline, "expected an inlineQuantity token");
+  assert.deepEqual(inline.range, { min: 180, max: 200 });
+  assert.equal(inline.units, "C");
+  assert.notEqual(inline.kind, "temperature"); // %{...} is generic, not tagged
+});
+
+// ── ^{...} sigil (temperature/measurement spec) ───────────────────────────────
+
+test("^{X%Y} parses as an inline quantity tagged with kind: temperature", () => {
+  const parsed = parseCooklang(`Heat to ^{200%C}.`);
+  const inline = parsed.steps[0].find((t) => t.type === "inlineQuantity");
+  assert.ok(inline, "expected an inlineQuantity token");
+  assert.equal(inline.quantity, 200);
+  assert.equal(inline.units, "C");
+  assert.equal(inline.kind, "temperature");
+  assert.equal(inline.range, null);
+});
+
+test("^{X-Y%C} parses as a range with kind: temperature", () => {
+  const parsed = parseCooklang(`Rest at ^{20-22%C}.`);
+  const inline = parsed.steps[0].find((t) => t.type === "inlineQuantity");
+  assert.ok(inline, "expected an inlineQuantity token");
+  assert.deepEqual(inline.range, { min: 20, max: 22 });
+  assert.equal(inline.units, "C");
+  assert.equal(inline.kind, "temperature");
+});
+
+test("^{...} accepts natural temperature notation (°F, °C) without explicit %", () => {
+  const parsed = parseCooklang(`Preheat to ^{550°F}.`);
+  const inline = parsed.steps[0].find((t) => t.type === "inlineQuantity");
+  assert.ok(inline, "expected an inlineQuantity token");
+  assert.equal(inline.quantity, 550);
+  assert.equal(inline.units, "°F");
+  assert.equal(inline.kind, "temperature");
+});
+
+test("^{...} accepts natural range notation (20-22°C)", () => {
+  const parsed = parseCooklang(`Hold at ^{20-22°C}.`);
+  const inline = parsed.steps[0].find((t) => t.type === "inlineQuantity");
+  assert.ok(inline, "expected an inlineQuantity token");
+  assert.deepEqual(inline.range, { min: 20, max: 22 });
+  assert.equal(inline.units, "°C");
+  assert.equal(inline.kind, "temperature");
+});
+
+test("^{540-550%F} renders as 540-550°F (display normalizes the % separator)", () => {
+  const parsed = parseCooklang(`Preheat to ^{540-550%F}.`);
+  const inline = parsed.steps[0].find((t) => t.type === "inlineQuantity");
+  assert.ok(inline, "expected an inlineQuantity token");
+  assert.equal(inline.value, "540-550°F");
+  assert.equal(inline.kind, "temperature");
+  assert.deepEqual(inline.range, { min: 540, max: 550 });
+});
+
+test("^{...} and %{...} can coexist; only ^ is tagged temperature", () => {
+  const parsed = parseCooklang(`Bring to %{100%C} then cool to ^{40%C}.`);
+  const inlines = parsed.steps[0].filter((t) => t.type === "inlineQuantity");
+  assert.equal(inlines.length, 2);
+  assert.notEqual(inlines[0].kind, "temperature");
+  assert.equal(inlines[1].kind, "temperature");
+});
+
+test("editable tokens flag ^{...} matches with measurementKind: temperature", () => {
+  const parsed = parseCooklang(`Hold at ^{20-22%C} and use %{5%g}.`);
+  const tempToken = parsed.editable_tokens.find((t) => t.measurementKind === "temperature");
+  const plainToken = parsed.editable_tokens.find((t) => t.kind === "inlineQuantity" && t.measurementKind !== "temperature");
+  assert.ok(tempToken, "expected a temperature-tagged editable token");
+  assert.deepEqual(tempToken.range, { min: 20, max: 22 });
+  assert.equal(tempToken.units, "C");
+  assert.ok(plainToken, "expected a plain inline-quantity editable token");
+  assert.equal(plainToken.range, null);
+});
+
+// ── Prose temperature ranges ──────────────────────────────────────────────────
+
+test("prose temperature ranges are extracted with structured range", () => {
+  const parsed = parseCooklang(`Heat to 20-22°C and rest.`);
+  const inline = parsed.steps[0].find((t) => t.type === "inlineQuantity");
+  assert.ok(inline, "expected an inlineQuantity token from prose");
+  assert.deepEqual(inline.range, { min: 20, max: 22 });
+  assert.equal(inline.units, "°C");
+  assert.equal(inline.kind, "temperature");
+});
+
+test("prose scalar temperatures still parse (regression)", () => {
+  const parsed = parseCooklang(`Heat to 200°C.`);
+  const inline = parsed.steps[0].find((t) => t.type === "inlineQuantity");
+  assert.ok(inline);
+  assert.equal(inline.quantity, 200);
+  assert.equal(inline.units, "°C");
+  assert.equal(inline.range, null);
+  assert.equal(inline.kind, "temperature");
+});

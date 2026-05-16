@@ -313,7 +313,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       }
       if (preview.cookwares?.length) html += `<div class="section-head mt16">Equipment</div>${CL.renderCookware(preview.cookwares)}`;
       if (preview.steps?.length) {
-        html += `<div class="section-head mt16">Steps</div>${CL.renderSteps(preview.steps, 1, false, preview.metadata, false, {
+        html += `<div class="section-head mt16">Steps</div>${CL.renderSteps(preview.steps, 1, preview.metadata, false, {
           temperatureUnit: this.temperatureUnit,
           resolveTimerToken: timerResolver,
           resolveInlineQuantityToken: inlineResolver,

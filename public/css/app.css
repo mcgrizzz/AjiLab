@@ -1276,15 +1276,6 @@ textarea.field-input { min-height: 80px; resize: vertical; }
 }
 .toast.hidden { opacity: 0; }
 
-/* ── Cook mode ───────────────────────────────────────────────── */
-.cook-mode .step-item {
-  padding: 18px 0;
-  cursor: pointer;
-}
-.cook-mode .step-item .step-text { font-size: 1.08rem; line-height: 1.75; }
-.cook-mode .step-item.done .step-text { opacity: 0.4; text-decoration: line-through; }
-.cook-mode .step-item.done .step-num { opacity: 0.4; }
-
 .timer-display {
   display: inline-flex;
   align-items: center;

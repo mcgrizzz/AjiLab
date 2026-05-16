@@ -97,7 +97,7 @@ Object.assign(RecipeView, {
           <div class="cook-log-recipe-body">
             ${CL.renderMetrics(parsed.metrics)}
             ${parsed.ingredients?.length ? `<div class="section-head">Ingredients</div>${CL.renderIngredientSummary(parsed.ingredient_summary, 1, { mode: this.ingredientSummaryMode })}` : ''}
-            ${parsed.steps?.length ? `<div class="section-head mt12">Steps</div>${CL.renderSteps(parsed.steps, 1, false, parsed.metadata, true, {})}` : ''}
+            ${parsed.steps?.length ? `<div class="section-head mt12">Steps</div>${CL.renderSteps(parsed.steps, 1, parsed.metadata, true, {})}` : ''}
           </div>
         </details>`
       : (log.cooklang_text ? '<div class="cook-log-recipe-loading text-muted">Parsing recipe…</div>' : '');

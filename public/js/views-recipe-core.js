@@ -10,7 +10,6 @@ const RecipeView = {
   photosExpandedVersionKey: null,
   scale: 1,
   activeTab: 'overview',
-  cookMode: false,
   showAmounts: true,
   temperatureUnit: 'F',
   ingredientSummaryMode: null,
@@ -31,7 +30,6 @@ const RecipeView = {
     // Backward compat: old bookmarks used ?tab=history before the rename.
     this.activeTab = opts.tab === 'history' ? 'versions' : (opts.tab || 'overview');
     this.scale = 1;
-    this.cookMode = false;
     this.showAmounts = true;
     this.temperatureUnit = 'F';
     this.ingredientSummaryMode = null;

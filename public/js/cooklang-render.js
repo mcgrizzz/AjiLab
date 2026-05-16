@@ -55,7 +55,7 @@ const CL = {
   },
 
   // Render steps with highlighted inline tokens
-  renderSteps(steps, scale = 1, cookMode = false, metadata = {}, showAmounts = false, options = {}) {
+  renderSteps(steps, scale = 1, metadata = {}, showAmounts = false, options = {}) {
     if (!steps || steps.length === 0) {
       return '<p class="text-muted">No steps listed.</p>';
     }
@@ -108,13 +108,8 @@ const CL = {
             return `<span class="s-cookware">${escHtml(token.name)}</span>${noteHtml}`;
           }
           case 'timer': {
-            const secs = timerToSeconds(token.quantity, token.units);
             const matchedToken = token.quantity && options.resolveTimerToken ? options.resolveTimerToken(token) : null;
             const attr = matchedToken ? ` data-draft-token-id="${escHtml(matchedToken.id)}" onclick="RecipeView.selectDraftQuantity('${escHtml(matchedToken.id)}', this)"` : '';
-            if (cookMode && secs > 0) {
-              return `<span class="timer-display${matchedToken ? ' draft-token-selectable' : ''}" data-seconds="${secs}" data-state="idle"
-                ${matchedToken ? attr : 'onclick="TimerCtrl.toggle(this)"'}>⏱ ${escHtml(token.value)}</span>`;
-            }
             return `<span class="s-timer${matchedToken ? ' draft-token-selectable' : ''}"${attr}>⏱ ${escHtml(token.value)}</span>`;
           }
           case 'inlineQuantity': {
@@ -133,15 +128,13 @@ const CL = {
             return escHtml(token.value || '');
         }
       }).join('');
-      const doneClick = cookMode ? ` onclick="this.classList.toggle('done')"` : '';
       const stepId = getRenderedStepId(step);
       const dataAttrs = stepId
         ? ` data-step-id="${escHtml(stepId)}"`
         : '';
-      return `<li class="step-item"${dataAttrs}${doneClick}><span class="step-num"></span><span class="step-text">${html}</span></li>`;
+      return `<li class="step-item"${dataAttrs}><span class="step-num"></span><span class="step-text">${html}</span></li>`;
     }).filter(s => s !== '').join('');
-    const cls = cookMode ? 'step-list cook-mode' : 'step-list';
-    return `<ol class="${cls}">${items}</ol>`;
+    return `<ol class="step-list">${items}</ol>`;
   },
 
   renderMetrics(metrics) {
@@ -175,66 +168,6 @@ const CL = {
     if (unique.length === 0) return '';
     const chips = unique.map(c => `<span class="cookware-chip">${escHtml(c)}</span>`).join('');
     return `<div class="cookware-list">${chips}</div>`;
-  },
-};
-
-// ── Timer controller ──────────────────────────────────────────────────────────
-const TimerCtrl = {
-  intervals: new Map(),
-
-  toggle(el) {
-    const state = el.dataset.state;
-    if (state === 'idle') this.start(el);
-    else if (state === 'running') this.pause(el);
-    else if (state === 'paused') this.start(el);
-    else if (state === 'done') this.reset(el);
-  },
-
-  start(el) {
-    if (!el.dataset.remaining) {
-      el.dataset.remaining = el.dataset.seconds;
-    }
-    el.dataset.state = 'running';
-    el.classList.add('running');
-    el.classList.remove('done');
-    const id = setInterval(() => {
-      let rem = parseInt(el.dataset.remaining) - 1;
-      el.dataset.remaining = rem;
-      el.textContent = `⏱ ${formatTime(rem)}`;
-      if (rem <= 0) {
-        clearInterval(id);
-        this.intervals.delete(el);
-        el.dataset.state = 'done';
-        el.classList.remove('running');
-        el.classList.add('done');
-        el.textContent = '✓ Done!';
-        if ('vibrate' in navigator) navigator.vibrate([200, 100, 200]);
-      }
-    }, 1000);
-    this.intervals.set(el, id);
-    this.updateLabel(el);
-  },
-
-  pause(el) {
-    const id = this.intervals.get(el);
-    if (id) { clearInterval(id); this.intervals.delete(el); }
-    el.dataset.state = 'paused';
-    el.classList.remove('running');
-    this.updateLabel(el);
-  },
-
-  reset(el) {
-    const id = this.intervals.get(el);
-    if (id) { clearInterval(id); this.intervals.delete(el); }
-    el.dataset.state = 'idle';
-    el.dataset.remaining = el.dataset.seconds;
-    el.classList.remove('running', 'done');
-    this.updateLabel(el);
-  },
-
-  updateLabel(el) {
-    const rem = parseInt(el.dataset.remaining || el.dataset.seconds);
-    el.textContent = `⏱ ${formatTime(rem)}`;
   },
 };
 
@@ -349,15 +282,6 @@ function scaleSingleNumber(qty, factor, useFractions) {
   return scaled.toFixed(2).replace(/\.?0+$/, '');
 }
 
-function timerToSeconds(qty, units) {
-  const n = parseFloat(qty) || 0;
-  const u = (units || '').toLowerCase();
-  if (u.includes('hour') || u === 'h') return n * 3600;
-  if (u.includes('min') || u === 'm') return n * 60;
-  if (u.includes('sec') || u === 's') return n;
-  return n * 60; // default to minutes
-}
-
 function renderTextWithBreaks(text, preferredUnit) {
   // Cooklang explicit line break: backslash at EOL — the parser strips the
   // backslash but preserves the newline. Implicit line breaks inside a step
@@ -467,17 +391,6 @@ function getPlainTextStepText(step) {
 function cssEscape(value) {
   if (typeof CSS !== 'undefined' && CSS.escape) return CSS.escape(String(value));
   return String(value).replace(/["\\]/g, '\\$&');
-}
-
-function formatTime(secs) {
-  if (secs <= 0) return '0:00';
-  const m = Math.floor(secs / 60);
-  const s = secs % 60;
-  if (m >= 60) {
-    const h = Math.floor(m / 60);
-    return `${h}:${String(m % 60).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  }
-  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 function renderRecipeReferenceChip(refLike) {
