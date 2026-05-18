@@ -1,5 +1,5 @@
 import { sql, generateId, slugify } from "./db.ts";
-import { parseCooklang, parseReferencePath } from "./cooklang.ts";
+import { parseCooklang, parseReferencePath, resolveDeviationMarkers } from "./cooklang.ts";
 import type { ParsedRecipe, RecipeReferenceResolution } from "./cooklang.ts";
 
 export type RecipeStatus = "draft" | "released" | "beta" | "archived";
@@ -1316,12 +1316,13 @@ export async function forkCookLogToDraft(slug: string, logId: string, branchSlug
   const log = await getCookLog(slug, logId, branchSlug);
   if (!log) throw new Error("cook log not found");
   if (!log.cooklang_text.trim()) throw new Error("cook log has no recipe text to fork");
+  const resolvedText = resolveDeviationMarkers(log.cooklang_text);
   const branchId = recipe.branch.id;
   let draftId: string;
   if (recipe.draft) {
     draftId = recipe.draft.id;
     await sql`
-      UPDATE entries SET cooklang_text = ${log.cooklang_text}, tags = ${log.tags},
+      UPDATE entries SET cooklang_text = ${resolvedText}, tags = ${log.tags},
                           parent_version = ${log.source_version_string}, current_beta_version = NULL
       WHERE id = ${draftId}
     `;
@@ -1329,11 +1330,11 @@ export async function forkCookLogToDraft(slug: string, logId: string, branchSlug
     draftId = generateId();
     await sql`
       INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, parent_version, tags)
-      VALUES (${draftId}, ${branchId}, NULL, 'draft', ${log.cooklang_text},
+      VALUES (${draftId}, ${branchId}, NULL, 'draft', ${resolvedText},
               ${log.source_version_string}, ${log.tags})
     `;
   }
-  await syncReferencesForEntry(draftId, log.cooklang_text);
+  await syncReferencesForEntry(draftId, resolvedText);
   return { ok: true };
 }
 
@@ -1350,16 +1351,47 @@ export async function promoteCookLog(
   if (recipe.versions.some((v) => v.version_string === release.version_string)) {
     throw new Error("version already exists");
   }
+  const resolvedText = resolveDeviationMarkers(log.cooklang_text);
   const previous = latestComparableVersion(recipe.versions);
   const branchId = recipe.branch.id;
   const id = generateId();
   await sql`
     INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, changelog, parent_version, tags)
     VALUES (${id}, ${branchId}, ${release.version_string}, ${release.status},
-            ${log.cooklang_text}, ${release.changelog || ""},
+            ${resolvedText}, ${release.changelog || ""},
             ${previous?.version_string || log.source_version_string || null}, ${log.tags})
   `;
-  await syncReferencesForEntry(id, log.cooklang_text);
+  await syncReferencesForEntry(id, resolvedText);
+  return { ok: true, version_string: release.version_string };
+}
+
+// Cherry-pick promote: caller (route handler) has already synthesized the new
+// recipe text from source + selected changes. We just persist it as a new
+// version and link it back to the cook log via parent_version.
+export async function promoteCookLogWithText(
+  slug: string,
+  logId: string,
+  cooklangText: string,
+  release: { version_string: string; status: "released" | "beta" | "archived"; changelog?: string },
+  branchSlug = MAIN_BRANCH_SLUG,
+) {
+  const recipe = await requireRecipe(slug, branchSlug);
+  const log = await getCookLog(slug, logId, branchSlug);
+  if (!log) throw new Error("cook log not found");
+  if (!cooklangText.trim()) throw new Error("synthesized recipe text is empty");
+  if (recipe.versions.some((v) => v.version_string === release.version_string)) {
+    throw new Error("version already exists");
+  }
+  const previous = latestComparableVersion(recipe.versions);
+  const branchId = recipe.branch.id;
+  const id = generateId();
+  await sql`
+    INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, changelog, parent_version, tags)
+    VALUES (${id}, ${branchId}, ${release.version_string}, ${release.status},
+            ${cooklangText}, ${release.changelog || ""},
+            ${previous?.version_string || log.source_version_string || null}, ${log.tags})
+  `;
+  await syncReferencesForEntry(id, cooklangText);
   return { ok: true, version_string: release.version_string };
 }
 

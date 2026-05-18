@@ -38,6 +38,11 @@ export interface ParsedIngredient {
   intermediate?: boolean;
   reference_path?: string | null;
   recipe_reference_resolution?: RecipeReferenceResolution | null;
+  // Diff annotations attached by annotateIngredientSummaryDiff when this
+  // ingredient's quantity/units/range differ from the paired source list.
+  source_quantity?: string | number | null;
+  source_units?: string;
+  source_range?: QuantityRange | null;
 }
 
 export interface ParsedIngredientSection {
@@ -64,8 +69,16 @@ export interface ParsedStep {
   range?: QuantityRange | null;
   kind?: "temperature";
   // Cook log deviation marker — set on every token in a step prefixed with
-  // `!+ ` / `!~ ` / `!- `. The prefix is stripped from the rendered text.
-  deviation?: "added" | "modified" | "skipped";
+  // `!+ ` (added) or `!- ` (skipped). The prefix is stripped from the rendered
+  // text. Modifications are detected by diffing against source, not marked.
+  deviation?: "added" | "skipped";
+  // Diff annotations attached by annotateCookLogDiff when this token's
+  // quantity/units/range differ from the source recipe's paired token. The
+  // cook log renderer reads these to draw a "was X" chip.
+  source_quantity?: string | number | null;
+  source_units?: string;
+  source_range?: QuantityRange | null;
+  source_value?: string | null;
   step_id?: string;
   step_number?: number;
   section_index?: number;
@@ -426,12 +439,14 @@ function extractQty(quantity: any): string | number {
 
 // Returns { min, max } when the underlying Cooklang Value is a range, else null.
 // Accepts either a Quantity (has `.value`) or a raw Value object.
+// The Cooklang WASM library nests range endpoints as `{ type: "regular",
+// value: <num> }` — earlier draft read the wrong field and always got NaN.
 function extractRange(quantity: any): QuantityRange | null {
   const value = quantity?.value ?? null;
   if (!value || value.type !== "range") return null;
   const r = value.value;
-  const min = Number(r?.start);
-  const max = Number(r?.end);
+  const min = Number(r?.start?.value ?? r?.start);
+  const max = Number(r?.end?.value ?? r?.end);
   if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
   return { min, max };
 }
@@ -448,6 +463,7 @@ const TEMP_MARK_END = "";
 const TEMP_PLACEHOLDER_RE = new RegExp(`${TEMP_MARK_START}(\\d+)${TEMP_MARK_END}`, "g");
 
 interface TemperatureExtraction {
+  is_temperature: boolean;  // false for `%{...}` (generic inline quantity)
   rangeStart: number;
   rangeEnd: number;
   body: string;
@@ -505,51 +521,770 @@ function formatTemperatureDisplay(quantity: string | number, units: string): str
   return `${q} ${u}`;
 }
 
-// Cook log deviation markers: `!+ ` (added) / `!~ ` (modified) / `!- ` (skipped)
-// at the start of a step. `~` is Cooklang's timer sigil, so a literal `!~ ` at
-// line start gets mangled by the parser (`~ rest of line` becomes a timer).
-// preprocessDeviationMarkers swaps `!~ ` → `! ` before parsing so the
-// parser sees plain text; detectDeviation accepts the swapped char as well.
-const DEVIATION_MOD_MARKER = "";
-
-function preprocessDeviationMarkers(text: string): string {
-  // Only swap when followed by whitespace — `!~name` (no space) isn't a
-  // deviation marker and shouldn't be touched.
-  return text.replace(/^!~(?=\s)/gm, `!${DEVIATION_MOD_MARKER}`);
-}
-
-function detectDeviation(items: any[]): "added" | "modified" | "skipped" | undefined {
+// Cook log deviation markers: `!+ ` (added) and `!- ` (skipped) at the start
+// of a step. The marker is stripped from the rendered text and surfaced as a
+// `deviation` tag on every token in the step. Modifications aren't marked —
+// they're detected later by diffing the cook log step against its source.
+function detectDeviation(items: any[]): "added" | "skipped" | undefined {
   const first = items?.[0];
   if (!first || first.type !== "text" || typeof first.value !== "string") return undefined;
-  const m = first.value.match(/^\s*!([+\-])\s+/);
+  const m = first.value.match(/^\s*!([+\-])\s+/);
   if (!m) return undefined;
   first.value = first.value.slice(m[0].length);
-  return m[1] === "+" ? "added" : m[1] === DEVIATION_MOD_MARKER ? "modified" : "skipped";
+  return m[1] === "+" ? "added" : "skipped";
+}
+
+// ── Step-level source text mutations ─────────────────────────────────────────
+// These walk the cooklang source line-by-line to locate a specific (section,
+// step) pair, then return modified text. The line-counting rules mirror the
+// step-grouping conventions used during parsing (`>>` = metadata, `=` =
+// section heading, `>` blocks = comments which DON'T count as steps).
+
+export interface StepLineRange {
+  line_start: number;
+  line_end: number;
+}
+
+// Returns the last line index of YAML frontmatter (`---` ... `---`) when the
+// first non-blank line of the text opens one. Returns -1 if no frontmatter.
+// Used by section/step walkers to skip the metadata block — the Cooklang
+// parser handles it via the YAML extractor, but the source-text walkers
+// would otherwise count it as an unnamed pre-section step block and offset
+// every subsequent section_index by one.
+function findYamlFrontmatterEnd(lines: string[]): number {
+  let i = 0;
+  while (i < lines.length && lines[i].trim() === "") i++;
+  if (i >= lines.length || lines[i].trim() !== "---") return -1;
+  for (let j = i + 1; j < lines.length; j++) {
+    if (lines[j].trim() === "---") return j;
+  }
+  return -1; // unclosed: don't skip anything, fall back to default behavior
+}
+
+export function findStepLineRange(text: string, sectionIndex: number, stepNumber: number): StepLineRange | null {
+  const lines = text.split("\n");
+  const frontmatterEnd = findYamlFrontmatterEnd(lines);
+  let currentSection = -1; // -1 = no section opened; first content sets to 0
+  let stepCount = 0;       // step count within current section (1-indexed)
+  let inBlock = false;
+  let blockStartLine = -1;
+  let blockIsStep = false;
+
+  const flush = (endLine: number): StepLineRange | null => {
+    if (inBlock && blockIsStep && currentSection === sectionIndex && stepCount === stepNumber) {
+      inBlock = false;
+      return { line_start: blockStartLine, line_end: endLine };
+    }
+    inBlock = false;
+    return null;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    if (i <= frontmatterEnd) continue;
+    const trimmed = lines[i].trim();
+    if (/^>>/.test(trimmed)) {
+      const r = flush(i - 1);
+      if (r) return r;
+      continue;
+    }
+    if (/^=\s/.test(trimmed)) {
+      const r = flush(i - 1);
+      if (r) return r;
+      currentSection = currentSection < 0 ? 0 : currentSection + 1;
+      stepCount = 0;
+      continue;
+    }
+    if (trimmed === "") {
+      const r = flush(i - 1);
+      if (r) return r;
+      continue;
+    }
+    if (!inBlock) {
+      if (currentSection < 0) currentSection = 0;
+      blockStartLine = i;
+      blockIsStep = !/^>/.test(trimmed);
+      if (blockIsStep) stepCount++;
+      inBlock = true;
+    }
+  }
+  return flush(lines.length - 1);
+}
+
+const DEVIATION_MARKERS = {
+  added: "!+ ",
+  skipped: "!- ",
+} as const;
+
+// ── Cook log ↔ source step pairing + diff annotation ─────────────────────────
+// Pairs cook log steps to the source recipe's steps for the diff overlay in
+// the cook log view. Strategy: position-aligned within each section, with a
+// similarity fallback so a small reorder doesn't drop the pairing. The source
+// cursor only advances on non-added log steps so `!+` insertions don't push
+// later log steps onto the wrong source position.
+
+export type StepPairReason =
+  | "position"        // position-aligned, similarity above threshold
+  | "similarity"      // position-aligned was a poor match; nearby step won
+  | "skipped"         // log step is `!-` — pairs to its position-aligned source
+  | "added"           // log step is `!+` — no source counterpart
+  | "no-match";       // no source step within range met the similarity bar
+
+export interface StepPair {
+  logIndex: number;
+  sourceIndex: number | null;
+  reason: StepPairReason;
+}
+
+const PAIRING_SIMILARITY_THRESHOLD = 0.3;
+const PAIRING_NEARBY_RADIUS = 2;
+
+function stepIsNumbered(step: ParsedStep[] | undefined): boolean {
+  if (!step) return false;
+  for (const tok of step) {
+    if (tok && typeof tok === "object" && Number.isFinite((tok as any).step_number)) return true;
+  }
+  return false;
+}
+
+function stepSectionIndex(step: ParsedStep[] | undefined): number {
+  if (!step) return -1;
+  for (const tok of step) {
+    if (tok && typeof tok === "object" && Number.isFinite((tok as any).section_index)) {
+      return (tok as any).section_index as number;
+    }
+  }
+  return -1;
+}
+
+function stepDeviation(step: ParsedStep[] | undefined): "added" | "skipped" | null {
+  if (!step) return null;
+  for (const tok of step) {
+    if (tok && typeof tok === "object" && (tok as any).deviation) {
+      return (tok as any).deviation as "added" | "skipped";
+    }
+  }
+  return null;
+}
+
+function stepIngredientNames(step: ParsedStep[]): string[] {
+  const out: string[] = [];
+  for (const tok of step) {
+    if (tok && typeof tok === "object" && tok.type === "ingredient" && typeof tok.name === "string") {
+      out.push(tok.name.toLowerCase());
+    }
+  }
+  return out;
+}
+
+function stepTextWords(step: ParsedStep[]): string[] {
+  const text = step
+    .filter((tok) => tok && typeof tok === "object" && (tok.type === "text" || tok.type === "comment"))
+    .map((tok) => String((tok as any).value || ""))
+    .join(" ");
+  return text.toLowerCase().match(/[a-z0-9]+/g) || [];
+}
+
+function jaccard(a: string[], b: string[]): number {
+  if (a.length === 0 && b.length === 0) return 1;
+  const sa = new Set(a);
+  const sb = new Set(b);
+  let inter = 0;
+  for (const x of sa) if (sb.has(x)) inter++;
+  const union = sa.size + sb.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
+function stepSimilarity(a: ParsedStep[], b: ParsedStep[]): number {
+  const ingA = stepIngredientNames(a);
+  const ingB = stepIngredientNames(b);
+  if (ingA.length > 0 || ingB.length > 0) {
+    const ingScore = jaccard(ingA, ingB);
+    const textScore = jaccard(stepTextWords(a), stepTextWords(b));
+    return 0.7 * ingScore + 0.3 * textScore;
+  }
+  return jaccard(stepTextWords(a), stepTextWords(b));
+}
+
+export function pairCookLogStepsToSource(
+  logSteps: ParsedStep[][],
+  sourceSteps: ParsedStep[][],
+): StepPair[] {
+  const pairs: StepPair[] = [];
+  // Group source step indices by section. Each entry is the LIST of indices
+  // (into sourceSteps) of numbered steps in that section, in order.
+  const sourceBySection = new Map<number, number[]>();
+  sourceSteps.forEach((step, idx) => {
+    if (!stepIsNumbered(step)) return;
+    const sec = stepSectionIndex(step);
+    if (!sourceBySection.has(sec)) sourceBySection.set(sec, []);
+    sourceBySection.get(sec)!.push(idx);
+  });
+
+  // Per-section cursors track the next source step to consider.
+  const cursors = new Map<number, number>();
+
+  logSteps.forEach((logStep, logIdx) => {
+    if (!stepIsNumbered(logStep)) return;
+    const sec = stepSectionIndex(logStep);
+    const sourceIdxs = sourceBySection.get(sec) || [];
+    const cursor = cursors.get(sec) || 0;
+    const deviation = stepDeviation(logStep);
+
+    if (deviation === "added") {
+      pairs.push({ logIndex: logIdx, sourceIndex: null, reason: "added" });
+      return; // cursor doesn't advance — added log step has no source slot
+    }
+
+    if (deviation === "skipped") {
+      const sourceIdx = cursor < sourceIdxs.length ? sourceIdxs[cursor] : null;
+      pairs.push({ logIndex: logIdx, sourceIndex: sourceIdx, reason: "skipped" });
+      cursors.set(sec, cursor + 1);
+      return;
+    }
+
+    const positionIdx = cursor < sourceIdxs.length ? sourceIdxs[cursor] : null;
+    let bestIdx: number | null = null;
+    let bestScore = -1;
+    let bestReason: StepPairReason = "no-match";
+
+    if (positionIdx !== null) {
+      const score = stepSimilarity(logStep, sourceSteps[positionIdx]);
+      if (score >= PAIRING_SIMILARITY_THRESHOLD) {
+        bestIdx = positionIdx;
+        bestScore = score;
+        bestReason = "position";
+      }
+    }
+
+    // Similarity fallback: scan nearby source steps within this section.
+    if (bestIdx === null) {
+      for (let offset = -PAIRING_NEARBY_RADIUS; offset <= PAIRING_NEARBY_RADIUS; offset++) {
+        const probe = cursor + offset;
+        if (probe < 0 || probe >= sourceIdxs.length) continue;
+        const idx = sourceIdxs[probe];
+        const score = stepSimilarity(logStep, sourceSteps[idx]);
+        if (score >= PAIRING_SIMILARITY_THRESHOLD && score > bestScore) {
+          bestIdx = idx;
+          bestScore = score;
+          bestReason = offset === 0 ? "position" : "similarity";
+        }
+      }
+    }
+
+    pairs.push({ logIndex: logIdx, sourceIndex: bestIdx, reason: bestReason });
+    // Advance the cursor past whichever source step we consumed. If we matched
+    // a nearby one, advance to one past that match so we don't re-consume it.
+    if (bestIdx !== null) {
+      const consumedAt = sourceIdxs.indexOf(bestIdx);
+      cursors.set(sec, Math.max(cursor + 1, consumedAt + 1));
+    } else {
+      cursors.set(sec, cursor + 1);
+    }
+  });
+
+  return pairs;
+}
+
+// Walks paired ingredient / timer / inlineQuantity tokens within each pair
+// and mutates log tokens in place to add `source_quantity`, `source_units`,
+// `source_value`, and `source_range` when the values differ. The renderer
+// reads these fields to draw a "was X" chip beside changed values.
+export function annotateCookLogDiff(
+  logSteps: ParsedStep[][],
+  sourceSteps: ParsedStep[][],
+): void {
+  const pairing = pairCookLogStepsToSource(logSteps, sourceSteps);
+  for (const pair of pairing) {
+    if (pair.sourceIndex === null) continue;
+    // Skipped steps already get full-step strikethrough from CSS — adding
+    // per-token "was X" chips on top would be visually noisy.
+    if (pair.reason === "skipped") continue;
+    const logStep = logSteps[pair.logIndex];
+    const sourceStep = sourceSteps[pair.sourceIndex];
+    annotateStepDiff(logStep, sourceStep);
+  }
+}
+
+// Annotates the ingredient_summary lists (.flat + .sections[].ingredients)
+// with source_quantity / source_units / source_range when totals differ from
+// the source. Pairs by lowercase ingredient name. Lets the cook-log ingredient
+// list show the same `(was → now)` arrow that step ingredients do.
+export function annotateIngredientSummaryDiff(
+  logSummary: ParsedIngredientSummary | undefined,
+  sourceSummary: ParsedIngredientSummary | undefined,
+): void {
+  if (!logSummary || !sourceSummary) return;
+  annotateIngredientListDiff(logSummary.flat, sourceSummary.flat);
+  for (const logSection of logSummary.sections || []) {
+    const sourceSection = (sourceSummary.sections || []).find(
+      (s) => sectionKey(s.name) === sectionKey(logSection.name),
+    );
+    if (sourceSection) {
+      annotateIngredientListDiff(logSection.ingredients, sourceSection.ingredients);
+    }
+  }
+}
+
+function sectionKey(name: string | null | undefined): string {
+  return (name || "").trim().toLowerCase();
+}
+
+function annotateIngredientListDiff(
+  logList: ParsedIngredient[] | undefined,
+  sourceList: ParsedIngredient[] | undefined,
+): void {
+  if (!logList || !sourceList) return;
+  const byName = new Map<string, ParsedIngredient[]>();
+  for (const ing of sourceList) {
+    const key = (ing.name || "").toLowerCase();
+    if (!byName.has(key)) byName.set(key, []);
+    byName.get(key)!.push(ing);
+  }
+  for (const logIng of logList) {
+    const key = (logIng.name || "").toLowerCase();
+    const src = byName.get(key)?.shift();
+    if (!src) continue;
+    attachDiffFields(logIng as any, src as any);
+  }
+}
+
+function annotateStepDiff(logStep: ParsedStep[], sourceStep: ParsedStep[]): void {
+  // Pair ingredients by lowercase name in order (handles duplicate names).
+  const sourceIngByName = new Map<string, ParsedStep[]>();
+  for (const tok of sourceStep) {
+    if (tok && typeof tok === "object" && tok.type === "ingredient" && typeof tok.name === "string") {
+      const key = tok.name.toLowerCase();
+      if (!sourceIngByName.has(key)) sourceIngByName.set(key, []);
+      sourceIngByName.get(key)!.push(tok as ParsedStep);
+    }
+  }
+  // Sequences for positional matching of timers / inline quantities.
+  const sourceTimers = sourceStep.filter((t) => t && typeof t === "object" && t.type === "timer") as ParsedStep[];
+  const sourceInlines = sourceStep.filter((t) => t && typeof t === "object" && t.type === "inlineQuantity") as ParsedStep[];
+  let timerCursor = 0;
+  let inlineCursor = 0;
+
+  for (const tok of logStep) {
+    if (!tok || typeof tok !== "object") continue;
+    if (tok.type === "ingredient" && typeof tok.name === "string") {
+      const pool = sourceIngByName.get(tok.name.toLowerCase());
+      const src = pool?.shift();
+      if (src) attachDiffFields(tok as any, src as any);
+    } else if (tok.type === "timer") {
+      const src = sourceTimers[timerCursor++];
+      if (src) attachDiffFields(tok as any, src as any);
+    } else if (tok.type === "inlineQuantity") {
+      const src = sourceInlines[inlineCursor++];
+      if (src) attachDiffFields(tok as any, src as any);
+    }
+  }
+}
+
+function attachDiffFields(logTok: any, srcTok: any): void {
+  const qChanged = String(logTok.quantity ?? "") !== String(srcTok.quantity ?? "");
+  const uChanged = String(logTok.units ?? "") !== String(srcTok.units ?? "");
+  const rangeChanged = JSON.stringify(logTok.range ?? null) !== JSON.stringify(srcTok.range ?? null);
+  if (!qChanged && !uChanged && !rangeChanged) return;
+  logTok.source_quantity = srcTok.quantity ?? null;
+  logTok.source_units = srcTok.units ?? "";
+  logTok.source_range = srcTok.range ?? null;
+  logTok.source_value = srcTok.value ?? null;
+}
+
+// ── Inline quantity edits (cook log click-to-edit) ───────────────────────────
+// Rewrite the Nth annotation of a given kind within a single step. Used by
+// the cook-log inline-edit UI: the user clicks a quantity, types a new
+// value, and we surgically patch the cooklang source rather than re-emit it.
+//
+// Special case: kind="ingredient" + newQuantity="0" strips the @annotation
+// entirely (leaves the bare word as plain text) — the user said "set to 0 to
+// remove". Timers and inline quantities just accept 0 as a literal value.
+//
+// Returns the updated text, or the input unchanged if no match was found.
+
+interface AnnotationMatch {
+  kind: "ingredient" | "timer" | "inlineQuantity";
+  // Offsets relative to the slice we scanned (the step's joined line text).
+  sigil_start: number;       // position of `@` / `~` / `%` / `^`
+  name_end: number;          // position just after the name (= position of `{`)
+  brace_open: number;        // position of `{`
+  brace_close: number;       // position of `}`
+}
+
+function scanAnnotations(text: string): AnnotationMatch[] {
+  const out: AnnotationMatch[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    let kind: AnnotationMatch["kind"] | null = null;
+    if (c === "@") kind = "ingredient";
+    else if (c === "~") kind = "timer";
+    else if (c === "%" || c === "^") kind = "inlineQuantity";
+    if (!kind) { i++; continue; }
+    const sigilStart = i;
+    let j = i + 1;
+    // For ingredient/timer, consume modifiers and name up to `{` or whitespace.
+    // For %{ / ^{ the brace immediately follows the sigil.
+    if (kind === "inlineQuantity") {
+      if (text[j] !== "{") { i = j; continue; }
+    } else {
+      // Skip modifier chars: `?` `&` `+` `-` `@` (recipe ref prefix).
+      while (j < text.length && "?&+-@".includes(text[j])) j++;
+      // Path-style recipe reference: `./` or `/`.
+      if (text[j] === "." && text[j + 1] === "/") j += 2;
+      else if (text[j] === "/") j += 1;
+      // Consume name up to `{` or a line break. Cooklang allows multi-word
+      // names only when the annotation has `{...}`; without braces the name
+      // is the first whitespace-delimited word. We can't tell which until
+      // we look ahead, so scan to either `{` (with-brace form) or whitespace.
+      const nameStart = j;
+      let sawBrace = false;
+      while (j < text.length) {
+        const cc = text[j];
+        if (cc === "{") { sawBrace = true; break; }
+        if (cc === "\n" || cc === "@" || cc === "~" || cc === "%" || cc === "^") break;
+        j++;
+      }
+      if (!sawBrace) {
+        // No braces → annotation has no editable quantity. Advance past name.
+        // Reset position to nameStart so we don't skip nested sigils.
+        i = nameStart > sigilStart + 1 ? nameStart : sigilStart + 1;
+        continue;
+      }
+    }
+    const braceOpen = j;
+    const braceClose = text.indexOf("}", braceOpen + 1);
+    if (braceClose < 0) { i = j + 1; continue; }
+    out.push({
+      kind,
+      sigil_start: sigilStart,
+      name_end: braceOpen,
+      brace_open: braceOpen,
+      brace_close: braceClose,
+    });
+    i = braceClose + 1;
+  }
+  return out;
+}
+
+function composeBraceContent(quantity: string, units: string): string {
+  const q = quantity.trim();
+  const u = units.trim();
+  if (!q && !u) return "";
+  if (!u) return q;
+  return `${q}%${u}`;
+}
+
+export function updateStepQuantity(
+  text: string,
+  sectionIndex: number,
+  stepNumber: number,
+  kind: "ingredient" | "timer" | "inlineQuantity",
+  index: number,
+  newQuantity: string,
+  newUnits: string,
+): string {
+  const range = findStepLineRange(text, sectionIndex, stepNumber);
+  if (!range) return text;
+  const lines = text.split("\n");
+  const stepLines = lines.slice(range.line_start, range.line_end + 1);
+  const stepText = stepLines.join("\n");
+  const annotations = scanAnnotations(stepText).filter((a) => a.kind === kind);
+  if (index < 0 || index >= annotations.length) return text;
+  const target = annotations[index];
+
+  let nextStepText: string;
+  if (kind === "ingredient" && newQuantity.trim() === "0") {
+    // Strip the entire `@name{...}` annotation. Leaves the bare name as text.
+    // We replace `@(modifiers)name{...}` with just the name body so the step
+    // still reads naturally — e.g. `@flour{0%g}` → `flour`.
+    const nameStart = findIngredientNameStart(stepText, target.sigil_start);
+    const before = stepText.slice(0, target.sigil_start);
+    const nameOnly = stepText.slice(nameStart, target.name_end);
+    const after = stepText.slice(target.brace_close + 1);
+    nextStepText = before + nameOnly + after;
+  } else {
+    const newContent = composeBraceContent(newQuantity, newUnits);
+    const before = stepText.slice(0, target.brace_open + 1);
+    const after = stepText.slice(target.brace_close);
+    nextStepText = before + newContent + after;
+  }
+
+  const nextLines = nextStepText.split("\n");
+  lines.splice(range.line_start, range.line_end - range.line_start + 1, ...nextLines);
+  return lines.join("\n");
+}
+
+// Find the start of the ingredient's display name — i.e. the position after
+// `@`, any modifier chars (`?&+-@`), and any path prefix (`./` or `/`).
+function findIngredientNameStart(text: string, sigilStart: number): number {
+  let j = sigilStart + 1;
+  while (j < text.length && "?&+-@".includes(text[j])) j++;
+  if (text[j] === "." && text[j + 1] === "/") j += 2;
+  else if (text[j] === "/") j += 1;
+  // Skip the path part up to `|` (alias separator) if present, then the alias
+  // is the display name. Otherwise the rest is the name.
+  const pipe = text.indexOf("|", j);
+  const brace = text.indexOf("{", j);
+  if (pipe >= 0 && (brace < 0 || pipe < brace)) return pipe + 1;
+  return j;
+}
+
+// Strip cook log deviation markers from a recipe text. Used on promote /
+// iterate so the markers (which only document what differed from source)
+// don't leak into a released version or a forked draft.
+//   `!+ ` / `!~ ` at line start → marker stripped, content kept
+//   `!- ` at line start → entire line removed
+//   `> ` notes and all other lines pass through unchanged
+export function resolveDeviationMarkers(text: string): string {
+  const out: string[] = [];
+  for (const line of text.split("\n")) {
+    if (/^\s*!-\s/.test(line)) continue;
+    const m = line.match(/^(\s*)!([+~])\s+/);
+    if (m) {
+      out.push(m[1] + line.slice(m[0].length));
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
+export function applyStepDeviation(
+  text: string,
+  sectionIndex: number,
+  stepNumber: number,
+  deviation: "added" | "skipped" | null,
+): string {
+  const range = findStepLineRange(text, sectionIndex, stepNumber);
+  if (!range) return text;
+  const lines = text.split("\n");
+  const line = lines[range.line_start];
+  // Strip any existing marker (including legacy `!~ ` from before the
+  // modified marker was retired) so toggling state replaces cleanly.
+  const stripped = line.replace(/^(\s*)!([+~\-])\s+/, "$1");
+  const indentMatch = stripped.match(/^(\s*)/);
+  const indent = indentMatch ? indentMatch[1] : "";
+  const body = stripped.slice(indent.length);
+  const marker = deviation ? DEVIATION_MARKERS[deviation] : "";
+  lines[range.line_start] = indent + marker + body;
+  return lines.join("\n");
+}
+
+export function insertNoteAfterStep(
+  text: string,
+  sectionIndex: number,
+  stepNumber: number,
+  note: string,
+): string {
+  const range = findStepLineRange(text, sectionIndex, stepNumber);
+  if (!range) return text;
+  const lines = text.split("\n");
+  const noteLine = `> ${note.replace(/\n+/g, " ").trim()}`;
+  const after = range.line_end + 1;
+  const nextLine = lines[after];
+  if (nextLine === undefined) {
+    lines.push("", noteLine);
+  } else if (nextLine.trim() === "") {
+    lines.splice(after + 1, 0, noteLine, "");
+  } else {
+    lines.splice(after, 0, "", noteLine, "");
+  }
+  return lines.join("\n");
+}
+
+export function deleteStep(text: string, sectionIndex: number, stepNumber: number): string {
+  const range = findStepLineRange(text, sectionIndex, stepNumber);
+  if (!range) return text;
+  const lines = text.split("\n");
+  let start = range.line_start;
+  let end = range.line_end;
+  if (start > 0 && lines[start - 1].trim() === "") start--;
+  else if (end + 1 < lines.length && lines[end + 1].trim() === "") end++;
+  lines.splice(start, end - start + 1);
+  return lines.join("\n");
+}
+
+export function insertStepAfterStep(
+  text: string,
+  sectionIndex: number,
+  stepNumber: number,
+  content: string,
+): string {
+  const range = findStepLineRange(text, sectionIndex, stepNumber);
+  if (!range) return text;
+  const trimmed = content.replace(/\n+/g, " ").trim();
+  if (!trimmed) return text;
+  const lines = text.split("\n");
+  const after = range.line_end + 1;
+  // Insert a blank-line separator before the new step (so it's its own block)
+  // and another blank line after if the next existing line is non-blank.
+  const insert: string[] = lines[after - 1]?.trim() === "" ? [trimmed] : ["", trimmed];
+  if (after < lines.length && lines[after].trim() !== "") insert.push("");
+  lines.splice(after, 0, ...insert);
+  return lines.join("\n");
+}
+
+// ── Section-level source text mutations ─────────────────────────────────────
+// findAllSections walks the source and returns per-section line ranges.
+// heading_line is null for the implicit section 0 (content before any `=`).
+// content_end_line points at the last non-blank content line inside the section
+// (or the heading line itself when the section is empty).
+
+export interface SectionLineRange {
+  section_index: number;
+  heading_line: number | null;
+  content_end_line: number;
+}
+
+export function findAllSections(text: string): SectionLineRange[] {
+  const lines = text.split("\n");
+  const frontmatterEnd = findYamlFrontmatterEnd(lines);
+  const out: SectionLineRange[] = [];
+  let current: SectionLineRange | null = null;
+  let nextIndex = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (i <= frontmatterEnd) continue;
+    const trimmed = lines[i].trim();
+    if (/^=\s/.test(trimmed)) {
+      if (current) out.push(current);
+      current = { section_index: nextIndex++, heading_line: i, content_end_line: i };
+      continue;
+    }
+    if (/^>>/.test(trimmed) || trimmed === "") continue;
+    if (!current) {
+      current = { section_index: nextIndex++, heading_line: null, content_end_line: i };
+    } else {
+      current.content_end_line = i;
+    }
+  }
+  if (current) out.push(current);
+  return out;
+}
+
+export function findSectionLineRange(text: string, sectionIndex: number): SectionLineRange | null {
+  return findAllSections(text).find((s) => s.section_index === sectionIndex) || null;
+}
+
+export function insertStepInSection(text: string, sectionIndex: number, content: string): string {
+  const range = findSectionLineRange(text, sectionIndex);
+  if (!range) return text;
+  const lines = text.split("\n");
+  const after = range.content_end_line + 1;
+  const trimmed = content.replace(/\n+/g, " ").trim();
+  if (!trimmed) return text;
+  // Insert with a leading blank line so the new step is a distinct block.
+  const insert = lines[after - 1]?.trim() === "" ? [trimmed] : ["", trimmed];
+  // Ensure a trailing blank line separates this step from following content.
+  if (after < lines.length && lines[after].trim() !== "") insert.push("");
+  lines.splice(after, 0, ...insert);
+  return lines.join("\n");
+}
+
+export function insertSectionNote(text: string, sectionIndex: number, note: string): string {
+  const range = findSectionLineRange(text, sectionIndex);
+  if (!range) return text;
+  if (range.heading_line === null) return insertRecipeNote(text, note);
+  const lines = text.split("\n");
+  const noteLine = `> ${note.replace(/\n+/g, " ").trim()}`;
+  // Insert blank + note + blank right after the heading.
+  const after = range.heading_line + 1;
+  const insert: string[] = ["", noteLine];
+  if (after < lines.length && lines[after].trim() !== "") insert.push("");
+  lines.splice(after, 0, ...insert);
+  return lines.join("\n");
+}
+
+export function renameSection(text: string, sectionIndex: number, newName: string): string {
+  const range = findSectionLineRange(text, sectionIndex);
+  if (!range || range.heading_line === null) return text;
+  const lines = text.split("\n");
+  lines[range.heading_line] = `= ${newName.trim()}`;
+  return lines.join("\n");
+}
+
+export function insertRecipeNote(text: string, note: string): string {
+  const lines = text.split("\n");
+  const noteLine = `> ${note.replace(/\n+/g, " ").trim()}`;
+  // Insert after any leading `>>` metadata block.
+  let insertAt = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (/^>>/.test(trimmed) || trimmed === "") {
+      insertAt = i + 1;
+      continue;
+    }
+    break;
+  }
+  const insert: string[] = [];
+  // Pad with blank lines so the note sits cleanly above subsequent content.
+  if (insertAt > 0 && lines[insertAt - 1]?.trim() !== "") insert.push("");
+  insert.push(noteLine);
+  if (insertAt < lines.length && lines[insertAt].trim() !== "") insert.push("");
+  lines.splice(insertAt, 0, ...insert);
+  return lines.join("\n");
 }
 
 function extractTemperatures(text: string): { cleaned: string; extractions: TemperatureExtraction[] } {
   const extractions: TemperatureExtraction[] = [];
-  const cleaned = text.replace(/\^\{([^}]*)\}/g, (fullMatch, body, offset) => {
-    const parsed = parseTemperatureBody(body);
+  // Match both `^{...}` (our temperature/measurement sigil) and `%{...}` (the
+  // Cooklang spec's generic inline-quantity sigil, which this version of the
+  // WASM library does NOT parse natively). We pull both out into placeholders
+  // so the parser sees neutral text, then re-emit them as inlineQuantity
+  // tokens with `kind: "temperature"` only on the `^` ones.
+  const cleaned = text.replace(/([\^%])\{([^}]*)\}/g, (fullMatch, sigil, body, offset) => {
+    const isTemp = sigil === "^";
+    const parsed = isTemp ? parseTemperatureBody(body) : parseInlineQuantityBody(body);
     const i = extractions.length;
-    // Locate the quantity text inside the original match so editable tokens
-    // can replace just the number rather than the whole `^{...}` block.
     const valueText = typeof parsed.quantity === "number" ? String(parsed.quantity) : parsed.quantity;
     const relativeStart = valueText ? fullMatch.indexOf(valueText) : -1;
     const rangeStart = relativeStart >= 0 ? offset + relativeStart : offset;
     const rangeEnd = relativeStart >= 0 ? rangeStart + valueText.length : offset + fullMatch.length;
     extractions.push({
+      is_temperature: isTemp,
       rangeStart,
       rangeEnd,
       body,
       quantity: parsed.quantity,
       units: parsed.units,
       range: parsed.range,
-      display: formatTemperatureDisplay(parsed.quantity, parsed.units),
+      display: isTemp
+        ? formatTemperatureDisplay(parsed.quantity, parsed.units)
+        : formatInlineQuantityDisplay(parsed.quantity, parsed.units, parsed.range),
     });
     return `${TEMP_MARK_START}${i}${TEMP_MARK_END}`;
   });
   return { cleaned, extractions };
+}
+
+// Parses `%{...}` body. Accepts `<value>%<unit>` and bare value forms.
+// Ranges like `180-200` produce a structured range with shared units.
+function parseInlineQuantityBody(body: string): { quantity: string | number; units: string; range: QuantityRange | null } {
+  const trimmed = String(body || "").trim();
+  if (!trimmed) return { quantity: "", units: "", range: null };
+  const [rawQty, rawUnit = ""] = trimmed.split("%", 2);
+  const units = rawUnit.trim();
+  const qty = rawQty.trim();
+  const rangeMatch = qty.match(/^(-?\d+(?:\.\d+)?)\s*[-–]\s*(-?\d+(?:\.\d+)?)$/);
+  if (rangeMatch) {
+    const min = Number(rangeMatch[1]);
+    const max = Number(rangeMatch[2]);
+    return { quantity: qty, units, range: { min, max } };
+  }
+  const n = Number(qty);
+  if (Number.isFinite(n) && qty !== "") {
+    return { quantity: n, units, range: null };
+  }
+  return { quantity: qty, units, range: null };
+}
+
+function formatInlineQuantityDisplay(quantity: string | number, units: string, range: QuantityRange | null): string {
+  const qty = range
+    ? (range.min === range.max ? String(range.min) : `${range.min}-${range.max}`)
+    : (quantity == null ? "" : String(quantity));
+  if (!qty && !units) return "";
+  if (!units) return qty;
+  return `${qty} ${units}`;
 }
 
 export function parseCooklang(text: string): ParsedRecipe {
@@ -565,11 +1300,7 @@ export function parseCooklang(text: string): ParsedRecipe {
     };
   }
   try {
-    const { cleaned: tempCleaned, extractions: temperatureExtractions } = extractTemperatures(text);
-    // `!~ ` at line start would otherwise be eaten by Cooklang's `~` timer
-    // sigil. Swap to a private-use char (offset-preserved) so the parser sees
-    // plain text; detectDeviation reads the marker back at step emission time.
-    const cleaned = preprocessDeviationMarkers(tempCleaned);
+    const { cleaned, extractions: temperatureExtractions } = extractTemperatures(text);
     const [recipe] = parser.parse(cleaned);
     // Annotation scans use the ORIGINAL text — `@` / `#` patterns are
     // untouched by temperature extraction.
@@ -601,22 +1332,26 @@ export function parseCooklang(text: string): ParsedRecipe {
     const ingredients: ParsedIngredient[] = recipe.ingredients.map((ing: any, index: number) =>
       toParsedIngredientWithAnnotations(ing, ingredientAnnotations[index])
     );
-    const ingredientSections: ParsedIngredientSection[] = recipe.sections.map((section: any) => {
-      const sectionIngredients: ParsedIngredient[] = [];
-      for (const content of section.content) {
-        if (content.type !== "step") continue;
-        for (const item of content.value.items) {
-          if (item.type !== "ingredient") continue;
-          const annotation = ingredientAnnotations[item.index];
-          if (!shouldIncludeInSectionSummary(annotation)) continue;
-          sectionIngredients.push(toParsedIngredientWithAnnotations(recipe.ingredients[item.index], annotation));
+    // Mirror the section-emission filter below: skip empty unnamed sections
+    // so the per-section ingredient summary matches the step section indexing.
+    const ingredientSections: ParsedIngredientSection[] = recipe.sections
+      .filter((section: any) => !!section.name || (section.content || []).length > 0)
+      .map((section: any) => {
+        const sectionIngredients: ParsedIngredient[] = [];
+        for (const content of section.content) {
+          if (content.type !== "step") continue;
+          for (const item of content.value.items) {
+            if (item.type !== "ingredient") continue;
+            const annotation = ingredientAnnotations[item.index];
+            if (!shouldIncludeInSectionSummary(annotation)) continue;
+            sectionIngredients.push(toParsedIngredientWithAnnotations(recipe.ingredients[item.index], annotation));
+          }
         }
-      }
-      return {
-        name: section.name ? String(section.name) : null,
-        ingredients: sortIngredientsByAmount(sectionIngredients),
-      };
-    });
+        return {
+          name: section.name ? String(section.name) : null,
+          ingredients: sortIngredientsByAmount(sectionIngredients),
+        };
+      });
     const groupedFlatIngredients: ParsedIngredient[] = recipe.groupedIngredients
       .map(([ingredient, groupedQuantity]: [any, any]) => {
         const annotation = ingredientAnnotations[recipe.ingredients.indexOf(ingredient)];
@@ -636,10 +1371,23 @@ export function parseCooklang(text: string): ParsedRecipe {
       .map((cw: any) => cookware_display_name(cw));
     const editableTokens = extractEditableTokens(text, recipe, temperatureExtractions);
 
-    // Flatten sections → step token arrays (same shape the client expects)
+    // Flatten sections → step token arrays (same shape the client expects).
+    //
+    // Section indexing here must agree with findStepLineRange's source-text
+    // walker — both should yield the SAME (section_index, step_number) for a
+    // given step. The walker counts user-visible sections only (sections with
+    // a heading OR content), so we skip empty unnamed sections the Cooklang
+    // library inserts when the recipe starts with `>>` metadata before the
+    // first `= heading`. Without this, the first real step ends up at
+    // section_index=1 in the renderer but section_index=0 in any source-text
+    // edit, and the inline edit / promote routes return "step not found".
     const steps: ParsedStep[][] = [];
-    let sectionIndex = 0;
+    let sectionIndex = -1;
     for (const section of recipe.sections) {
+      const hasName = !!section.name;
+      const hasContent = (section.content || []).length > 0;
+      if (!hasName && !hasContent) continue;
+      sectionIndex = sectionIndex < 0 ? 0 : sectionIndex + 1;
       if (section.name) {
         steps.push([{
           type: "text",
@@ -772,7 +1520,6 @@ export function parseCooklang(text: string): ParsedRecipe {
           steps.push(tokens);
         }
       }
-      sectionIndex += 1;
     }
 
     const metrics = extractComputedMetrics(metadata, ingredientSummary);
@@ -997,15 +1744,16 @@ function splitTextWithTemperatures(
     }
     const temp = extractions[Number(m[1])];
     if (temp) {
-      tokens.push({
+      const token: ParsedStep = {
         type: "inlineQuantity",
         value: temp.display,
         quantity: temp.quantity,
         units: temp.units,
         range: temp.range,
-        kind: "temperature",
         ...meta,
-      });
+      };
+      if (temp.is_temperature) token.kind = "temperature";
+      tokens.push(token);
     }
     lastIdx = m.index + m[0].length;
   }
@@ -1078,14 +1826,14 @@ function extractEditableTokens(
 ): EditableQuantityToken[] {
   const ingredientMatches = collectQuantityMatches(text, /@([^{}]+?)\{([^}]*)\}/g);
   const timerMatches = collectQuantityMatches(text, /~\{([^}]*)\}/g);
-  // Only `%{...}` survives into recipe.inlineQuantities — `^{...}` is extracted
-  // separately by extractTemperatures before parsing.
-  const inlineMatches = collectQuantityMatches(text, /%\{([^}]*)\}/g);
+  // Both `^{...}` and `%{...}` are extracted by extractTemperatures before the
+  // Cooklang parser runs (the WASM lib in use doesn't natively recognize
+  // `%{}`), so `recipe.inlineQuantities` is always empty and we drive inline
+  // tokens entirely from the temperatureExtractions list.
 
   const tokens: EditableQuantityToken[] = [];
   let ingredientIndex = 0;
   let timerIndex = 0;
-  let inlineIndex = 0;
 
   for (const ingredient of recipe.ingredients) {
     if (!ingredient.quantity) continue;
@@ -1121,37 +1869,22 @@ function extractEditableTokens(
     });
   }
 
-  for (const inlineQuantity of recipe.inlineQuantities) {
-    const match = inlineMatches[inlineIndex++];
-    if (!match) continue;
-    tokens.push({
-      id: `inlineQuantity:${inlineIndex - 1}`,
-      kind: "inlineQuantity",
-      label: "Inline quantity",
-      quantityText: match.quantityText,
-      units: getQuantityUnit(inlineQuantity) || match.units,
-      numericValue: getQuantityValue(inlineQuantity),
-      range: extractRange(inlineQuantity),
-      rangeStart: match.rangeStart,
-      rangeEnd: match.rangeEnd,
-    });
-  }
-
   for (let i = 0; i < temperatureExtractions.length; i++) {
     const temp = temperatureExtractions[i];
     const quantityText = typeof temp.quantity === "number" ? String(temp.quantity) : temp.quantity;
-    tokens.push({
-      id: `temperature:${i}`,
+    const token: EditableQuantityToken = {
+      id: `${temp.is_temperature ? "temperature" : "inlineQuantity"}:${i}`,
       kind: "inlineQuantity",
-      measurementKind: "temperature",
-      label: "Temperature",
+      label: temp.is_temperature ? "Temperature" : "Inline quantity",
       quantityText,
       units: temp.units,
       numericValue: typeof temp.quantity === "number" ? temp.quantity : null,
       range: temp.range,
       rangeStart: temp.rangeStart,
       rangeEnd: temp.rangeEnd,
-    });
+    };
+    if (temp.is_temperature) token.measurementKind = "temperature";
+    tokens.push(token);
   }
 
   return tokens.sort((a, b) => a.rangeStart - b.rangeStart);

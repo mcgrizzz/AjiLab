@@ -4,8 +4,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { Hono } from "hono";
-import { parseCooklang } from "./cooklang.ts";
-import { buildInlineDiffLines, diffStepBlocks } from "./compare.ts";
+import { parseCooklang, annotateCookLogDiff, annotateIngredientSummaryDiff, applyStepDeviation, updateStepQuantity, insertNoteAfterStep, deleteStep as deleteCooklangStep, insertStepAfterStep, insertStepInSection, insertSectionNote, renameSection, insertRecipeNote } from "./cooklang.ts";
+import { buildInlineDiffLines, diffStepBlocks, classifyCookLogVsSource, synthesizePromotedRecipe } from "./compare.ts";
 import { diffIngredients } from "./ingredient-compare.js";
 import {
   applyBranchSync,
@@ -34,6 +34,7 @@ import {
   listVersionCookLogs,
   previewBranchSync,
   promoteCookLog,
+  promoteCookLogWithText,
   readRecipeImage,
   releaseDraft,
   releaseVersion,
@@ -201,7 +202,16 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
 
   api.post(`${prefix}/draft/parse`, async (c) => {
     const body = await c.req.json();
-    return c.json(await enrichRecipeReferences(parseCooklang(body.cooklang_text || "")));
+    const parsed = await enrichRecipeReferences(parseCooklang(body.cooklang_text || ""));
+    // Optional cook-log diff annotation: when the caller supplies the source
+    // recipe text, walk paired steps and mutate per-token diff fields onto
+    // `parsed.steps` so the renderer can show "was X" chips.
+    if (typeof body.source_cooklang_text === "string" && body.source_cooklang_text) {
+      const sourceParsed = parseCooklang(body.source_cooklang_text);
+      annotateCookLogDiff(parsed.steps, sourceParsed.steps);
+      annotateIngredientSummaryDiff(parsed.ingredient_summary, sourceParsed.ingredient_summary);
+    }
+    return c.json(parsed);
   });
 
   api.get(`${prefix}/versions`, async (c) => {
@@ -416,6 +426,118 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     }
   });
 
+  // Step-level surgical mutations on a cook log's cooklang_text. The action
+  // dispatch keeps the surface small while letting the UI hit one endpoint for
+  // deviation markers, inline notes, and step deletion.
+  api.post(`${prefix}/cook-logs/:id/step-action`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    const sectionIndex = Number(body?.section_index);
+    const stepNumber = Number(body?.step_number);
+    const action = String(body?.action || "");
+    if (!Number.isFinite(sectionIndex) || !Number.isFinite(stepNumber)) {
+      return c.json({ error: "section_index and step_number required" }, 400);
+    }
+    const log = await getCookLog(recipe.slug, c.req.param("id"), activeBranch(c));
+    if (!log) return c.json({ error: "cook log not found" }, 404);
+    const before = log.cooklang_text || "";
+    let next = before;
+    if (action === "set-deviation") {
+      // Only "skipped" is user-toggleable. "added" is set by insert-step-after
+      // (auto-prepended `!+ `); "modified" was retired in favor of diffing.
+      const deviation = body?.deviation;
+      const allowed = deviation === null || deviation === "skipped";
+      if (!allowed) return c.json({ error: "invalid deviation" }, 400);
+      next = applyStepDeviation(before, sectionIndex, stepNumber, deviation);
+    } else if (action === "insert-note") {
+      const note = String(body?.note || "").trim();
+      if (!note) return c.json({ error: "note required" }, 400);
+      next = insertNoteAfterStep(before, sectionIndex, stepNumber, note);
+    } else if (action === "insert-step-after") {
+      const content = String(body?.content || "").trim();
+      if (!content) return c.json({ error: "content required" }, 400);
+      next = insertStepAfterStep(before, sectionIndex, stepNumber, content);
+    } else if (action === "delete") {
+      next = deleteCooklangStep(before, sectionIndex, stepNumber);
+    } else if (action === "update-quantity") {
+      const kind = String(body?.token_kind || "");
+      const tokenIndex = Number(body?.token_index);
+      const newQuantity = String(body?.new_quantity ?? "");
+      const newUnits = String(body?.new_units ?? "");
+      const kindOk = kind === "ingredient" || kind === "timer" || kind === "inlineQuantity";
+      if (!kindOk || !Number.isFinite(tokenIndex) || tokenIndex < 0) {
+        return c.json({ error: "token_kind + token_index required" }, 400);
+      }
+      next = updateStepQuantity(before, sectionIndex, stepNumber, kind as any, tokenIndex, newQuantity, newUnits);
+    } else {
+      return c.json({ error: "unknown action" }, 400);
+    }
+    if (next === before) return c.json({ error: "step not found" }, 404);
+    try {
+      return c.json(await updateCookLog(recipe.slug, c.req.param("id"), { cooklang_text: next }, activeBranch(c)));
+    } catch (error: any) {
+      return c.json({ error: error?.message || "step action failed" }, 400);
+    }
+  });
+
+  api.post(`${prefix}/cook-logs/:id/section-action`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    const sectionIndex = Number(body?.section_index);
+    const action = String(body?.action || "");
+    if (!Number.isFinite(sectionIndex)) return c.json({ error: "section_index required" }, 400);
+    const log = await getCookLog(recipe.slug, c.req.param("id"), activeBranch(c));
+    if (!log) return c.json({ error: "cook log not found" }, 404);
+    const before = log.cooklang_text || "";
+    let next = before;
+    if (action === "add-step") {
+      const content = String(body?.content || "").trim();
+      if (!content) return c.json({ error: "content required" }, 400);
+      next = insertStepInSection(before, sectionIndex, content);
+    } else if (action === "add-note") {
+      const note = String(body?.note || "").trim();
+      if (!note) return c.json({ error: "note required" }, 400);
+      next = insertSectionNote(before, sectionIndex, note);
+    } else if (action === "rename") {
+      const name = String(body?.name || "").trim();
+      if (!name) return c.json({ error: "name required" }, 400);
+      next = renameSection(before, sectionIndex, name);
+    } else {
+      return c.json({ error: "unknown action" }, 400);
+    }
+    if (next === before) return c.json({ error: "section not found" }, 404);
+    try {
+      return c.json(await updateCookLog(recipe.slug, c.req.param("id"), { cooklang_text: next }, activeBranch(c)));
+    } catch (error: any) {
+      return c.json({ error: error?.message || "section action failed" }, 400);
+    }
+  });
+
+  api.post(`${prefix}/cook-logs/:id/recipe-action`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    const action = String(body?.action || "");
+    const log = await getCookLog(recipe.slug, c.req.param("id"), activeBranch(c));
+    if (!log) return c.json({ error: "cook log not found" }, 404);
+    const before = log.cooklang_text || "";
+    let next = before;
+    if (action === "add-note") {
+      const note = String(body?.note || "").trim();
+      if (!note) return c.json({ error: "note required" }, 400);
+      next = insertRecipeNote(before, note);
+    } else {
+      return c.json({ error: "unknown action" }, 400);
+    }
+    try {
+      return c.json(await updateCookLog(recipe.slug, c.req.param("id"), { cooklang_text: next }, activeBranch(c)));
+    } catch (error: any) {
+      return c.json({ error: error?.message || "recipe action failed" }, 400);
+    }
+  });
+
   api.post(`${prefix}/cook-logs/:id/fork-to-draft`, async (c) => {
     const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
     if (!recipe) return c.json({ error: "not found" }, 404);
@@ -436,6 +558,46 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     const status = body?.status === "beta" || body?.status === "archived" ? body.status : "released";
     try {
       return c.json(await promoteCookLog(recipe.slug, c.req.param("id"), {
+        version_string: versionString, status, changelog: body?.changelog || "",
+      }, activeBranch(c)));
+    } catch (error: any) {
+      const message = error?.message || "promote failed";
+      return c.json({ error: message }, message === "cook log not found" ? 404 : 400);
+    }
+  });
+
+  // Classified diff (cook log vs source) — drives the cherry-pick promote UI.
+  api.get(`${prefix}/cook-logs/:id/classify`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    const log = await getCookLog(recipe.slug, c.req.param("id"), activeBranch(c));
+    if (!log) return c.json({ error: "cook log not found" }, 404);
+    const logParsed = parseCooklang(log.cooklang_text || "");
+    const sourceParsed = parseCooklang(log.source_cooklang_text || "");
+    return c.json(classifyCookLogVsSource(logParsed, sourceParsed));
+  });
+
+  // Cherry-pick promote — synthesize source + selections into a new version.
+  api.post(`${prefix}/cook-logs/:id/promote-cherry-pick`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    const versionString = String(body?.version_string || "").trim();
+    if (!versionString) return c.json({ error: "version_string required" }, 400);
+    const status = body?.status === "beta" || body?.status === "archived" ? body.status : "released";
+    const selectionsArr = Array.isArray(body?.selections) ? body.selections.map(String) : [];
+    const log = await getCookLog(recipe.slug, c.req.param("id"), activeBranch(c));
+    if (!log) return c.json({ error: "cook log not found" }, 404);
+    if (!log.source_cooklang_text?.trim()) {
+      return c.json({ error: "cook log has no source snapshot to cherry-pick from" }, 400);
+    }
+    const synthesized = synthesizePromotedRecipe(
+      log.source_cooklang_text,
+      log.cooklang_text || "",
+      new Set<string>(selectionsArr),
+    );
+    try {
+      return c.json(await promoteCookLogWithText(recipe.slug, c.req.param("id"), synthesized, {
         version_string: versionString, status, changelog: body?.changelog || "",
       }, activeBranch(c)));
     } catch (error: any) {

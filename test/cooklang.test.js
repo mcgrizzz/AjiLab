@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseCooklang } from "../src/cooklang.ts";
+import {
+  parseCooklang,
+  resolveDeviationMarkers,
+  pairCookLogStepsToSource,
+  annotateCookLogDiff,
+  updateStepQuantity,
+} from "../src/cooklang.ts";
 
 test("multi-section recipes default to sectioned ingredient summaries", () => {
   const parsed = parseCooklang(`
@@ -201,6 +207,7 @@ test("explicit references are grouped in the flat summary total", () => {
       name: "flour",
       quantity: 500,
       units: "g",
+      range: null,
       note: null,
       optional: false,
       recipe_reference: false,
@@ -476,7 +483,7 @@ test("temperature text is emitted as an inline quantity token in steps", () => {
     { type: "text", value: "Preheat the ", step_id: "section-0-step-1", step_number: 1, section_index: 0 },
     { type: "cookware", value: "oven", name: "oven", note: null, step_id: "section-0-step-1", step_number: 1, section_index: 0 },
     { type: "text", value: " to ", step_id: "section-0-step-1", step_number: 1, section_index: 0 },
-    { type: "inlineQuantity", value: "180 ºC", quantity: 180, units: "°C", step_id: "section-0-step-1", step_number: 1, section_index: 0 },
+    { type: "inlineQuantity", value: "180 ºC", quantity: 180, units: "°C", range: null, kind: "temperature", step_id: "section-0-step-1", step_number: 1, section_index: 0 },
     { type: "text", value: ".", step_id: "section-0-step-1", step_number: 1, section_index: 0 },
   ]);
 });
@@ -678,12 +685,6 @@ test("!+ prefix tags a step as an addition and strips the marker", () => {
   assert.equal(ing.quantity, 15);
 });
 
-test("!~ prefix tags a step as modified", () => {
-  const parsed = parseCooklang(`!~ Folded twice instead of three times.`);
-  const step = parsed.steps[0];
-  for (const t of step) assert.equal(t.deviation, "modified");
-});
-
 test("!- prefix tags a step as skipped", () => {
   const parsed = parseCooklang(`!- Skipped the final fold.`);
   const step = parsed.steps[0];
@@ -717,17 +718,271 @@ test("deviation marker survives temperature placeholders in same step", () => {
   assert.equal(temp.kind, "temperature");
 });
 
-test("!~ marker is not eaten by Cooklang's `~` timer sigil", () => {
-  // Without the preprocess step Cooklang would treat `~ Did 4 folds at 30 min`
-  // as a timer body, leaving items[0] as just "!" and producing a spurious
-  // timer chip for "30 min".
-  const parsed = parseCooklang(`!~ Did 4 folds at 30 min intervals instead of 3.`);
+test("!~ is no longer a deviation marker — parses as plain text", () => {
+  // The `~ modified` marker was retired; modifications are detected by diffing
+  // against source, not marked. Legacy `!~ ...` lines now parse as ordinary
+  // step text (the leading `!` survives; `~ ...` is treated as a timer by
+  // Cooklang's `~` sigil — that's fine, the point is no `deviation` tag).
+  const parsed = parseCooklang(`!~ Folded twice instead of three times.`);
   const step = parsed.steps[0];
-  for (const t of step) assert.equal(t.deviation, "modified");
-  // No spurious timer should be in the step
-  const timers = step.filter((t) => t.type === "timer");
-  assert.equal(timers.length, 0);
-  // Marker should be stripped from the rendered text
-  const text = step.filter((t) => t.type === "text").map((t) => t.value).join("");
-  assert.ok(!/!~/.test(text), `marker leaked into rendered text: "${text}"`);
+  for (const t of step) assert.equal(t.deviation, undefined);
+});
+
+// ── resolveDeviationMarkers (promote / iterate) ───────────────────────────────
+
+test("resolveDeviationMarkers strips !+ from added step lines", () => {
+  const input = `!+ Added @bread flour{15%g} mid-mix.`;
+  assert.equal(resolveDeviationMarkers(input), `Added @bread flour{15%g} mid-mix.`);
+});
+
+test("resolveDeviationMarkers strips !~ from modified step lines", () => {
+  const input = `!~ Folded twice instead of three times.`;
+  assert.equal(resolveDeviationMarkers(input), `Folded twice instead of three times.`);
+});
+
+test("resolveDeviationMarkers deletes !- skipped lines entirely", () => {
+  const input = [
+    `Mix @flour{500%g} with @water{350%g}.`,
+    `!- Skipped the final fold.`,
+    `Bake at ^{220%C}.`,
+  ].join("\n");
+  const expected = [
+    `Mix @flour{500%g} with @water{350%g}.`,
+    `Bake at ^{220%C}.`,
+  ].join("\n");
+  assert.equal(resolveDeviationMarkers(input), expected);
+});
+
+test("resolveDeviationMarkers leaves > notes untouched", () => {
+  const input = [
+    `!+ Added a step.`,
+    `> A note that should pass through.`,
+    `!- Skipped this.`,
+    `> Another note.`,
+  ].join("\n");
+  const expected = [
+    `Added a step.`,
+    `> A note that should pass through.`,
+    `> Another note.`,
+  ].join("\n");
+  assert.equal(resolveDeviationMarkers(input), expected);
+});
+
+test("resolveDeviationMarkers preserves indentation when stripping markers", () => {
+  const input = `  !+ Indented addition.`;
+  assert.equal(resolveDeviationMarkers(input), `  Indented addition.`);
+});
+
+test("resolveDeviationMarkers leaves !+ without trailing space alone", () => {
+  const input = `!+No space — not a marker.`;
+  assert.equal(resolveDeviationMarkers(input), `!+No space — not a marker.`);
+});
+
+test("resolveDeviationMarkers leaves mid-line markers alone", () => {
+  const input = `Mix flour !+ this is just text.`;
+  assert.equal(resolveDeviationMarkers(input), `Mix flour !+ this is just text.`);
+});
+
+// ── pairCookLogStepsToSource ──────────────────────────────────────────────────
+
+function pairsAsTuples(pairs) {
+  return pairs.map((p) => [p.logIndex, p.sourceIndex, p.reason]);
+}
+
+test("pairCookLogStepsToSource pairs identical steps position-aligned", () => {
+  const src = parseCooklang(`Mix @flour{500%g}.\n\nKnead for ~{10%min}.\n\nBake at ^{220%C}.`);
+  const log = parseCooklang(`Mix @flour{500%g}.\n\nKnead for ~{10%min}.\n\nBake at ^{220%C}.`);
+  const pairs = pairCookLogStepsToSource(log.steps, src.steps);
+  assert.equal(pairs.length, 3);
+  for (const p of pairs) assert.equal(p.reason, "position");
+  assert.deepEqual(pairs.map((p) => p.sourceIndex), [0, 1, 2]);
+});
+
+test("pairCookLogStepsToSource: skipped log step pairs to its position-aligned source", () => {
+  const src = parseCooklang(`Mix @flour{500%g}.\n\nKnead for ~{10%min}.\n\nBake at ^{220%C}.`);
+  const log = parseCooklang(`Mix @flour{500%g}.\n\n!- Knead for ~{10%min}.\n\nBake at ^{220%C}.`);
+  const pairs = pairCookLogStepsToSource(log.steps, src.steps);
+  assert.deepEqual(pairsAsTuples(pairs), [
+    [0, 0, "position"],
+    [1, 1, "skipped"],
+    [2, 2, "position"],
+  ]);
+});
+
+test("pairCookLogStepsToSource: added log step pairs to null and doesn't consume a source slot", () => {
+  const src = parseCooklang(`Mix @flour{500%g}.\n\nBake at ^{220%C}.`);
+  const log = parseCooklang(`Mix @flour{500%g}.\n\n!+ Added @salt{1%g}.\n\nBake at ^{220%C}.`);
+  const pairs = pairCookLogStepsToSource(log.steps, src.steps);
+  assert.deepEqual(pairsAsTuples(pairs), [
+    [0, 0, "position"],
+    [1, null, "added"],
+    [2, 1, "position"],
+  ]);
+});
+
+test("pairCookLogStepsToSource: modified-in-place still pairs to position when ingredients overlap", () => {
+  // Source: mix 500g flour. Log: mix 525g flour. Quantity changed; ingredient
+  // and text overlap is high so similarity keeps the position pairing.
+  const src = parseCooklang(`Mix @flour{500%g} and @salt{5%g}.`);
+  const log = parseCooklang(`Mix @flour{525%g} and @salt{5%g}.`);
+  const pairs = pairCookLogStepsToSource(log.steps, src.steps);
+  assert.equal(pairs.length, 1);
+  assert.equal(pairs[0].sourceIndex, 0);
+  assert.equal(pairs[0].reason, "position");
+});
+
+test("pairCookLogStepsToSource: similarity fallback finds a nearby step after a small reorder", () => {
+  // Source order: A, B, C. Log order: B, A, C. Position pairing would mismatch
+  // first two; similarity fallback should still pair correctly.
+  const src = parseCooklang(`Whisk @eggs{2}.\n\nSift @flour{200%g}.\n\nFold together.`);
+  const log = parseCooklang(`Sift @flour{200%g}.\n\nWhisk @eggs{2}.\n\nFold together.`);
+  const pairs = pairCookLogStepsToSource(log.steps, src.steps);
+  // log[0] (flour) → source[1] (flour), log[1] (eggs) → source[0] (eggs), log[2] → source[2]
+  assert.equal(pairs[0].sourceIndex, 1);
+  assert.equal(pairs[0].reason, "similarity");
+  assert.equal(pairs[1].sourceIndex, 0);
+  assert.equal(pairs[1].reason, "similarity");
+  assert.equal(pairs[2].sourceIndex, 2);
+});
+
+test("pairCookLogStepsToSource: pairing is per-section so sections don't cross-pair", () => {
+  const src = parseCooklang(`= Dough\nMix @flour{500%g}.\n\n= Filling\nDice @apples{2}.`);
+  const log = parseCooklang(`= Dough\nMix @flour{500%g}.\n\n= Filling\nDice @apples{2}.`);
+  const pairs = pairCookLogStepsToSource(log.steps, src.steps);
+  // Two numbered steps, one per section, each paired to its same-section source.
+  assert.equal(pairs.length, 2);
+  for (const p of pairs) assert.equal(p.reason, "position");
+});
+
+test("pairCookLogStepsToSource: added + skipped interleaved keeps cursor aligned", () => {
+  const src = parseCooklang(`Mix @flour{500%g}.\n\nKnead.\n\nBake.`);
+  const log = parseCooklang(`Mix @flour{500%g}.\n\n!+ Rest 20 min.\n\n!- Knead.\n\nBake.`);
+  const pairs = pairCookLogStepsToSource(log.steps, src.steps);
+  assert.deepEqual(pairsAsTuples(pairs), [
+    [0, 0, "position"],
+    [1, null, "added"],
+    [2, 1, "skipped"],
+    [3, 2, "position"],
+  ]);
+});
+
+// ── annotateCookLogDiff ───────────────────────────────────────────────────────
+
+function findIngredient(step, name) {
+  return (step || []).find((t) => t && t.type === "ingredient" && t.name === name);
+}
+
+test("annotateCookLogDiff attaches source_quantity when a log ingredient differs", () => {
+  const src = parseCooklang(`Mix @flour{500%g} with @water{350%g}.`);
+  const log = parseCooklang(`Mix @flour{525%g} with @water{350%g}.`);
+  annotateCookLogDiff(log.steps, src.steps);
+  const flour = findIngredient(log.steps[0], "flour");
+  const water = findIngredient(log.steps[0], "water");
+  assert.equal(flour.source_quantity, 500);
+  assert.equal(flour.source_units, "g");
+  // Unchanged ingredient gets no source_* fields.
+  assert.equal(water.source_quantity, undefined);
+});
+
+test("annotateCookLogDiff doesn't annotate when both sides match exactly", () => {
+  const src = parseCooklang(`Mix @flour{500%g}.`);
+  const log = parseCooklang(`Mix @flour{500%g}.`);
+  annotateCookLogDiff(log.steps, src.steps);
+  const flour = findIngredient(log.steps[0], "flour");
+  assert.equal(flour.source_quantity, undefined);
+  assert.equal(flour.source_units, undefined);
+});
+
+test("annotateCookLogDiff leaves added log steps alone (no source to diff against)", () => {
+  const src = parseCooklang(`Mix @flour{500%g}.`);
+  const log = parseCooklang(`Mix @flour{500%g}.\n\n!+ Added @salt{1%g}.`);
+  annotateCookLogDiff(log.steps, src.steps);
+  const salt = findIngredient(log.steps[1], "salt");
+  assert.equal(salt.source_quantity, undefined);
+});
+
+// ── updateStepQuantity ────────────────────────────────────────────────────────
+
+test("updateStepQuantity rewrites the Nth ingredient by index", () => {
+  const text = `Mix @flour{500%g} with @water{350%g}.`;
+  // Second ingredient (water) → 360g
+  const out = updateStepQuantity(text, 0, 1, "ingredient", 1, "360", "g");
+  assert.equal(out, `Mix @flour{500%g} with @water{360%g}.`);
+});
+
+test("updateStepQuantity setting ingredient to 0 strips the @annotation entirely", () => {
+  const text = `Mix @flour{500%g}.`;
+  const out = updateStepQuantity(text, 0, 1, "ingredient", 0, "0", "g");
+  assert.equal(out, `Mix flour.`);
+});
+
+test("updateStepQuantity removing keeps multi-word names readable", () => {
+  const text = `Add @bread flour{200%g}.`;
+  const out = updateStepQuantity(text, 0, 1, "ingredient", 0, "0", "g");
+  assert.equal(out, `Add bread flour.`);
+});
+
+test("updateStepQuantity removing a recipe-reference keeps the alias text", () => {
+  const text = `Add @./path/to/recipe|sourdough starter{40%g}.`;
+  const out = updateStepQuantity(text, 0, 1, "ingredient", 0, "0", "g");
+  assert.equal(out, `Add sourdough starter.`);
+});
+
+test("updateStepQuantity timer rewrite preserves units", () => {
+  const text = `Knead for ~{10%min} then rest.`;
+  const out = updateStepQuantity(text, 0, 1, "timer", 0, "12", "min");
+  assert.equal(out, `Knead for ~{12%min} then rest.`);
+});
+
+test("updateStepQuantity inline quantity (temperature) rewrite", () => {
+  const text = `Bake at %{350%F}.`;
+  const out = updateStepQuantity(text, 0, 1, "inlineQuantity", 0, "375", "F");
+  assert.equal(out, `Bake at %{375%F}.`);
+});
+
+test("updateStepQuantity timer set to 0 keeps the timer (no special-case removal)", () => {
+  const text = `Wait ~{5%min}.`;
+  const out = updateStepQuantity(text, 0, 1, "timer", 0, "0", "min");
+  assert.equal(out, `Wait ~{0%min}.`);
+});
+
+test("updateStepQuantity returns unchanged text for out-of-range index", () => {
+  const text = `Mix @flour{500%g}.`;
+  const out = updateStepQuantity(text, 0, 1, "ingredient", 5, "100", "g");
+  assert.equal(out, text);
+});
+
+// Regression: when a recipe has `>>` metadata before the first `=` heading,
+// the Cooklang library inserts an empty unnamed section. Parser section
+// indexing must skip it so the renderer's (section_index, step_number)
+// matches what findStepLineRange/updateStepQuantity expect — otherwise
+// inline edits / step actions return "step not found".
+test("section indexing skips empty unnamed sections (metadata-only prelude)", () => {
+  const text = `>> servings: 1\n\n= Main\n\nMix @flour{500%g}.`;
+  const parsed = parseCooklang(text);
+  const step = parsed.steps.find((s) => s.some((t) => t.type === "ingredient"));
+  assert.ok(step);
+  const ing = step.find((t) => t.type === "ingredient");
+  // The user sees ONE section ("Main"), so the step lives in section 0.
+  assert.equal(ing.section_index, 0);
+  assert.equal(ing.step_number, 1);
+  // And the source-text walker agrees — round-trip an update.
+  const updated = updateStepQuantity(text, 0, 1, "ingredient", 0, "540", "g");
+  assert.ok(updated.includes("@flour{540%g}"), `updated text should rewrite the quantity; got: ${updated}`);
+});
+
+test("section indexing handles YAML frontmatter (--- ... ---) without offset", () => {
+  // The Cooklang library strips YAML frontmatter, but the source-text walker
+  // would otherwise count the frontmatter block as an unnamed pre-section
+  // step — making every later (section_index, step_number) off by one.
+  const text = `---\ntitle: Test\nservings: 1\n---\n\n= First\n\nStep A.\n\n= Second\n\nMix @flour{500%g}.`;
+  const parsed = parseCooklang(text);
+  const mix = parsed.steps.find((s) => s.some((t) => t.type === "ingredient"));
+  const ing = mix.find((t) => t.type === "ingredient");
+  // Mix step is in the SECOND section, so section_index = 1, step_number = 1.
+  assert.equal(ing.section_index, 1);
+  assert.equal(ing.step_number, 1);
+  // And updateStepQuantity targets the same step.
+  const updated = updateStepQuantity(text, 1, 1, "ingredient", 0, "540", "g");
+  assert.ok(updated.includes("@flour{540%g}"), `frontmatter should not shift indexing; got: ${updated}`);
 });

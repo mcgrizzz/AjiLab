@@ -1,7 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildInlineDiffLines, diffStepBlocks } from "../src/compare.ts";
+import {
+  buildInlineDiffLines,
+  diffStepBlocks,
+  classifyIngredientRow,
+  classifyCookLogSteps,
+  classifyCookLogVsSource,
+  synthesizePromotedRecipe,
+  tokenChangeId,
+} from "../src/compare.ts";
+import { diffIngredients } from "../src/ingredient-compare.js";
+import { parseCooklang } from "../src/cooklang.ts";
 
 const before = `Cover and ferment at 28°C-30°C for ~{2%hours}, until roughly tripled and bubbly.
 
@@ -124,4 +134,197 @@ test("unpaired removal stays solid-red (no spurious word diff)", async () => {
   // Solo removal: single removed token, no context tokens.
   assert.equal(removed.tokens.length, 1);
   assert.equal(removed.tokens[0].op, "removed");
+});
+
+// ── Ingredient classification (cook log vs source) ────────────────────────────
+
+test("ingredient classifier: scalar inside source range → within-spec", () => {
+  // Source: 500-525g flour, log: 510g flour.
+  const src = parseCooklang("Mix @flour{500-525%g}.");
+  const log = parseCooklang("Mix @flour{510%g}.");
+  const diff = diffIngredients(src.ingredient_summary.flat, log.ingredient_summary.flat);
+  assert.equal(diff.changed.length, 1);
+  assert.equal(diff.changed[0].classification, "within-spec");
+});
+
+test("ingredient classifier: scalar outside source range → deviation", () => {
+  const src = parseCooklang("Mix @flour{500-525%g}.");
+  const log = parseCooklang("Mix @flour{540%g}.");
+  const diff = diffIngredients(src.ingredient_summary.flat, log.ingredient_summary.flat);
+  assert.equal(diff.changed[0].classification, "deviation");
+});
+
+test("ingredient classifier: source had no range → deviation when value changes", () => {
+  const src = parseCooklang("Mix @flour{500%g}.");
+  const log = parseCooklang("Mix @flour{525%g}.");
+  const diff = diffIngredients(src.ingredient_summary.flat, log.ingredient_summary.flat);
+  assert.equal(diff.changed[0].classification, "deviation");
+});
+
+test("ingredient classifier: added → addition", () => {
+  const src = parseCooklang("Mix @flour{500%g}.");
+  const log = parseCooklang("Mix @flour{500%g} and @salt{2%g}.");
+  const diff = diffIngredients(src.ingredient_summary.flat, log.ingredient_summary.flat);
+  assert.equal(diff.added.length, 1);
+  assert.equal(diff.added[0].classification, "addition");
+});
+
+test("ingredient classifier: removed → removal", () => {
+  const src = parseCooklang("Mix @flour{500%g} and @salt{2%g}.");
+  const log = parseCooklang("Mix @flour{500%g}.");
+  const diff = diffIngredients(src.ingredient_summary.flat, log.ingredient_summary.flat);
+  assert.equal(diff.removed.length, 1);
+  assert.equal(diff.removed[0].classification, "removal");
+});
+
+test("ingredient classifier: classifyIngredientRow handles unit mismatch as deviation", () => {
+  const fromIng = { name: "flour", quantity: 500, units: "g", range: { min: 500, max: 525 } };
+  const row = {
+    status: "changed",
+    from_quantity: 500, from_units: "g",
+    to_quantity: 510, to_units: "ml",  // wrong unit
+  };
+  assert.equal(classifyIngredientRow(row, fromIng), "deviation");
+});
+
+// ── Step classification (cook log vs source) ──────────────────────────────────
+
+test("step classifier: !+ added log step → addition", () => {
+  const src = parseCooklang("Mix @flour{500%g}.");
+  const log = parseCooklang("Mix @flour{500%g}.\n\n!+ Added a rest step.");
+  const classes = classifyCookLogSteps(log.steps, src.steps);
+  const added = classes.find((c) => c.kind === "added");
+  assert.ok(added, "expected an added classification");
+  assert.equal(added.classification, "addition");
+});
+
+test("step classifier: !- skipped log step → removal", () => {
+  const src = parseCooklang("Mix @flour{500%g}.\n\nKnead briefly.");
+  const log = parseCooklang("Mix @flour{500%g}.\n\n!- Knead briefly.");
+  const classes = classifyCookLogSteps(log.steps, src.steps);
+  const removed = classes.find((c) => c.kind === "removed");
+  assert.ok(removed);
+  assert.equal(removed.classification, "removal");
+});
+
+test("step classifier: ingredient scalar in source range → within-spec", () => {
+  const src = parseCooklang("Mix @flour{500-525%g}.");
+  const log = parseCooklang("Mix @flour{510%g}.");
+  const classes = classifyCookLogSteps(log.steps, src.steps);
+  const mod = classes.find((c) => c.kind === "modified");
+  assert.ok(mod);
+  assert.equal(mod.classification, "within-spec");
+  assert.equal(mod.token_diffs[0].classification, "within-spec");
+});
+
+test("step classifier: ingredient scalar outside source range → deviation", () => {
+  const src = parseCooklang("Mix @flour{500-525%g}.");
+  const log = parseCooklang("Mix @flour{540%g}.");
+  const classes = classifyCookLogSteps(log.steps, src.steps);
+  const mod = classes.find((c) => c.kind === "modified");
+  assert.equal(mod.classification, "deviation");
+});
+
+test("step classifier: temperature scalar in source range → within-spec", () => {
+  const src = parseCooklang("Hold at ^{20-22%C}.");
+  const log = parseCooklang("Hold at ^{21%C}.");
+  const classes = classifyCookLogSteps(log.steps, src.steps);
+  const mod = classes.find((c) => c.kind === "modified");
+  assert.ok(mod);
+  assert.equal(mod.classification, "within-spec");
+});
+
+test("step classifier: mixed within-spec + deviation tokens → deviation at step level", () => {
+  const src = parseCooklang("Mix @flour{500-525%g} with @water{300-350%g}.");
+  const log = parseCooklang("Mix @flour{510%g} with @water{400%g}."); // water out of range
+  const classes = classifyCookLogSteps(log.steps, src.steps);
+  const mod = classes.find((c) => c.kind === "modified");
+  assert.equal(mod.classification, "deviation");
+  // Per-token: one within-spec, one deviation
+  const classes_set = new Set(mod.token_diffs.map((d) => d.classification));
+  assert.ok(classes_set.has("within-spec"));
+  assert.ok(classes_set.has("deviation"));
+});
+
+test("step classifier: identical steps emit nothing", () => {
+  const src = parseCooklang("Mix @flour{500%g}.");
+  const log = parseCooklang("Mix @flour{500%g}.");
+  const classes = classifyCookLogSteps(log.steps, src.steps);
+  assert.equal(classes.length, 0);
+});
+
+test("step classifier: source step with no log counterpart → removal", () => {
+  // Both steps are different ingredients so similarity fallback can't pair
+  // them; the second source step becomes an unmatched removal.
+  const src = parseCooklang("Mix @flour{500%g}.\n\nFry @onion{1}.");
+  const log = parseCooklang("Mix @flour{500%g}.");
+  const classes = classifyCookLogSteps(log.steps, src.steps);
+  const removals = classes.filter((c) => c.kind === "removed");
+  assert.equal(removals.length, 1);
+  assert.equal(removals[0].source_index, 1);
+  assert.equal(removals[0].log_index, null);
+});
+
+test("classifyCookLogVsSource bundles ingredients + steps", () => {
+  const src = parseCooklang("Mix @flour{500-525%g}.");
+  const log = parseCooklang("Mix @flour{510%g}.");
+  const result = classifyCookLogVsSource(log, src);
+  assert.equal(result.ingredients.changed[0].classification, "within-spec");
+  assert.equal(result.steps[0].classification, "within-spec");
+});
+
+// ── synthesizePromotedRecipe (cherry-pick promote) ────────────────────────────
+
+test("synthesize: with empty selections, the result equals source (spec preservation)", () => {
+  const src = "Mix @flour{500-525%g}.";
+  const log = "Mix @flour{540%g}.";
+  const out = synthesizePromotedRecipe(src, log, new Set());
+  assert.equal(out, src);
+});
+
+test("synthesize: a selected token rewrite replaces the source's value with the log's", () => {
+  const src = "Mix @flour{500-525%g}.";
+  const log = "Mix @flour{540%g}.";
+  const out = synthesizePromotedRecipe(src, log, new Set(["step-token:0:1:ingredient:0"]));
+  assert.equal(out, "Mix @flour{540%g}.");
+});
+
+test("synthesize: an unselected within-spec keeps the source range", () => {
+  const src = "Hold at ^{20-22%C}.";
+  const log = "Hold at ^{21%C}.";
+  const out = synthesizePromotedRecipe(src, log, new Set());
+  assert.equal(out, src);
+});
+
+test("synthesize: a selected !+ addition is appended to the section", () => {
+  const src = "Mix @flour{500%g}.";
+  const log = "Mix @flour{500%g}.\n\n!+ Rest 20 min.";
+  const out = synthesizePromotedRecipe(src, log, new Set(["step-add:0:2"]));
+  // Resolver strips the `!+ ` marker; new step appended.
+  assert.ok(out.includes("Rest 20 min."), `expected addition; got: ${out}`);
+  assert.ok(!out.includes("!+ "), `marker should be stripped; got: ${out}`);
+});
+
+test("synthesize: a selected !- removal drops the source step", () => {
+  const src = "Mix @flour{500%g}.\n\nKnead briefly.";
+  const log = "Mix @flour{500%g}.\n\n!- Knead briefly.";
+  const out = synthesizePromotedRecipe(src, log, new Set(["step-remove:0:2"]));
+  assert.ok(!out.includes("Knead briefly"), `expected removal; got: ${out}`);
+  assert.ok(out.includes("Mix @flour{500%g}"));
+});
+
+test("synthesize: mixed selections — flour selected, temperature unselected", () => {
+  const src = "Mix @flour{500-525%g} at ^{20-22%C}.";
+  const log = "Mix @flour{540%g} at ^{21%C}.";
+  // Select the flour deviation but NOT the within-spec temperature.
+  const out = synthesizePromotedRecipe(src, log, new Set(["step-token:0:1:ingredient:0"]));
+  assert.ok(out.includes("@flour{540%g}"), `flour should update; got: ${out}`);
+  assert.ok(out.includes("^{20-22%C}"), `temp range should be preserved; got: ${out}`);
+});
+
+test("synthesize: nothing happens when source has no log changes", () => {
+  const src = "Mix @flour{500%g}.";
+  const log = "Mix @flour{500%g}.";
+  const out = synthesizePromotedRecipe(src, log, new Set(["step-token:0:1:ingredient:0"]));
+  assert.equal(out, src);
 });

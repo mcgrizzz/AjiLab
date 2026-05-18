@@ -43,6 +43,28 @@ export function diffIngredients(fromIngredients, toIngredients) {
   };
 }
 
+// Classification (cook log vs source semantics):
+//   within-spec: the "to" scalar lands inside the "from" range, units match
+//   deviation:   numeric changed and either no range existed or the value is
+//                outside it; or units changed
+//   addition:    only present in `to`
+//   removal:     only present in `from`
+// Powers the cherry-pick promote UI — defaults pre-check `deviation` and
+// `addition`, leave `within-spec` unchecked. `from` = source recipe, `to` =
+// cook log.
+export function classifyIngredientRow(row, fromIng) {
+  if (row.status === "added") return "addition";
+  if (row.status === "removed") return "removal";
+  // changed
+  const range = fromIng?.range;
+  const toQty = parseQuantityNumber(row.to_quantity);
+  const sameUnits = normalizeUnit(row.from_units) === normalizeUnit(row.to_units);
+  if (range && Number.isFinite(range.min) && Number.isFinite(range.max) && toQty !== null && sameUnits) {
+    if (toQty >= range.min && toQty <= range.max) return "within-spec";
+  }
+  return "deviation";
+}
+
 function bucketIngredients(ingredients) {
   const buckets = new Map();
   ingredients.forEach((ingredient, order) => {
@@ -65,13 +87,15 @@ function createRow(status, fromIng, toIng) {
   const toQuantity = toIng?.quantity ?? "";
   const toUnits = toIng?.units || "";
 
-  return {
+  const row = {
     name,
     status,
     from_quantity: fromQuantity,
     from_units: fromUnits,
+    from_range: fromIng?.range ?? null,
     to_quantity: toQuantity,
     to_units: toUnits,
+    to_range: toIng?.range ?? null,
     from_display: formatIngredientAmount(
       fromQuantity,
       fromUnits || toUnits,
@@ -84,6 +108,8 @@ function createRow(status, fromIng, toIng) {
     ),
     percent_change: computePercentChange(fromQuantity, fromUnits, toQuantity, toUnits),
   };
+  row.classification = classifyIngredientRow(row, fromIng);
+  return row;
 }
 
 function normalizeName(name) {

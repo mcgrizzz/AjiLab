@@ -13,7 +13,10 @@ const CL = {
       const qty = rawQty ? scaleQty(ing.quantity, scale, isFrac) : '';
       const unit = ing.units || '';
       const qtyStr = qty ? `${qty}${unit ? ' ' + unit : ''}` : unit || '';
-      const canScale = rawQty && !isNaN(parseFloat(String(ing.quantity)));
+      // disableScale: cook log context — click-to-scale doesn't apply (cook log
+      // is fixed at scale 1) and the input-box-never-closes UX is a known dead
+      // end. Suppress the data-orig handler entirely.
+      const canScale = rawQty && !isNaN(parseFloat(String(ing.quantity))) && !options.disableScale;
       const token = rawQty && options.resolveIngredientToken ? options.resolveIngredientToken(ing) : null;
       const isSelectable = !!token;
       const actionAttr = isSelectable
@@ -25,8 +28,16 @@ const CL = {
       const noteHtml = ing.note ? ` <span class="ing-note">(${escHtml(ing.note)})</span>` : '';
       const optionalHtml = ing.optional ? ' <span class="ing-optional">(optional)</span>' : '';
       const itemCls = ing.optional ? 'ingredient-item ingredient-item-optional' : 'ingredient-item';
+      // Cook-log diff overlay: when the summary annotation attached source_*
+      // fields, render `(was → now)` in place of the standalone qty.
+      const wasLabel = hasSourceDiff(ing)
+        ? composeAmount(ing.source_quantity, ing.source_units, ing.source_range)
+        : '';
+      const qtyHtml = wasLabel
+        ? `<span class="ing-qty ing-qty-modified"><span class="s-amt-was">${escHtml(wasLabel)}</span> <span class="s-amt-arrow">→</span> <span class="s-amt-modified">${escHtml(qtyStr)}</span></span>`
+        : `<span class="ing-qty${canScale && !isSelectable ? ' ing-qty-editable' : ''}${isSelectable ? ' ing-qty-selectable' : ''}"${actionAttr}>${escHtml(qtyStr)}</span>`;
       return `<li class="${itemCls}">
-        <span class="ing-qty${canScale && !isSelectable ? ' ing-qty-editable' : ''}${isSelectable ? ' ing-qty-selectable' : ''}"${actionAttr}>${escHtml(qtyStr)}</span>
+        ${qtyHtml}
         ${nameHtml}${noteHtml}${optionalHtml}
       </li>`;
     }).join('');
@@ -69,8 +80,17 @@ const CL = {
       if (plainText !== null) {
         if (/^\s*=\s+/.test(plainText)) {
           const sectionId = step?.[0]?.section_id;
+          const sectionIndex = step?.[0]?.section_index;
           const sectionAttr = sectionId ? ` data-section-id="${escHtml(sectionId)}"` : '';
-          return `<li class="step-section"${sectionAttr}>${escHtml(plainText.replace(/^\s*=\s+/, ''))}</li>`;
+          const canSectionAction = options.cookLogId && Number.isFinite(sectionIndex);
+          const sectionActionAttrs = canSectionAction
+            ? ` data-cook-log-id="${escHtml(String(options.cookLogId))}" data-section-index="${sectionIndex}"`
+            : '';
+          const sectionBtn = canSectionAction
+            ? `<button class="step-action-btn section-action-btn" aria-label="Section actions" title="Section actions" onclick="RecipeView.openSectionActionMenu(event, this)">⋮</button>`
+            : '';
+          const sectionName = escHtml(plainText.replace(/^\s*=\s+/, ''));
+          return `<li class="step-section${canSectionAction ? ' step-section-with-actions' : ''}"${sectionAttr}${sectionActionAttrs}><span class="step-section-name">${sectionName}</span>${sectionBtn}</li>`;
         }
         if (/^\s*(>\s|--\s?)/.test(plainText)) {
           return `<li class="step-comment">${escHtml(plainText.replace(/^\s*(>\s+|--\s*)/, ''))}</li>`;
@@ -83,16 +103,23 @@ const CL = {
           if (metaKeys.includes(key) || knownMeta.includes(key) || key.startsWith('metric.')) return '';
         }
       }
+      // Per-step counters for the cook-log click-to-edit affordance.
+      const cookLogEditAttrs = (kind, idx, units) => {
+        if (!options.cookLogId) return '';
+        return ` data-cl-edit-kind="${kind}" data-cl-edit-index="${idx}" data-cl-edit-units="${escHtml(units || '')}" onclick="RecipeView.editCookLogQuantity(event, this)"`;
+      };
+      let ingEditIdx = 0;
+      let timerEditIdx = 0;
+      let inlineEditIdx = 0;
       const html = step.map(token => {
         if (typeof token === 'string') return escHtml(token);
         switch (token.type) {
           case 'ingredient': {
             const prepRef = buildPrepReferenceAttrs(token);
-            const amtHtml = (showAmounts && token.quantity) ? (() => {
-              const isFrac = /[\/⅛¼⅓⅜½⅝⅔¾⅞]/.test(String(token.quantity));
-              const q = scaleQty(token.quantity, scale, isFrac);
-              return `<span class="s-ing-amt"> (${escHtml(q)}${token.units ? ' ' + escHtml(token.units) : ''})</span>`;
-            })() : '';
+            const hasQty = token.quantity !== '' && token.quantity != null;
+            const editAttrs = hasQty ? cookLogEditAttrs('ingredient', ingEditIdx, token.units) : '';
+            if (hasQty) ingEditIdx++;
+            const amtHtml = ingredientAmountHtml(token, scale, showAmounts, editAttrs);
             const noteHtml = token.note ? ` <span class="s-component-note">(${escHtml(token.note)})</span>` : '';
             const optHtml = token.optional ? ' <span class="s-component-optional">(optional)</span>' : '';
             if (token.recipe_reference) {
@@ -109,17 +136,33 @@ const CL = {
           }
           case 'timer': {
             const matchedToken = token.quantity && options.resolveTimerToken ? options.resolveTimerToken(token) : null;
-            const attr = matchedToken ? ` data-draft-token-id="${escHtml(matchedToken.id)}" onclick="RecipeView.selectDraftQuantity('${escHtml(matchedToken.id)}', this)"` : '';
-            return `<span class="s-timer${matchedToken ? ' draft-token-selectable' : ''}"${attr}>⏱ ${escHtml(token.value)}</span>`;
+            const hasQty = token.quantity !== '' && token.quantity != null;
+            const editAttrs = hasQty && !matchedToken ? cookLogEditAttrs('timer', timerEditIdx, token.units) : '';
+            if (hasQty) timerEditIdx++;
+            const attr = matchedToken
+              ? ` data-draft-token-id="${escHtml(matchedToken.id)}" onclick="RecipeView.selectDraftQuantity('${escHtml(matchedToken.id)}', this)"`
+              : editAttrs;
+            const editableCls = editAttrs ? ' s-cl-editable' : '';
+            const timerHtml = `<span class="s-timer${matchedToken ? ' draft-token-selectable' : ''}${hasSourceDiff(token) ? ' s-amt-modified' : ''}${editableCls}"${attr}>⏱ ${escHtml(token.value)}</span>`;
+            return valueWithSource(token, timerHtml);
           }
           case 'inlineQuantity': {
             const isTemp = /^°?[FCfc]$|fahrenheit|celsius/i.test(token.units || '');
             const cls = isTemp ? 's-temp' : 's-quantity';
             const matchedToken = token.quantity && options.resolveInlineQuantityToken ? options.resolveInlineQuantityToken(token) : null;
+            const hasQty = token.quantity !== '' && token.quantity != null;
+            const editAttrs = hasQty && !matchedToken ? cookLogEditAttrs('inlineQuantity', inlineEditIdx, token.units) : '';
+            if (hasQty) inlineEditIdx++;
             const value = isTemp
               ? formatInlineTemperatureToken(token, options.temperatureUnit)
               : escHtml(token.value);
-            return `<span class="${cls}${matchedToken ? ' draft-token-selectable' : ''}"${matchedToken ? ` data-draft-token-id="${escHtml(matchedToken.id)}" onclick="RecipeView.selectDraftQuantity('${escHtml(matchedToken.id)}', this)"` : ''}>${value}</span>`;
+            const modCls = hasSourceDiff(token) ? ' s-amt-modified' : '';
+            const editableCls = editAttrs ? ' s-cl-editable' : '';
+            const attr = matchedToken
+              ? ` data-draft-token-id="${escHtml(matchedToken.id)}" onclick="RecipeView.selectDraftQuantity('${escHtml(matchedToken.id)}', this)"`
+              : editAttrs;
+            const inlineHtml = `<span class="${cls}${matchedToken ? ' draft-token-selectable' : ''}${modCls}${editableCls}"${attr}>${value}</span>`;
+            return valueWithSource(token, inlineHtml);
           }
           case 'text':
           case 'comment':
@@ -129,16 +172,28 @@ const CL = {
         }
       }).join('');
       const stepId = getRenderedStepId(step);
-      const dataAttrs = stepId
-        ? ` data-step-id="${escHtml(stepId)}"`
-        : '';
+      const sectionIndex = getStepSectionIndex(step);
+      const stepNumber = getStepNumber(step);
       const deviation = getStepDeviation(step);
-      const deviationClass = deviation ? ` step-deviation step-deviation-${deviation}` : '';
+      const isModified = !deviation && stepHasModification(step);
+      const deviationClass = deviation
+        ? ` step-deviation step-deviation-${deviation}`
+        : (isModified ? ' step-modified' : '');
       const badge = deviation
         ? `<span class="step-deviation-badge step-deviation-badge-${deviation}">${DEVIATION_LABELS[deviation]}</span>`
         : '';
       const bodyHtml = deviation ? `<span class="step-text-body">${html}</span>` : html;
-      return `<li class="step-item${deviationClass}"${dataAttrs}><span class="step-num"></span><span class="step-text">${badge}${bodyHtml}</span></li>`;
+      // Cook log action button — only present when caller passes a cookLogId
+      // and the step is a numbered step (section/comment lines skip this).
+      const canAction = options.cookLogId && Number.isFinite(sectionIndex) && Number.isFinite(stepNumber);
+      const actionAttrs = canAction
+        ? ` data-cook-log-id="${escHtml(String(options.cookLogId))}" data-section-index="${sectionIndex}" data-step-number="${stepNumber}"`
+        : '';
+      const actionBtn = canAction
+        ? `<button class="step-action-btn" aria-label="Step actions" title="Step actions" onclick="RecipeView.openStepActionMenu(event, this)">⋮</button>`
+        : '';
+      const dataAttrs = (stepId ? ` data-step-id="${escHtml(stepId)}"` : '') + actionAttrs;
+      return `<li class="step-item${deviationClass}"${dataAttrs}><span class="step-num"></span><span class="step-text">${badge}${bodyHtml}</span>${actionBtn}</li>`;
     }).filter(s => s !== '').join('');
     return `<ol class="step-list">${items}</ol>`;
   },
@@ -380,9 +435,90 @@ function getRenderedStepId(step) {
 
 const DEVIATION_LABELS = {
   added: '+ Added',
-  modified: '~ Modified',
   skipped: '– Skipped',
 };
+
+// Cook log diff overlay: when annotateCookLogDiff has attached source_*
+// fields to a token (because the cook log value differs from the paired
+// source recipe value), the renderer shows an inline `(from → to)` display
+// where the standalone value would otherwise be.
+function hasSourceDiff(token) {
+  return token
+    && (token.source_quantity !== undefined
+        || token.source_units !== undefined
+        || token.source_value !== undefined
+        || token.source_range !== undefined);
+}
+
+// Compose `qty units` from raw quantity + units, handling ranges and empties.
+function composeAmount(quantity, units, range) {
+  if (range && Number.isFinite(range.min) && Number.isFinite(range.max)) {
+    const q = range.min === range.max ? String(range.min) : `${range.min}-${range.max}`;
+    return `${q}${units ? ' ' + units : ''}`.trim();
+  }
+  const q = quantity != null && quantity !== '' ? String(quantity) : '';
+  const u = units || '';
+  if (!q && !u) return '';
+  return `${q}${u ? ' ' + u : ''}`.trim();
+}
+
+function ingredientSourceAmount(token) {
+  return composeAmount(token.source_quantity, token.source_units, token.source_range);
+}
+
+function ingredientLogAmount(token, scale) {
+  if (token.quantity === undefined || token.quantity === null || token.quantity === '') return '';
+  const isFrac = /[\/⅛¼⅓⅜½⅝⅔¾⅞]/.test(String(token.quantity));
+  const q = scaleQty(token.quantity, scale, isFrac);
+  return `${q}${token.units ? ' ' + token.units : ''}`;
+}
+
+// Render a `(from → to)` inline arrow when the token has a diff, otherwise
+// just `(now)`. Returns '' when neither side has anything to show.
+// editAttrs is appended to the span so the cook-log click-to-edit handler
+// fires when the user clicks the amount.
+function ingredientAmountHtml(token, scale, showAmounts, editAttrs = '') {
+  if (!showAmounts) return '';
+  const now = ingredientLogAmount(token, scale);
+  const editCls = editAttrs ? ' s-cl-editable' : '';
+  if (!hasSourceDiff(token)) {
+    return now ? ` <span class="s-ing-amt${editCls}"${editAttrs}> (${escHtml(now)})</span>` : '';
+  }
+  const was = ingredientSourceAmount(token);
+  if (!was && !now) return '';
+  if (!was) return ` <span class="s-ing-amt s-amt-modified${editCls}"${editAttrs}> (${escHtml(now)})</span>`;
+  if (!now) return ` <span class="s-ing-amt s-amt-modified${editCls}"${editAttrs}> (${escHtml(was)} → —)</span>`;
+  return ` <span class="s-ing-amt s-amt-modified${editCls}"${editAttrs}> (${escHtml(was)} → ${escHtml(now)})</span>`;
+}
+
+// Suffix arrow for tokens whose own .value is the formatted display string
+// (timer, inline quantity). Returns ` → was-value` HTML or ''.
+function valueArrowSuffix(token) {
+  if (!hasSourceDiff(token)) return '';
+  const was = token.source_value != null && token.source_value !== ''
+    ? String(token.source_value)
+    : composeAmount(token.source_quantity, token.source_units, token.source_range);
+  if (!was) return '';
+  return ` <span class="s-amt-arrow">→</span> <span class="s-amt-was">${escHtml(was)}</span>`;
+}
+
+// Inverse: from→to display where from = source, to = current value. Used by
+// timer / inline so the reading order matches the ingredient amount style.
+function valueWithSource(token, currentHtml) {
+  if (!hasSourceDiff(token)) return currentHtml;
+  const was = token.source_value != null && token.source_value !== ''
+    ? String(token.source_value)
+    : composeAmount(token.source_quantity, token.source_units, token.source_range);
+  if (!was) return currentHtml;
+  return `<span class="s-amt-was">${escHtml(was)}</span> <span class="s-amt-arrow">→</span> ${currentHtml}`;
+}
+
+function stepHasModification(step) {
+  for (const tok of step || []) {
+    if (tok && typeof tok === 'object' && hasSourceDiff(tok)) return true;
+  }
+  return false;
+}
 
 function getStepDeviation(step) {
   for (const token of step || []) {
@@ -390,6 +526,22 @@ function getStepDeviation(step) {
     if (token?.deviation) return token.deviation;
   }
   return null;
+}
+
+function getStepSectionIndex(step) {
+  for (const token of step || []) {
+    if (typeof token === 'string') continue;
+    if (Number.isFinite(token?.section_index)) return token.section_index;
+  }
+  return NaN;
+}
+
+function getStepNumber(step) {
+  for (const token of step || []) {
+    if (typeof token === 'string') continue;
+    if (Number.isFinite(token?.step_number)) return token.step_number;
+  }
+  return NaN;
 }
 
 function getPlainTextStepText(step) {

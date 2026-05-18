@@ -1,4 +1,52 @@
 // ── Cook logs tab — list, cards, log CRUD, promote, compare ──────────────────
+
+// Cherry-pick promote helpers (module-private). cherryRow renders one row of
+// the change-selection checkbox list; composeAmountLabel formats `from`/`to`
+// strings the same way the renderer does, including ranges. tokenLabel maps
+// a TokenDiff to a kind-appropriate human label (temperature vs ingredient
+// name vs timer). cherryStepGroup wraps a modified step's snippet header
+// around its token-diff children so the snippet appears once per step.
+function cherryRow(id, classification, label, sub, defaultChecked) {
+  const checked = defaultChecked ? ' checked' : '';
+  return `<li class="cp-row cp-row-${escHtml(classification)}">
+    <label class="cp-label">
+      <input type="checkbox" class="cp-checkbox" value="${escHtml(id)}"${checked} />
+      <span class="cp-tag cp-tag-${escHtml(classification)}">${escHtml(classification)}</span>
+      <span class="cp-text">
+        <span class="cp-label-line">${escHtml(label)}</span>
+        ${sub ? `<span class="cp-sub">${sub}</span>` : ''}
+      </span>
+    </label>
+  </li>`;
+}
+
+function cherryStepGroup(snippet, innerHtml) {
+  return `<li class="cp-step-group">
+    <div class="cp-step-header">${escHtml(snippet)}</div>
+    <ul class="cp-step-children">${innerHtml}</ul>
+  </li>`;
+}
+
+function composeAmountLabel(quantity, units, range) {
+  if (range && Number.isFinite(range.min) && Number.isFinite(range.max)) {
+    const q = range.min === range.max ? String(range.min) : `${range.min}-${range.max}`;
+    return units ? `${q} ${units}` : q;
+  }
+  if (quantity == null || quantity === '') return units || '';
+  return units ? `${quantity} ${units}` : String(quantity);
+}
+
+function tokenLabel(d) {
+  if (d.kind === 'ingredient') return d.name || 'ingredient';
+  if (d.kind === 'timer') return d.name || 'timer';
+  if (d.kind === 'inlineQuantity') {
+    const units = String(d.to_units || d.from_units || '').trim();
+    if (/^°?[FCfc]$|fahrenheit|celsius/i.test(units)) return 'temperature';
+    return 'value';
+  }
+  return 'value';
+}
+
 Object.assign(RecipeView, {
 
   async renderCookLogsTab(body) {
@@ -20,13 +68,18 @@ Object.assign(RecipeView, {
     for (const id of stale) delete this.cookLogParsed[id];
     await Promise.all(logs.map(async (log) => {
       const cached = this.cookLogParsed[log.id];
-      if (cached && cached.text === log.cooklang_text) return;
-      if (!log.cooklang_text) { this.cookLogParsed[log.id] = { text: '', parsed: null }; return; }
+      // Cache key includes source text so a source change invalidates the diff.
+      const sourceText = log.source_cooklang_text || '';
+      if (cached && cached.text === log.cooklang_text && cached.sourceText === sourceText) return;
+      if (!log.cooklang_text) { this.cookLogParsed[log.id] = { text: '', sourceText, parsed: null }; return; }
       try {
-        const parsed = await API.post(`/recipes/${this.slug}/draft/parse`, { cooklang_text: log.cooklang_text });
-        this.cookLogParsed[log.id] = { text: log.cooklang_text, parsed };
+        const parsed = await API.post(`/recipes/${this.slug}/draft/parse`, {
+          cooklang_text: log.cooklang_text,
+          source_cooklang_text: sourceText,
+        });
+        this.cookLogParsed[log.id] = { text: log.cooklang_text, sourceText, parsed };
       } catch {
-        this.cookLogParsed[log.id] = { text: log.cooklang_text, parsed: null };
+        this.cookLogParsed[log.id] = { text: log.cooklang_text, sourceText, parsed: null };
       }
     }));
   },
@@ -91,13 +144,19 @@ Object.assign(RecipeView, {
       : '';
     const parsedEntry = this.cookLogParsed?.[log.id];
     const parsed = parsedEntry?.parsed;
+    if (!this.expandedCookLogs) this.expandedCookLogs = new Set();
+    const isOpen = this.expandedCookLogs.has(log.id);
     const recipeHtml = parsed
-      ? `<details class="cook-log-recipe">
+      ? `<details class="cook-log-recipe" id="cook-log-recipe-${escHtml(log.id)}"${isOpen ? ' open' : ''} ontoggle="RecipeView.onCookLogRecipeToggle('${escJs(log.id)}', this)">
           <summary>Recipe as cooked</summary>
           <div class="cook-log-recipe-body">
             ${CL.renderMetrics(parsed.metrics)}
-            ${parsed.ingredients?.length ? `<div class="section-head">Ingredients</div>${CL.renderIngredientSummary(parsed.ingredient_summary, 1, { mode: this.ingredientSummaryMode })}` : ''}
-            ${parsed.steps?.length ? `<div class="section-head mt12">Steps</div>${CL.renderSteps(parsed.steps, 1, parsed.metadata, true, {})}` : ''}
+            ${parsed.ingredients?.length ? `<div class="section-head">Ingredients</div>${CL.renderIngredientSummary(parsed.ingredient_summary, 1, { mode: this.ingredientSummaryMode, disableScale: true })}` : ''}
+            ${parsed.steps?.length ? `<div class="section-head mt12">Steps</div>${CL.renderSteps(parsed.steps, 1, parsed.metadata, true, { cookLogId: log.id })}` : ''}
+            <div class="cook-log-recipe-extras">
+              <button class="btn btn-sm" onclick="RecipeView.addRecipeNoteToLog('${escJs(log.id)}')">＋ Add recipe note</button>
+              <button class="btn btn-sm btn-ghost" onclick="RecipeView.editCookLogRecipe('${escJs(log.id)}')">Open full editor →</button>
+            </div>
           </div>
         </details>`
       : (log.cooklang_text ? '<div class="cook-log-recipe-loading text-muted">Parsing recipe…</div>' : '');
@@ -109,12 +168,9 @@ Object.assign(RecipeView, {
       ${recipeHtml}
       ${detailHtml}
       <div class="cook-log-actions">
-        <button class="btn btn-sm btn-primary" onclick="RecipeView.editCookLogRecipe('${escJs(log.id)}')">Edit recipe</button>
-        <button class="btn btn-sm" onclick="RecipeView.iterateFromCookLog('${escJs(log.id)}')">Iterate as next draft</button>
-        <button class="btn btn-sm" onclick="RecipeView.openCookLogModal('${escJs(log.id)}')">Edit notes</button>
-        <button class="btn btn-sm" onclick="RecipeView.compareCookLogToSource('${escJs(log.id)}')">Compare to source</button>
+        <button class="btn btn-sm btn-primary" onclick="RecipeView.markDifferences('${escJs(log.id)}')">Mark differences</button>
         <button class="btn btn-sm" onclick="RecipeView.openPromoteLogModal('${escJs(log.id)}')">Promote to release</button>
-        <button class="btn btn-sm btn-danger" onclick="RecipeView.deleteCookLogConfirm('${escJs(log.id)}')">Delete</button>
+        <button class="btn btn-sm cook-log-more-btn" data-log-id="${escJs(log.id)}" onclick="RecipeView.openCookLogMoreMenu(event, this)" aria-label="More actions" title="More actions">⋯</button>
       </div>
     </div>`;
   },
@@ -254,22 +310,27 @@ Object.assign(RecipeView, {
       await this.refreshRecipe();
       this.renderScaffold(document.getElementById('view-container'));
       this.renderHeaderThumbnail();
+      // Always repaint the cook logs tab so the feed isn't blank behind any
+      // panel that opens next.
+      await this.renderCookLogsTab(document.getElementById('tab-body'));
       if (created?.id) {
-        this.editCookLogRecipe(created.id);
-      } else {
-        await this.renderCookLogsTab(document.getElementById('tab-body'));
+        // Open the inline diff panel ("Recipe as cooked") instead of the
+        // heavyweight full editor — the user typically wants to tweak
+        // measurements against the source recipe, not edit the whole text.
+        this.markDifferences(created.id);
       }
-      showToast(existingId ? 'Cook log saved' : 'Cook log added — edit measurements next');
+      showToast(existingId ? 'Cook log saved' : 'Cook log added — mark differences next');
     } catch (e) {
       showToast('Error: ' + e.message);
     }
   },
 
-  openPromoteLogModal(logId) {
+  async openPromoteLogModal(logId) {
     const log = (this.cookLogs || []).find((entry) => entry.id === logId);
     if (!log) return;
     const versions = (this.recipe.versions || []).filter((v) => !v.is_draft && v.version_string);
     const lastVersion = versions[0]?.version_string;
+    // Show shell + spinner while we fetch the classification.
     showModal(`
       <div class="modal-title">Promote cook log to release</div>
       <div class="field-group mt8">
@@ -289,12 +350,80 @@ Object.assign(RecipeView, {
         <label class="field-label">Changelog</label>
         <textarea id="rel-changelog" class="field-input" placeholder="What changed in this version?">${escHtml((log.outcome || ''))}</textarea>
       </div>
+      <div id="cherry-pick-panel" class="mt12"><div class="loading"><div class="spinner"></div></div></div>
       <div class="text-muted" style="font-size:0.82rem;margin-top:10px">Source: cook log "${escHtml(log.outcome || log.id)}" (${escHtml(this.cookLogSourceLabel(log))})</div>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
         <button class="btn btn-primary" onclick="RecipeView.promoteLog('${escJs(logId)}')">Promote</button>
       </div>`);
     setTimeout(() => document.getElementById('rel-version')?.select(), 100);
+    try {
+      const classified = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/classify`);
+      this.cherryPickClassified = classified;
+      const target = document.getElementById('cherry-pick-panel');
+      if (target) target.innerHTML = this.renderCherryPickPanel(classified);
+    } catch (e) {
+      const target = document.getElementById('cherry-pick-panel');
+      if (target) target.innerHTML = `<p class="text-muted">Could not load changes: ${escHtml(e.message)}</p>`;
+
+    }
+  },
+
+  // Render the cherry-pick checkbox panel from the classifier output. Each
+  // change has a stable change_id used by the server to apply only the
+  // selected ones. Defaults: within-spec unchecked, deviation/addition/removal
+  // checked, notes-only unchecked. Modified steps render as a snippet header
+  // with token-diff rows nested under it so the snippet doesn't repeat. Pure
+  // within-spec steps collapse into a disclosure so deviations dominate.
+  renderCherryPickPanel(classified) {
+    const primaryItems = []; // step-groups (modified w/ deviations) + addition/removal rows
+    const withinSpecItems = []; // step-groups whose token diffs are all within-spec
+    let totalChanges = 0;
+    for (const step of (classified.steps || [])) {
+      const snippet = step.text_snippet || `Section ${step.section_index + 1}, Step ${step.step_number}`;
+      if (step.kind === 'added') {
+        const id = `step-add:${step.section_index}:${step.step_number}`;
+        primaryItems.push(cherryRow(id, 'addition', `Added: ${snippet}`, '', true));
+        totalChanges += 1;
+        continue;
+      }
+      if (step.kind === 'removed') {
+        const id = `step-remove:${step.section_index}:${step.step_number}`;
+        primaryItems.push(cherryRow(id, 'removal', `Removed: ${snippet}`, '', true));
+        totalChanges += 1;
+        continue;
+      }
+      // modified — one row per token diff, grouped under a step header.
+      const tokenRows = (step.token_diffs || []).map((d) => {
+        const id = `step-token:${step.section_index}:${step.step_number}:${d.kind}:${d.source_token_index}`;
+        const fromLabel = composeAmountLabel(d.from_quantity, d.from_units, d.from_range);
+        const toLabel = composeAmountLabel(d.to_quantity, d.to_units, null);
+        const sub = `<span class="cp-from">${escHtml(fromLabel || '—')}</span> <span class="cp-arrow">→</span> <span class="cp-to">${escHtml(toLabel || '—')}</span>`;
+        return cherryRow(id, d.classification, tokenLabel(d), sub, d.classification === 'deviation');
+      });
+      if (tokenRows.length === 0) continue;
+      totalChanges += tokenRows.length;
+      const allWithinSpec = (step.token_diffs || []).every((d) => d.classification === 'within-spec');
+      const group = cherryStepGroup(snippet, tokenRows.join(''));
+      (allWithinSpec ? withinSpecItems : primaryItems).push(group);
+    }
+    if (totalChanges === 0) {
+      return `<p class="text-muted" style="font-size:0.85rem">No changes vs source. The promoted version will match the source recipe.</p>`;
+    }
+    const withinSpecBlock = withinSpecItems.length
+      ? `<details class="cp-within-spec">
+          <summary>Within source range (${withinSpecItems.length} step${withinSpecItems.length === 1 ? '' : 's'})</summary>
+          <ul class="cp-list cp-list-nested">${withinSpecItems.join('')}</ul>
+        </details>`
+      : '';
+    return `
+      <div class="cp-header">
+        <div class="cp-title">Changes to promote</div>
+        <div class="cp-legend text-muted">${totalChanges} change${totalChanges === 1 ? '' : 's'}. Unchecked = source value preserved.</div>
+      </div>
+      ${primaryItems.length ? `<ul class="cp-list">${primaryItems.join('')}</ul>` : ''}
+      ${withinSpecBlock}
+    `;
   },
 
   async promoteLog(logId) {
@@ -302,8 +431,17 @@ Object.assign(RecipeView, {
     const status = document.getElementById('rel-status')?.value;
     const changelog = document.getElementById('rel-changelog')?.value.trim();
     if (!versionString) { showToast('Version number required'); return; }
+    const selections = Array.from(document.querySelectorAll('.cp-checkbox:checked')).map((el) => el.value);
+    const useCherryPick = !!this.cherryPickClassified;
     try {
-      await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/promote`, { version_string: versionString, status, changelog });
+      const endpoint = useCherryPick
+        ? `/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/promote-cherry-pick`
+        : `/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/promote`;
+      const body = useCherryPick
+        ? { version_string: versionString, status, changelog, selections }
+        : { version_string: versionString, status, changelog };
+      await API.post(endpoint, body);
+      this.cherryPickClassified = null;
       closeModal();
       await this.refreshRecipe();
       await this.renderDetail(document.getElementById('view-container'), versionString, { syncUrl: true, replaceUrl: true });
@@ -327,4 +465,265 @@ Object.assign(RecipeView, {
     }
   },
 
+  // ── Step action menu (cook log view) ────────────────────────────────────────
+
+  openStepActionMenu(event, btn) {
+    event.stopPropagation();
+    const li = btn.closest('.step-item');
+    if (!li) return;
+    const logId = li.dataset.cookLogId;
+    const sectionIndex = parseInt(li.dataset.sectionIndex, 10);
+    const stepNumber = parseInt(li.dataset.stepNumber, 10);
+    if (!logId || !Number.isFinite(sectionIndex) || !Number.isFinite(stepNumber)) return;
+    const isSkipped = li.classList.contains('step-deviation-skipped');
+    closeStepActionMenu();
+    const menu = document.createElement('div');
+    menu.className = 'step-action-menu';
+    menu.dataset.menuFor = li.dataset.stepId || '';
+    menu.innerHTML = `
+      <button class="step-action-item${isSkipped ? ' active' : ''}" data-act="skipped">– ${isSkipped ? 'Unmark skipped' : 'Mark as skipped'}</button>
+      <div class="step-action-sep"></div>
+      <button class="step-action-item" data-act="note">＋ Add note below</button>
+      <button class="step-action-item" data-act="add-step-after">＋ Add step after</button>
+      <button class="step-action-item step-action-danger" data-act="delete">✕ Delete step</button>`;
+    document.body.appendChild(menu);
+    const r = btn.getBoundingClientRect();
+    menu.style.top = `${r.bottom + window.scrollY + 4}px`;
+    menu.style.left = `${Math.max(8, r.right + window.scrollX - menu.offsetWidth)}px`;
+    menu.addEventListener('click', (e) => {
+      const item = e.target.closest('.step-action-item');
+      if (!item) return;
+      const act = item.dataset.act;
+      closeStepActionMenu();
+      this.handleStepAction(logId, sectionIndex, stepNumber, act, isSkipped);
+    });
+    setTimeout(() => {
+      document.addEventListener('click', closeStepActionMenu, { once: true });
+    }, 0);
+  },
+
+  async handleStepAction(logId, sectionIndex, stepNumber, act, isSkipped) {
+    const endpoint = `/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/step-action`;
+    try {
+      if (act === 'skipped') {
+        // Toggle: clicking when already skipped clears the marker.
+        const deviation = isSkipped ? null : 'skipped';
+        await API.post(endpoint, { section_index: sectionIndex, step_number: stepNumber, action: 'set-deviation', deviation });
+      } else if (act === 'note') {
+        const note = prompt('Note to add below this step:');
+        if (!note || !note.trim()) return;
+        await API.post(endpoint, { section_index: sectionIndex, step_number: stepNumber, action: 'insert-note', note: note.trim() });
+      } else if (act === 'add-step-after') {
+        const content = prompt('New step content (will be marked as an addition):');
+        if (!content || !content.trim()) return;
+        await API.post(endpoint, { section_index: sectionIndex, step_number: stepNumber, action: 'insert-step-after', content: `!+ ${content.trim()}` });
+      } else if (act === 'delete') {
+        if (!confirm('Delete this step from the cook log?')) return;
+        await API.post(endpoint, { section_index: sectionIndex, step_number: stepNumber, action: 'delete' });
+      } else {
+        return;
+      }
+      await this.refreshCookLogsAfterMutation();
+    } catch (e) {
+      showToast('Error: ' + e.message);
+    }
+  },
+
+  // Inline click-to-edit for a quantity inside the cook-log "Recipe as cooked"
+  // panel. Replaces the clicked text node with an <input>, commits on Enter
+  // or blur-with-change, cancels on Esc.
+  editCookLogQuantity(event, el) {
+    if (!el || el.querySelector('input')) return;
+    event.stopPropagation();
+    const li = el.closest('.step-item');
+    if (!li) return;
+    const logId = li.dataset.cookLogId;
+    const sectionIndex = parseInt(li.dataset.sectionIndex, 10);
+    const stepNumber = parseInt(li.dataset.stepNumber, 10);
+    const kind = el.dataset.clEditKind;
+    const tokenIndex = parseInt(el.dataset.clEditIndex, 10);
+    const units = el.dataset.clEditUnits || '';
+    if (!logId || !kind || !Number.isFinite(sectionIndex) || !Number.isFinite(stepNumber) || !Number.isFinite(tokenIndex)) return;
+    // Seed the input with the digits-and-range chunk of the current display.
+    // Falls back to the full text for non-trivial values (e.g. fractions).
+    const currentDisplay = el.textContent.trim();
+    const numericMatch = currentDisplay.match(/-?\d+(?:[\.\/\-]\d+)?/);
+    const seed = numericMatch ? numericMatch[0] : currentDisplay;
+    const originalHtml = el.innerHTML;
+    const unitsLabel = units ? ` ${units}` : '';
+    el.innerHTML = `<input class="cl-edit-input" type="text" value="${escHtml(seed)}" />${unitsLabel ? `<span class="cl-edit-units">${escHtml(unitsLabel)}</span>` : ''}`;
+    const input = el.querySelector('input');
+    input.focus();
+    input.select();
+
+    let settled = false;
+    const restore = () => {
+      if (settled) return;
+      settled = true;
+      el.innerHTML = originalHtml;
+    };
+    const commit = async () => {
+      if (settled) return;
+      const newValue = input.value.trim();
+      if (newValue === '' || newValue === seed) { restore(); return; }
+      settled = true;
+      el.innerHTML = `<span class="cl-edit-saving">…</span>`;
+      try {
+        const endpoint = `/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/step-action`;
+        await API.post(endpoint, {
+          section_index: sectionIndex,
+          step_number: stepNumber,
+          action: 'update-quantity',
+          token_kind: kind,
+          token_index: tokenIndex,
+          new_quantity: newValue,
+          new_units: units,
+        });
+        await this.refreshCookLogsAfterMutation();
+      } catch (e) {
+        showToast('Error: ' + e.message);
+        // Repaint to recover from the partial DOM swap.
+        await this.refreshCookLogsAfterMutation();
+      }
+    };
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); restore(); }
+    });
+    input.addEventListener('blur', () => {
+      // Treat blur-with-change as a commit; blur-with-no-change as cancel.
+      if (input.value.trim() === seed || input.value.trim() === '') restore();
+      else commit();
+    });
+  },
+
+  // ── Section action menu ─────────────────────────────────────────────────────
+
+  openSectionActionMenu(event, btn) {
+    event.stopPropagation();
+    const li = btn.closest('.step-section');
+    if (!li) return;
+    const logId = li.dataset.cookLogId;
+    const sectionIndex = parseInt(li.dataset.sectionIndex, 10);
+    if (!logId || !Number.isFinite(sectionIndex)) return;
+    closeStepActionMenu();
+    const menu = document.createElement('div');
+    menu.className = 'step-action-menu';
+    menu.innerHTML = `
+      <button class="step-action-item" data-act="add-step">＋ Add step at section end</button>
+      <button class="step-action-item" data-act="add-note">＋ Add section note</button>
+      <button class="step-action-item" data-act="rename">✎ Rename section</button>`;
+    document.body.appendChild(menu);
+    const r = btn.getBoundingClientRect();
+    menu.style.top = `${r.bottom + window.scrollY + 4}px`;
+    menu.style.left = `${Math.max(8, r.right + window.scrollX - menu.offsetWidth)}px`;
+    menu.addEventListener('click', (e) => {
+      const item = e.target.closest('.step-action-item');
+      if (!item) return;
+      closeStepActionMenu();
+      this.handleSectionAction(logId, sectionIndex, item.dataset.act, li);
+    });
+    setTimeout(() => {
+      document.addEventListener('click', closeStepActionMenu, { once: true });
+    }, 0);
+  },
+
+  async handleSectionAction(logId, sectionIndex, act, sectionEl) {
+    const endpoint = `/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/section-action`;
+    try {
+      if (act === 'add-step') {
+        const content = prompt('New step content (will be marked as an addition):');
+        if (!content || !content.trim()) return;
+        await API.post(endpoint, { section_index: sectionIndex, action: 'add-step', content: `!+ ${content.trim()}` });
+      } else if (act === 'add-note') {
+        const note = prompt('Section note:');
+        if (!note || !note.trim()) return;
+        await API.post(endpoint, { section_index: sectionIndex, action: 'add-note', note: note.trim() });
+      } else if (act === 'rename') {
+        const currentName = sectionEl?.querySelector('.step-section-name')?.textContent?.trim() || '';
+        const name = prompt('Section name:', currentName);
+        if (!name || !name.trim() || name.trim() === currentName) return;
+        await API.post(endpoint, { section_index: sectionIndex, action: 'rename', name: name.trim() });
+      } else {
+        return;
+      }
+      await this.refreshCookLogsAfterMutation();
+    } catch (e) {
+      showToast('Error: ' + e.message);
+    }
+  },
+
+  async addRecipeNoteToLog(logId) {
+    const note = prompt('Recipe-level note:');
+    if (!note || !note.trim()) return;
+    const endpoint = `/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/recipe-action`;
+    try {
+      await API.post(endpoint, { action: 'add-note', note: note.trim() });
+      await this.refreshCookLogsAfterMutation();
+    } catch (e) {
+      showToast('Error: ' + e.message);
+    }
+  },
+
+  markDifferences(logId) {
+    const details = document.getElementById(`cook-log-recipe-${logId}`);
+    if (!details) return;
+    details.open = true;
+    if (!this.expandedCookLogs) this.expandedCookLogs = new Set();
+    this.expandedCookLogs.add(logId);
+    details.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  },
+
+  // Keeps the expanded-state Set in sync with manual <details> toggles so a
+  // step-action repaint via paintCookLogs can restore the open panel.
+  onCookLogRecipeToggle(logId, el) {
+    if (!this.expandedCookLogs) this.expandedCookLogs = new Set();
+    if (el?.open) this.expandedCookLogs.add(logId);
+    else this.expandedCookLogs.delete(logId);
+  },
+
+  openCookLogMoreMenu(event, btn) {
+    event.stopPropagation();
+    const logId = btn.dataset.logId;
+    if (!logId) return;
+    closeStepActionMenu();
+    const menu = document.createElement('div');
+    menu.className = 'step-action-menu';
+    menu.innerHTML = `
+      <button class="step-action-item" data-act="iterate">↗ Iterate as next draft</button>
+      <button class="step-action-item" data-act="notes">✎ Edit notes</button>
+      <button class="step-action-item" data-act="compare">≡ Compare to source</button>
+      <div class="step-action-sep"></div>
+      <button class="step-action-item step-action-danger" data-act="delete">✕ Delete cook log</button>`;
+    document.body.appendChild(menu);
+    const r = btn.getBoundingClientRect();
+    menu.style.top = `${r.bottom + window.scrollY + 4}px`;
+    menu.style.left = `${Math.max(8, r.right + window.scrollX - menu.offsetWidth)}px`;
+    menu.addEventListener('click', (e) => {
+      const item = e.target.closest('.step-action-item');
+      if (!item) return;
+      closeStepActionMenu();
+      const act = item.dataset.act;
+      if (act === 'iterate') this.iterateFromCookLog(logId);
+      else if (act === 'notes') this.openCookLogModal(logId);
+      else if (act === 'compare') this.compareCookLogToSource(logId);
+      else if (act === 'delete') this.deleteCookLogConfirm(logId);
+    });
+    setTimeout(() => {
+      document.addEventListener('click', closeStepActionMenu, { once: true });
+    }, 0);
+  },
+
+  async refreshCookLogsAfterMutation() {
+    this.cookLogs = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs`);
+    await this.parseCookLogsAhead();
+    const body = document.getElementById('tab-body');
+    if (body) this.paintCookLogs(body);
+  },
+
 });
+
+function closeStepActionMenu() {
+  document.querySelectorAll('.step-action-menu').forEach((m) => m.remove());
+}

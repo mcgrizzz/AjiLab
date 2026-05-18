@@ -457,10 +457,6 @@ body {
   border-left-color: var(--green);
   background: color-mix(in srgb, var(--green) 8%, transparent);
 }
-.step-deviation-modified {
-  border-left-color: var(--gold);
-  background: color-mix(in srgb, var(--gold) 10%, transparent);
-}
 .step-deviation-skipped {
   border-left-color: var(--ink3);
   background: color-mix(in srgb, var(--ink3) 6%, transparent);
@@ -490,12 +486,307 @@ body {
   color: var(--bg);
 }
 .step-deviation-badge-added    { background: var(--green); }
-.step-deviation-badge-modified { background: var(--gold); }
 .step-deviation-badge-skipped {
   background: transparent;
   color: var(--ink3);
   border: 1px solid var(--ink3);
   padding: 1px 8px;
+}
+
+/* Cook-log diff overlay: when a quantity / timer / temperature differs from
+   the paired source recipe value, the token renders as `(was → now)` and
+   gets a subtle gold tint. Step-level `.step-modified` adds a muted left
+   border so the modified step is scannable without competing with the
+   ADDED / SKIPPED deviation styles. */
+.step-modified {
+  border-left: 4px solid color-mix(in srgb, var(--gold) 55%, transparent);
+  background: color-mix(in srgb, var(--gold) 4%, transparent);
+  padding: 14px 14px 14px 18px;
+  margin: 6px -14px;
+  border-radius: 6px;
+}
+.s-amt-modified {
+  color: var(--gold);
+}
+.s-amt-arrow {
+  color: var(--ink3);
+  font-weight: 600;
+  margin: 0 1px;
+}
+.s-amt-was {
+  color: var(--ink3);
+  font-style: italic;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--ink3) 60%, transparent);
+}
+
+/* Cook-log click-to-edit: any quantity inside a cook-log step with a
+   `data-cl-edit-kind` attribute is clickable, opens an inline input. */
+.s-cl-editable {
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.12s;
+}
+.s-cl-editable:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.cl-edit-input {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 1px 5px;
+  width: 5em;
+  max-width: 8em;
+  outline: none;
+}
+.cl-edit-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.cl-edit-units {
+  margin-left: 4px;
+  color: var(--ink3);
+  font-style: italic;
+}
+.cl-edit-saving {
+  color: var(--ink3);
+  font-style: italic;
+}
+
+/* Cherry-pick promote panel: list of classified changes with checkboxes that
+   default based on classification. `within-spec` is the spec-preservation
+   case — unchecked by default so the source range survives. */
+.cp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 4px 0 8px;
+}
+.cp-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.cp-legend {
+  font-size: 0.78rem;
+}
+.cp-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.cp-row {
+  border-bottom: 1px solid var(--border);
+}
+.cp-row:last-child {
+  border-bottom: none;
+}
+.cp-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+.cp-label:hover {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+.cp-checkbox {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  cursor: pointer;
+}
+/* Tag pill — intrinsic width so WITHIN-SPEC doesn't stretch the column. */
+.cp-tag {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+.cp-tag-deviation { background: color-mix(in srgb, var(--gold) 22%, transparent); color: var(--gold); }
+.cp-tag-within-spec { background: color-mix(in srgb, var(--ink3) 15%, transparent); color: var(--ink3); }
+.cp-tag-addition { background: color-mix(in srgb, var(--green) 22%, transparent); color: var(--green); }
+.cp-tag-removal { background: color-mix(in srgb, var(--ink3) 15%, transparent); color: var(--ink3); border: 1px solid var(--ink3); }
+.cp-row-within-spec .cp-label { opacity: 0.78; }
+/* Stack the label snippet and from→to chip so narrow modals never wrap a
+   "23 g" across two lines mid-token. */
+.cp-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cp-label-line {
+  word-break: break-word;
+}
+.cp-sub {
+  color: var(--ink3);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.cp-from {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--ink3) 60%, transparent);
+}
+.cp-arrow {
+  color: var(--ink3);
+}
+.cp-to {
+  color: var(--gold);
+  font-weight: 500;
+}
+/* Step group — modified steps render their snippet once as a header with
+   token-diff rows nested underneath so the snippet doesn't repeat per token. */
+.cp-step-group {
+  border-bottom: 1px solid var(--border);
+}
+.cp-step-group:last-child {
+  border-bottom: none;
+}
+.cp-step-header {
+  padding: 8px 12px 4px;
+  font-family: var(--font-serif);
+  font-size: 0.86rem;
+  color: var(--ink2);
+  font-style: italic;
+  font-weight: 500;
+}
+.cp-step-children {
+  list-style: none;
+  padding: 0 0 6px;
+  margin: 0;
+}
+.cp-step-children > .cp-row {
+  border-bottom: none;
+}
+.cp-step-children > .cp-row > .cp-label {
+  padding: 4px 12px 4px 24px;
+}
+/* Inside a step group, the token label leads (short, scannable) and the
+   from→to chip sits inline rather than stacked, since both are short. */
+.cp-step-children > .cp-row .cp-text {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.cp-step-children > .cp-row .cp-label-line {
+  font-weight: 500;
+}
+
+/* Within-spec disclosure — collapses N "trivial" changes under a single
+   summary so the primary list shows only deviations / additions / removals. */
+.cp-within-spec {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.cp-within-spec > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  color: var(--ink2);
+  background: color-mix(in srgb, var(--ink3) 5%, transparent);
+  user-select: none;
+}
+.cp-within-spec > summary::-webkit-details-marker { display: none; }
+.cp-within-spec > summary::before {
+  content: "▸ ";
+  display: inline-block;
+  font-family: var(--font-mono);
+  color: var(--ink3);
+  transition: transform 0.12s ease;
+}
+.cp-within-spec[open] > summary::before {
+  content: "▾ ";
+}
+.cp-list-nested {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Step action button + menu (cook log view) ───────────────── */
+.step-item {
+  position: relative;
+}
+.step-action-btn {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  margin-top: -2px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--ink3);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.step-action-btn:hover {
+  background: var(--bg2);
+  border-color: var(--border);
+  color: var(--ink);
+}
+.step-action-menu {
+  position: absolute;
+  z-index: 200;
+  min-width: 200px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 4px;
+  font-size: 0.88rem;
+}
+.step-action-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 7px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: inherit;
+}
+.step-action-item:hover {
+  background: var(--bg2);
+}
+.step-action-item.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-weight: 600;
+}
+.step-action-danger {
+  color: var(--accent);
+}
+.step-action-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 2px;
 }
 
 .step-item-ref-highlight {
@@ -573,24 +864,37 @@ body {
   letter-spacing: -0.01em;
 }
 .step-section:first-child { padding-top: 4px; }
+.step-section-with-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.step-section-with-actions .step-section-name { flex: 1; min-width: 0; }
+.step-section-with-actions .step-action-btn {
+  align-self: center;
+  margin-top: 0;
+}
 .s-ing-amt { font-weight: 400; opacity: 0.7; font-size: 0.88em; }
+/* `> ` note lines hang under their preceding context. A step-note hugs its
+   parent step as a single visual unit: the step's bottom divider is moved
+   onto the note so the line lands *after* the pair, not between them.
+   Section / recipe notes (no parent step) stay flush-left and dividerless. */
 .step-comment {
   list-style: none;
   position: relative;
   display: block;
-  margin: 12px 0 12px 36px;
-  padding: 8px 14px 8px 18px;
+  margin: 0 0 0 36px;
+  padding: 8px 0 10px 12px;
   font-family: var(--font-serif);
-  font-size: 0.94rem;
-  line-height: 1.7;
+  font-size: 0.92rem;
+  line-height: 1.55;
   font-style: italic;
-  color: var(--ink1);
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--accent) 10%, transparent) 0, transparent 28px),
-    color-mix(in srgb, var(--bg2) 76%, white);
-  border: 1px solid color-mix(in srgb, var(--border2) 72%, white);
-  border-left: 4px solid color-mix(in srgb, var(--accent) 78%, var(--gold));
-  border-radius: var(--r) var(--r) var(--r) var(--r);
+  color: var(--ink2);
+  background: transparent;
+  border: none;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 60%, var(--gold));
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
   counter-increment: none;
 }
 .step-comment::marker {
@@ -599,14 +903,42 @@ body {
 .step-comment::before {
   content: ">";
   position: absolute;
-  left: 6px;
-  top: 8px;
+  left: -14px;
+  top: 10px;
   font-family: var(--font-mono);
-  font-size: 1rem;
+  font-size: 0.92rem;
+  line-height: 1.55;
   font-style: normal;
-  font-weight: 700;
-  color: color-mix(in srgb, var(--accent) 82%, var(--ink3));
-  opacity: 0.9;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--accent) 55%, var(--ink3));
+  opacity: 0.7;
+}
+/* Step + note becomes one block: hide the step's own divider so the note
+   carries it. The note then visually belongs to the step above. */
+.step-item:has(+ .step-comment) {
+  border-bottom: none;
+}
+/* Chained notes share one divider at the bottom of the chain. */
+.step-comment:has(+ .step-comment) {
+  border-bottom: none;
+  padding-bottom: 4px;
+}
+/* Don't double up dividers when a note is immediately before a section
+   heading (the heading carries its own bottom border). */
+.step-comment:has(+ .step-section) {
+  border-bottom: none;
+}
+/* Last note in the list: mirror .step-item:last-child — no trailing line. */
+.step-list > .step-comment:last-child {
+  border-bottom: none;
+}
+/* Section / recipe notes sit flush under their heading with no divider
+   (the heading + indent already cue scope). */
+.step-list > .step-comment:first-child,
+.step-section + .step-comment {
+  margin-left: 0;
+  border-bottom: none;
+  padding-bottom: 4px;
 }
 
 /* ── Action buttons ──────────────────────────────────────────── */
@@ -2030,6 +2362,29 @@ body.print-route header {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+}
+.cook-log-more-btn {
+  font-size: 1.05rem;
+  line-height: 1;
+  letter-spacing: 0;
+  padding: 4px 10px;
+  min-width: 32px;
+}
+
+/* Constrain the recipe content so the ⋮ action buttons sit near the text,
+   not way out at the card's right edge. */
+.cook-log-recipe-body {
+  max-width: 760px;
+  margin: 0 auto;
+  padding-top: 8px;
+}
+.cook-log-recipe-extras {
+  display: flex;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+  flex-wrap: wrap;
 }
 
 /* Settings modal */
