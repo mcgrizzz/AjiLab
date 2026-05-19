@@ -9,24 +9,28 @@ import {
 } from "./cooklang.ts";
 import type { ParsedStep, ParsedRecipe, QuantityRange } from "./cooklang.ts";
 import { diffIngredients, classifyIngredientRow } from "./ingredient-compare.js";
+import type {
+  DiffToken,
+  InlineDiffToken,
+  DiffLineEntry,
+  StepBlock,
+  StepChange,
+  Classification,
+  TokenDiff,
+  StepClassification,
+} from "./compare/types.ts";
 
 export { diffIngredients, classifyIngredientRow };
-
-export type DiffToken =
-  | { op: "context"; text: string }
-  | { op: "added"; text: string }
-  | { op: "removed"; text: string };
-
-// Inline step-diff token. `replace` is a single coalesced change region:
-// adjacent removed/added pieces (and any short context squished between them)
-// merged into one logical swap so the renderer can show `old → new`.
-export type InlineDiffToken =
-  | { op: "context"; text: string }
-  | { op: "replace"; removed: string; added: string };
-
-export type DiffLineEntry =
-  | { kind: "header" | "hunk" | "context"; text: string }
-  | { kind: "added" | "removed"; prefix: string; tokens: DiffToken[] };
+export type {
+  DiffToken,
+  InlineDiffToken,
+  DiffLineEntry,
+  StepBlock,
+  StepChange,
+  Classification,
+  TokenDiff,
+  StepClassification,
+};
 
 // Walks a unified patch and, for each consecutive `-` / `+` block, pairs the
 // changed lines and runs an intra-line word diff so the renderer can highlight
@@ -111,18 +115,6 @@ function wordDiffTokens(oldStr: string, newStr: string): [DiffToken[], DiffToken
 // them across versions by section + ordinal, and emits a list of changes —
 // each carrying its own context (section name, step number) and a token-level
 // intra-step word diff so the surrounding sentence stays readable.
-
-export type StepBlock = {
-  kind: "step" | "note";
-  section_name: string | null;
-  step_number: number | null; // 1-indexed within the section, null for notes
-  text: string;
-};
-
-export type StepChange =
-  | { kind: "modified"; section_name: string | null; step_number: number | null; block_kind: "step" | "note"; inline_tokens: InlineDiffToken[] }
-  | { kind: "added"; section_name: string | null; step_number: number | null; block_kind: "step" | "note"; text: string }
-  | { kind: "removed"; section_name: string | null; step_number: number | null; block_kind: "step" | "note"; text: string };
 
 export function diffStepBlocks(fromText: string, toText: string): StepChange[] {
   const fromGroups = groupBySectionName(parseBlocks(fromText));
@@ -325,54 +317,6 @@ function sectionKey(name: string | null): string {
 // numeric diff is classified `within-spec` (log scalar lands in source range)
 // or `deviation`. Step-level classification aggregates the per-token results
 // plus structural changes (added / skipped / text-only).
-
-export type Classification = "within-spec" | "deviation" | "addition" | "removal" | "notes-only";
-
-export interface TokenDiff {
-  kind: "ingredient" | "timer" | "inlineQuantity";
-  name: string | null;
-  // Index of the source-side token within its step's tokens-of-this-kind list.
-  // Needed by the synthesis pass to target updateStepQuantity at the right
-  // occurrence when the same step has multiple ingredients / timers / inlines.
-  source_token_index: number;
-  from_quantity: string | number | null;
-  from_units: string;
-  from_range: QuantityRange | null;
-  to_quantity: string | number | null;
-  to_units: string;
-  classification: Exclude<Classification, "notes-only">;
-}
-
-export type StepClassification =
-  | {
-      kind: "modified";
-      classification: Exclude<Classification, "notes-only" | "addition" | "removal">;
-      section_index: number;
-      step_number: number;
-      log_index: number;
-      source_index: number;
-      token_diffs: TokenDiff[];
-      text_snippet: string;
-    }
-  | {
-      kind: "added";
-      classification: "addition";
-      section_index: number;
-      step_number: number;
-      log_index: number;
-      text_snippet: string;
-    }
-  | {
-      kind: "removed";
-      classification: "removal";
-      section_index: number;
-      step_number: number;
-      // When the log marks `!-` skipped we have a log step; when the source
-      // has a step with no log counterpart we only have a source index.
-      log_index: number | null;
-      source_index: number;
-      text_snippet: string;
-    };
 
 export function classifyCookLogSteps(
   logSteps: ParsedStep[][],
