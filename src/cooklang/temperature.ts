@@ -12,12 +12,12 @@
 // it natively. The two share placeholder space; only `^` results get tagged
 // `kind: "temperature"`.
 
+import { splitTextIntoParsedSteps } from "../cooklang.ts";
+import type { ParsedStep, QuantityRange } from "../cooklang.ts";
 import {
   parseInlineQuantityBody,
   formatInlineQuantityDisplay,
-  splitTextIntoParsedSteps,
-} from "../cooklang.ts";
-import type { ParsedStep, QuantityRange } from "../cooklang.ts";
+} from "./inline-quantity.ts";
 
 export const TEMP_MARK_START = "";
 export const TEMP_MARK_END = "";
