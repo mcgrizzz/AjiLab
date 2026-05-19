@@ -2,6 +2,13 @@ import { sql, generateId, slugify } from "./db.ts";
 import { parseCooklang, parseReferencePath, resolveDeviationMarkers } from "./cooklang.ts";
 import type { ParsedRecipe, RecipeReferenceResolution } from "./cooklang.ts";
 import { parseVersionMetadata, upsertNotesInCooklang } from "./store/frontmatter.ts";
+import {
+  incrementVersionString,
+  stripBetaSuffix,
+  sortVersions,
+  latestVersionByStatus,
+  latestComparableVersion,
+} from "./store/version-string.ts";
 
 export type RecipeStatus = "draft" | "released" | "beta" | "archived";
 export type RecipeBranchKind = "main" | "variant";
@@ -125,23 +132,6 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-// ── Version-string helpers ───────────────────────────────────────────────────
-
-function incrementVersionString(version: string): string {
-  const clean = version.replace(/^v/, "");
-  if (clean.includes("-beta")) return `v${clean.replace(/-beta.*$/, "")}`;
-  const parts = clean.split(".");
-  if (parts.length >= 2) {
-    parts[parts.length - 1] = String(parseInt(parts[parts.length - 1] || "0", 10) + 1);
-    return `v${parts.join(".")}`;
-  }
-  return `${version}.1`;
-}
-
-function stripBetaSuffix(version: string): string {
-  return version.includes("-beta") ? `v${version.replace(/^v/, "").replace(/-beta.*$/, "")}` : version;
-}
-
 // ── Row → record mappers ─────────────────────────────────────────────────────
 
 type EntryRow = {
@@ -256,20 +246,6 @@ function cookLogRowToRecord(row: CookLogRow): CookLogRecord {
 }
 
 // ── Internal: record assembly ────────────────────────────────────────────────
-
-function sortVersions(versions: VersionRecord[]): VersionRecord[] {
-  return [...versions].sort((a, b) => b.created_at.localeCompare(a.created_at));
-}
-
-function latestVersionByStatus(versions: VersionRecord[], status: Exclude<RecipeStatus, "draft">): VersionRecord | null {
-  return versions.find((version) => version.status === status) || null;
-}
-
-function latestComparableVersion(versions: VersionRecord[]): VersionRecord | null {
-  return versions
-    .filter((version) => version.status === "released" || version.status === "beta")
-    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0] || null;
-}
 
 function sameDraftState(version: VersionRecord | null | undefined, nextText: string, nextTags: string[]): boolean {
   if (!version) return false;
