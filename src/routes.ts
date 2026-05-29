@@ -4,7 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { Hono } from "hono";
-import { parseCooklang, annotateCookLogDiff, annotateIngredientSummaryDiff, applyStepDeviation, updateStepQuantity, insertNoteAfterStep, deleteStep as deleteCooklangStep, insertStepAfterStep, insertStepInSection, insertSectionNote, renameSection, insertRecipeNote } from "./cooklang.ts";
+import { parseCooklang, annotateCookLogDiff, annotateIngredientSummaryDiff, applyStepDeviation, updateStepQuantity, insertNoteAfterStep, deleteStep as deleteCooklangStep, insertStepAfterStep, insertStepInSection, insertSectionNote, renameSection, insertRecipeNote, resolveDeviationMarkers } from "./cooklang.ts";
 import { buildInlineDiffLines, diffStepBlocks, classifyCookLogVsSource, synthesizePromotedRecipe } from "./compare.ts";
 import { diffIngredients } from "./ingredient-compare.js";
 import {
@@ -572,7 +572,11 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     if (!recipe) return c.json({ error: "not found" }, 404);
     const log = await getCookLog(recipe.slug, c.req.param("id"), activeBranch(c));
     if (!log) return c.json({ error: "cook log not found" }, 404);
-    const logParsed = parseCooklang(log.cooklang_text || "");
+    // Resolve deviation markers first so this matches synthesizePromotedRecipe,
+    // which classifies the resolved log. Parsing the raw markered text here would
+    // produce different step numbering, so the change IDs the client checks would
+    // not match the ones synthesis applies — and every selection would be dropped.
+    const logParsed = parseCooklang(resolveDeviationMarkers(log.cooklang_text || ""));
     const sourceParsed = parseCooklang(log.source_cooklang_text || "");
     return c.json(classifyCookLogVsSource(logParsed, sourceParsed));
   });

@@ -11,7 +11,24 @@ import {
   tokenChangeId,
 } from "../src/compare.ts";
 import { diffIngredients } from "../src/ingredient-compare.js";
-import { parseCooklang } from "../src/cooklang.ts";
+import { parseCooklang, resolveDeviationMarkers } from "../src/cooklang.ts";
+
+// Mirror the /classify route + client selection-building: classify the resolved
+// log against source, then collect the change IDs exactly as the cherry-pick UI
+// would for "select all".
+function selectAllChangeIds(src, log) {
+  const classes = classifyCookLogSteps(
+    parseCooklang(resolveDeviationMarkers(log)).steps,
+    parseCooklang(src).steps,
+  );
+  const selections = new Set();
+  for (const c of classes) {
+    if (c.kind === "added") selections.add(`step-add:${c.section_index}:${c.step_number}`);
+    else if (c.kind === "removed") selections.add(`step-remove:${c.section_index}:${c.step_number}`);
+    else if (c.kind === "modified") for (const d of c.token_diffs) selections.add(tokenChangeId(c, d));
+  }
+  return selections;
+}
 
 const before = `Cover and ferment at 28°C-30°C for ~{2%hours}, until roughly tripled and bubbly.
 
@@ -327,4 +344,24 @@ test("synthesize: nothing happens when source has no log changes", () => {
   const log = "Mix @flour{500%g}.";
   const out = synthesizePromotedRecipe(src, log, new Set(["step-token:0:1:ingredient:0"]));
   assert.equal(out, src);
+});
+
+// Regression: an added/skipped step before a modified step shifts the LOG step
+// numbering. Selections must still land on the right SOURCE step, and the
+// change IDs from /classify (resolved log) must match what synthesis applies.
+test("synthesize: a token edit after an added step still lands on the source step", () => {
+  const src = "= Steps\n\nMix @flour{500%g}.\n\nBake @sugar{10%g}.";
+  const log = "= Steps\n\nMix @flour{500%g}.\n\n!+ Rest 20 min.\n\nBake @sugar{20%g}.";
+  const out = synthesizePromotedRecipe(src, log, selectAllChangeIds(src, log));
+  assert.ok(out.includes("@sugar{20%g}"), `sugar should update; got: ${out}`);
+  assert.ok(out.includes("@flour{500%g}"), `flour unchanged; got: ${out}`);
+  assert.ok(out.includes("Rest 20 min."), `added step should land; got: ${out}`);
+});
+
+test("synthesize: select-all with a skip + later edit applies every selection", () => {
+  const src = "= Steps\n\nMix @flour{500%g}.\n\nKnead well.\n\nBake @sugar{10%g}.";
+  const log = "= Steps\n\nMix @flour{500%g}.\n\n!- Knead well.\n\nBake @sugar{20%g}.";
+  const out = synthesizePromotedRecipe(src, log, selectAllChangeIds(src, log));
+  assert.ok(out.includes("@sugar{20%g}"), `sugar should update; got: ${out}`);
+  assert.ok(!out.includes("Knead well"), `knead should be removed; got: ${out}`);
 });

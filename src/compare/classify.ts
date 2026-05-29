@@ -37,11 +37,15 @@ export function classifyCookLogSteps(
 
     if (pair.reason === "skipped") {
       const srcStep = sourceSteps[pair.sourceIndex!];
+      // Removal coords must address the SOURCE step — synthesis deletes from the
+      // source text. The log step's number can differ once earlier steps were
+      // added/skipped.
+      const srcMeta = stepMeta(srcStep);
       out.push({
         kind: "removed",
         classification: "removal",
-        section_index: meta.section_index,
-        step_number: meta.step_number,
+        section_index: srcMeta.section_index,
+        step_number: srcMeta.step_number,
         log_index: pair.logIndex,
         source_index: pair.sourceIndex!,
         text_snippet: stepTextSnippet(srcStep || logStep),
@@ -69,11 +73,15 @@ export function classifyCookLogSteps(
     const stepClass = tokenDiffs.some((d) => d.classification === "deviation")
       ? "deviation"
       : "within-spec";
+    // Token rewrites address the SOURCE step (updateStepQuantity runs on the
+    // source text with source_token_index), so the step coords must be the
+    // source step's, not the log's — they diverge once earlier steps shift.
+    const srcMeta = stepMeta(sourceStep);
     out.push({
       kind: "modified",
       classification: stepClass,
-      section_index: meta.section_index,
-      step_number: meta.step_number,
+      section_index: srcMeta.section_index,
+      step_number: srcMeta.step_number,
       log_index: pair.logIndex,
       source_index: pair.sourceIndex,
       token_diffs: tokenDiffs,
