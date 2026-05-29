@@ -365,3 +365,50 @@ test("synthesize: select-all with a skip + later edit applies every selection", 
   assert.ok(out.includes("@sugar{20%g}"), `sugar should update; got: ${out}`);
   assert.ok(!out.includes("Knead well"), `knead should be removed; got: ${out}`);
 });
+
+// Regression for the reported failure: the snapshot holds a PROSE temperature
+// (`26.5°C`) that the cook log edited into a `^{}` sigil, in a later section of
+// a recipe that has YAML frontmatter. Promote must locate the prose temp in the
+// snapshot (frontmatter skipped, section index aligned) and apply the edit.
+test("synthesize: prose-temp→sigil edit promotes in a later section with frontmatter", () => {
+  const src = [
+    "---",
+    "title: Test Loaf",
+    "metric.hydration: water.g / flour.g * 100 | %",
+    "---",
+    "",
+    "= 1-3 Days before",
+    "",
+    "Refeed the starter.",
+    "",
+    "= Preferment",
+    "",
+    "Mix @flour{45%g} and @water{10%g}.",
+    "",
+    "Cover and ferment at 26.5°C for ~{2%hours}.",
+    "",
+    "> Visual cues matter more than timing.",
+  ].join("\n");
+  const log = [
+    "---",
+    "title: Test Loaf",
+    "metric.hydration: water.g / flour.g * 100 | %",
+    "---",
+    "",
+    "= 1-3 Days before",
+    "",
+    "Refeed the starter.",
+    "",
+    "= Preferment",
+    "",
+    "Mix @flour{50%g} and @water{10%g}.",
+    "",
+    "Cover and ferment at ^{27%C} for ~{2%hours}.",
+    "",
+    "> Visual cues matter more than timing.",
+  ].join("\n");
+  const out = synthesizePromotedRecipe(src, log, selectAllChangeIds(src, log));
+  assert.ok(out.includes("^{27%C}"), `prose temp should upgrade to sigil; got:\n${out}`);
+  assert.ok(!out.includes("26.5"), `old prose temp should be replaced; got:\n${out}`);
+  assert.ok(out.includes("@flour{50%g}"), `flour edit should also land; got:\n${out}`);
+});

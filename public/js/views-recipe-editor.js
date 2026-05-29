@@ -11,12 +11,13 @@ Object.assign(RecipeView, {
     if (cookLogTarget) {
       this.activeVersion = cookLogTarget;
     } else {
-      // Only switch the active version if the current selection isn't editable.
-      // A draft or a beta can be edited directly; released/archived versions can't,
-      // so we fall back to the editable target (active experiment → draft).
+      // Drafts, betas, and now released/archived versions are all editable in
+      // place (releases get a warning + an easy "new beta" path below). Only an
+      // empty selection or an inherited source from a parent branch can't be
+      // edited here, so bounce just those to the editable target.
       const isCurrentEditable = !!(this.activeVersion?._cookLogId
         || this.activeVersion?.is_draft
-        || this.activeVersion?.status === 'beta');
+        || (this.activeVersion?.version_string && !this.activeVersion?.is_inherited_source));
       if (!isCurrentEditable) {
         const experimentTarget = this.recipe.active_experiment || this.recipe.draft || null;
         if (experimentTarget && experimentTarget !== this.activeVersion) {
@@ -50,6 +51,10 @@ Object.assign(RecipeView, {
     this.draftPreviewState = null;
     this.draftQuantityAnchor = null;
     const isEditingCookLog = !!editable?._cookLogId;
+    // Editing a published release in place (typo/note fixes). Distinct from
+    // draft/beta editing, which is the normal iterative flow.
+    const isEditingReleased = !isEditingCookLog
+      && (editable?.status === 'released' || editable?.status === 'archived');
     body.innerHTML = `
       <div class="editor-wrap">
         <div class="editor-toolbar">
@@ -58,8 +63,15 @@ Object.assign(RecipeView, {
           ${isEditingCookLog
             ? `<button class="btn btn-sm" onclick="RecipeView.exitCookLogEdit()">← Back to cook logs</button>
                <button class="btn btn-sm btn-primary" onclick="RecipeView.saveDraft({ advanceBeta: false })">Save</button>`
-            : `<button class="btn btn-sm" onclick="RecipeView.saveDraft({ advanceBeta: true })">Save</button>`}
+            : isEditingReleased
+              ? `<button class="btn btn-sm btn-primary" onclick="RecipeView.saveDraft({ advanceBeta: false })">Save changes</button>`
+              : `<button class="btn btn-sm" onclick="RecipeView.saveDraft({ advanceBeta: true })">Save</button>`}
         </div>
+        ${isEditingReleased ? `
+        <div class="editor-release-warning">
+          <span>⚠ You're editing <strong>${escHtml(editable.version_string || 'this release')}</strong> (${escHtml(editable.status)}) in place — saving overwrites the published version. Good for a quick typo or note fix; for real changes, start a new beta so the release history stays intact.</span>
+          <button class="btn btn-sm" onclick="RecipeView.startNextBetaFrom('${escJs(editable.version_string || '')}')">Start a new beta from ${escHtml(editable.version_string || 'this release')}</button>
+        </div>` : ''}
         <div class="editor-split">
           <div class="editor-code">
             <div id="draft-editor" class="editor-surface" aria-label="Cooklang recipe editor"></div>
@@ -107,7 +119,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
           <button class="btn btn-primary" onclick="RecipeView.openReleaseModal()" style="width:100%">${editable?.status === 'beta' ? `Promote ${escHtml(editable.version_string || 'beta')}…` : 'Release version…'}</button>
         </div>` : `
         <div style="padding:16px;border-top:1px solid var(--border);background:var(--surface)">
-          <div class="text-muted" style="font-size:0.84rem;line-height:1.5">Beta edits save directly to ${escHtml(editable?.version_string || 'this beta')}. Switch to Draft to create an unreleased working copy.</div>
+          <div class="text-muted" style="font-size:0.84rem;line-height:1.5">Editing a released version saves over it directly. Use “Start a new beta” above to iterate without touching the published release.</div>
         </div>`}
         </div>`;
     const textarea = document.getElementById('draft-text');
@@ -140,7 +152,12 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       this.selectedDraftTokenId = null;
       this.draftQuantityAnchor = null;
       clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => this.saveDraft({ silent: true, advanceBeta: false }), 1500);
+      // Don't silently autosave over a published release — overwriting it should
+      // be an explicit "Save changes" click. Drafts, betas, and cook logs keep
+      // the autosave behavior.
+      if (!isEditingReleased) {
+        saveTimer = setTimeout(() => this.saveDraft({ silent: true, advanceBeta: false }), 1500);
+      }
       clearTimeout(previewTimer);
       previewTimer = setTimeout(() => this.updatePreview(), 500);
       this.renderDraftQuantityPanel();
@@ -355,7 +372,8 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       }
       if (editable?.is_draft) {
         response = await API.put(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/draft`, { cooklang_text: text, tags, advance_beta: advanceBeta });
-      } else if (editable?.status === 'beta' && editable?.version_string) {
+      } else if (editable?.version_string) {
+        // Any saved version (beta, released, archived) updates in place.
         await API.put(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(editable.version_string)}`, { cooklang_text: text, tags });
       } else {
         throw new Error('No editable version selected');
@@ -364,7 +382,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       if (editable?.is_draft && this.recipe?.draft) {
         this.recipe.draft = { ...this.recipe.draft, cooklang_text: text, tags: nextTags };
       }
-      if (editable?.status === 'beta' && editable?.version_string) {
+      if (!editable?.is_draft && editable?.version_string) {
         this.recipe.versions = (this.recipe.versions || []).map((version) => (
           version.version_string === editable.version_string
             ? { ...version, cooklang_text: text, tags: nextTags }

@@ -283,7 +283,11 @@ const RecipeView = {
 
   getEditableVersion() {
     if (this.activeVersion?._cookLogId) return this.activeVersion;
-    if (this.activeVersion?.is_draft || this.activeVersion?.status === 'beta') return this.activeVersion;
+    if (this.activeVersion?.is_draft) return this.activeVersion;
+    // Released / beta / archived versions can be edited in place (releases come
+    // with a warning in the editor). Inherited source from a parent branch is
+    // not editable here, so fall back to the draft for that.
+    if (this.activeVersion?.version_string && !this.activeVersion?.is_inherited_source) return this.activeVersion;
     return this.recipe?.draft || null;
   },
 

@@ -1108,6 +1108,20 @@ body {
   flex-wrap: wrap;
 }
 .editor-hint { font-size: 0.78rem; color: var(--ink3); flex: 1; }
+.editor-release-warning {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  padding: 10px 16px;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: var(--ink2, var(--ink3));
+  background: color-mix(in srgb, #c2791d 16%, var(--bg2));
+  border-bottom: 1px solid color-mix(in srgb, #c2791d 40%, var(--border));
+}
+.editor-release-warning span { flex: 1; min-width: 220px; }
 .editor-split {
   display: flex;
   flex-direction: column;
