@@ -550,6 +550,20 @@ body {
   color: var(--ink3);
   font-style: italic;
 }
+.cl-edit-unit-select {
+  margin-left: 4px;
+  font: inherit;
+  color: inherit;
+  background: var(--surface, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 4px;
+  padding: 0 2px;
+}
+.cl-edit-unit-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
 .cl-edit-saving {
   color: var(--ink3);
   font-style: italic;

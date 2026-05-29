@@ -95,7 +95,16 @@ interface AnnotationMatch {
   name_end: number;          // position just after the name (= position of `{`)
   brace_open: number;        // position of `{`
   brace_close: number;       // position of `}`
+  // Present for prose temperatures (`26.5°C`) that carry no sigil/braces. The
+  // span covers the whole match so updateStepQuantity can replace it wholesale.
+  prose?: { start: number; end: number };
 }
+
+// Prose temperature mention: `26.5°C`, `23-25°C`. Mirrors the regex in
+// token-extract.ts::splitTextIntoParsedSteps so the inlineQuantity index
+// produced here lines up with the renderer's editable-token order. The degree
+// symbol is required, matching what the parser turns into editable tokens.
+const PROSE_TEMP_RE = /(\d+(?:\.\d+)?)(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*[°º]\s*[FCfc]\b/g;
 
 function scanAnnotations(text: string): AnnotationMatch[] {
   const out: AnnotationMatch[] = [];
@@ -150,6 +159,29 @@ function scanAnnotations(text: string): AnnotationMatch[] {
     });
     i = braceClose + 1;
   }
+
+  // Prose temperatures aren't sigil tokens, but the parser still renders them as
+  // editable inlineQuantity tokens, so they must be editable too. Detect them in
+  // the gaps between sigil annotations (never inside an `@…{…}` / `^{…}` span),
+  // then sort everything by position so the inlineQuantity index matches the
+  // renderer. Editing one upgrades it to canonical `^{value%unit}`.
+  const sigilSpans = out.map((a) => [a.sigil_start, a.brace_close] as const);
+  PROSE_TEMP_RE.lastIndex = 0;
+  let pm: RegExpExecArray | null;
+  while ((pm = PROSE_TEMP_RE.exec(text))) {
+    const start = pm.index;
+    const end = start + pm[0].length;
+    if (sigilSpans.some(([s, e]) => start >= s && start <= e)) continue;
+    out.push({
+      kind: "inlineQuantity",
+      sigil_start: start,
+      name_end: start,
+      brace_open: start,
+      brace_close: end - 1,
+      prose: { start, end },
+    });
+  }
+  out.sort((a, b) => a.sigil_start - b.sigil_start);
   return out;
 }
 
@@ -180,7 +212,14 @@ export function updateStepQuantity(
   const target = annotations[index];
 
   let nextStepText: string;
-  if (kind === "ingredient" && newQuantity.trim() === "0") {
+  if (target.prose) {
+    // Upgrade the prose temperature to a canonical `^{value%unit}` sigil so it
+    // round-trips through the parser and stays editable afterwards.
+    const unit = newUnits.replace(/^[°º]\s*/, "").trim();
+    const before = stepText.slice(0, target.prose.start);
+    const after = stepText.slice(target.prose.end);
+    nextStepText = before + `^{${composeBraceContent(newQuantity, unit)}}` + after;
+  } else if (kind === "ingredient" && newQuantity.trim() === "0") {
     // Strip the entire `@name{...}` annotation. Leaves the bare name as text.
     // We replace `@(modifiers)name{...}` with just the name body so the step
     // still reads naturally — e.g. `@flour{0%g}` → `flour`.

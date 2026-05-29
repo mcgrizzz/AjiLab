@@ -952,6 +952,30 @@ test("updateStepQuantity returns unchanged text for out-of-range index", () => {
   assert.equal(out, text);
 });
 
+test("updateStepQuantity upgrades a prose temperature to a ^{} sigil", () => {
+  const text = `Ferment at 26.5°C for ~{2%hours}.`;
+  const out = updateStepQuantity(text, 0, 1, "inlineQuantity", 0, "27", "C");
+  assert.equal(out, `Ferment at ^{27%C} for ~{2%hours}.`);
+});
+
+test("updateStepQuantity prose temperature accepts a unit change (C → F)", () => {
+  const text = `Ferment at 26.5°C overnight.`;
+  const out = updateStepQuantity(text, 0, 1, "inlineQuantity", 0, "80", "F");
+  assert.equal(out, `Ferment at ^{80%F} overnight.`);
+});
+
+test("updateStepQuantity prose temperature range upgrades to a sigil range", () => {
+  const text = `Hold at 23-25°C overnight.`;
+  const out = updateStepQuantity(text, 0, 1, "inlineQuantity", 0, "24-26", "C");
+  assert.equal(out, `Hold at ^{24-26%C} overnight.`);
+});
+
+test("updateStepQuantity inlineQuantity index aligns across sigil + prose temps", () => {
+  const text = `Set ^{200%C} then finish at 180°C.`;
+  const out = updateStepQuantity(text, 0, 1, "inlineQuantity", 1, "190", "C");
+  assert.equal(out, `Set ^{200%C} then finish at ^{190%C}.`);
+});
+
 // Regression: when a recipe has `>>` metadata before the first `=` heading,
 // the Cooklang library inserts an empty unnamed section. Parser section
 // indexing must skip it so the renderer's (section_index, step_number)

@@ -104,9 +104,10 @@ const CL = {
         }
       }
       // Per-step counters for the cook-log click-to-edit affordance.
-      const cookLogEditAttrs = (kind, idx, units) => {
+      const cookLogEditAttrs = (kind, idx, units, isTemp = false) => {
         if (!options.cookLogId) return '';
-        return ` data-cl-edit-kind="${kind}" data-cl-edit-index="${idx}" data-cl-edit-units="${escHtml(units || '')}" onclick="RecipeView.editCookLogQuantity(event, this)"`;
+        const tempAttr = isTemp ? ' data-cl-edit-temp="1"' : '';
+        return ` data-cl-edit-kind="${kind}" data-cl-edit-index="${idx}" data-cl-edit-units="${escHtml(units || '')}"${tempAttr} onclick="RecipeView.editCookLogQuantity(event, this)"`;
       };
       let ingEditIdx = 0;
       let timerEditIdx = 0;
@@ -151,7 +152,7 @@ const CL = {
             const cls = isTemp ? 's-temp' : 's-quantity';
             const matchedToken = token.quantity && options.resolveInlineQuantityToken ? options.resolveInlineQuantityToken(token) : null;
             const hasQty = token.quantity !== '' && token.quantity != null;
-            const editAttrs = hasQty && !matchedToken ? cookLogEditAttrs('inlineQuantity', inlineEditIdx, token.units) : '';
+            const editAttrs = hasQty && !matchedToken ? cookLogEditAttrs('inlineQuantity', inlineEditIdx, token.units, isTemp) : '';
             if (hasQty) inlineEditIdx++;
             const value = isTemp
               ? formatInlineTemperatureToken(token, options.temperatureUnit)

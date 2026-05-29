@@ -543,6 +543,7 @@ Object.assign(RecipeView, {
     const kind = el.dataset.clEditKind;
     const tokenIndex = parseInt(el.dataset.clEditIndex, 10);
     const units = el.dataset.clEditUnits || '';
+    const isTemp = el.dataset.clEditTemp === '1';
     if (!logId || !kind || !Number.isFinite(sectionIndex) || !Number.isFinite(stepNumber) || !Number.isFinite(tokenIndex)) return;
     // Seed the input with the digits-and-range chunk of the current display.
     // Falls back to the full text for non-trivial values (e.g. fractions).
@@ -550,9 +551,25 @@ Object.assign(RecipeView, {
     const numericMatch = currentDisplay.match(/-?\d+(?:[\.\/\-]\d+)?/);
     const seed = numericMatch ? numericMatch[0] : currentDisplay;
     const originalHtml = el.innerHTML;
-    const unitsLabel = units ? ` ${units}` : '';
-    el.innerHTML = `<input class="cl-edit-input" type="text" value="${escHtml(seed)}" />${unitsLabel ? `<span class="cl-edit-units">${escHtml(unitsLabel)}</span>` : ''}`;
+
+    // Temperatures get a C/F selector so the cook can record the unit they
+    // actually used. Default it to the unit currently shown — which the °F/°C
+    // view toggle may have converted — so the seeded number stays valid.
+    let seedUnit = '';
+    if (isTemp) {
+      const dispUnitMatch = currentDisplay.match(/([CF])\b/i);
+      seedUnit = dispUnitMatch ? dispUnitMatch[1].toUpperCase() : 'F';
+      el.innerHTML = `<input class="cl-edit-input" type="text" value="${escHtml(seed)}" />`
+        + `<select class="cl-edit-unit-select" aria-label="Temperature unit">`
+        + `<option value="C"${seedUnit === 'C' ? ' selected' : ''}>°C</option>`
+        + `<option value="F"${seedUnit === 'F' ? ' selected' : ''}>°F</option>`
+        + `</select>`;
+    } else {
+      const unitsLabel = units ? ` ${units}` : '';
+      el.innerHTML = `<input class="cl-edit-input" type="text" value="${escHtml(seed)}" />${unitsLabel ? `<span class="cl-edit-units">${escHtml(unitsLabel)}</span>` : ''}`;
+    }
     const input = el.querySelector('input');
+    const unitSelect = el.querySelector('select');
     input.focus();
     input.select();
 
@@ -562,10 +579,17 @@ Object.assign(RecipeView, {
       settled = true;
       el.innerHTML = originalHtml;
     };
+    const isChanged = () => {
+      const v = input.value.trim();
+      if (v === '') return false;
+      if (v !== seed) return true;
+      return isTemp && unitSelect && unitSelect.value !== seedUnit;
+    };
     const commit = async () => {
       if (settled) return;
+      if (!isChanged()) { restore(); return; }
       const newValue = input.value.trim();
-      if (newValue === '' || newValue === seed) { restore(); return; }
+      const newUnits = isTemp ? (unitSelect ? unitSelect.value : seedUnit) : units;
       settled = true;
       el.innerHTML = `<span class="cl-edit-saving">…</span>`;
       try {
@@ -577,7 +601,7 @@ Object.assign(RecipeView, {
           token_kind: kind,
           token_index: tokenIndex,
           new_quantity: newValue,
-          new_units: units,
+          new_units: newUnits,
         });
         await this.refreshCookLogsAfterMutation();
       } catch (e) {
@@ -591,10 +615,14 @@ Object.assign(RecipeView, {
       if (e.key === 'Enter') { e.preventDefault(); commit(); }
       else if (e.key === 'Escape') { e.preventDefault(); restore(); }
     });
-    input.addEventListener('blur', () => {
-      // Treat blur-with-change as a commit; blur-with-no-change as cancel.
-      if (input.value.trim() === seed || input.value.trim() === '') restore();
-      else commit();
+    // Settle only when focus leaves the whole widget, so moving between the
+    // number input and the unit <select> doesn't commit/cancel prematurely.
+    el.addEventListener('focusout', () => {
+      setTimeout(() => {
+        if (settled || el.contains(document.activeElement)) return;
+        if (isChanged()) commit();
+        else restore();
+      }, 0);
     });
   },
 
