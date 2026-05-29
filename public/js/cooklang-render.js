@@ -374,6 +374,15 @@ function formatInlineTemperatureToken(token, preferredUnit = 'F') {
   if (!canonical || preferredUnit === canonical) {
     return escHtml(token.value);
   }
+  // Range temps (`^{23-25%C}`): convert both endpoints. parseFloat on the
+  // conversion path below would otherwise read only the first number ("23")
+  // and drop the rest of the range.
+  const range = token.range;
+  if (range && Number.isFinite(range.min) && Number.isFinite(range.max)) {
+    const min = formatTemperatureNumber(convertTemperatureValue(range.min, canonical, preferredUnit));
+    const max = formatTemperatureNumber(convertTemperatureValue(range.max, canonical, preferredUnit));
+    return escHtml(`${min}-${max}°${preferredUnit}`);
+  }
   const numeric = parseFloat(token.quantity);
   if (!Number.isFinite(numeric)) return escHtml(token.value);
   return escHtml(formatTemperatureValue(convertTemperatureValue(numeric, canonical, preferredUnit), preferredUnit));

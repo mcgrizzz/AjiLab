@@ -55,6 +55,16 @@ function collectCooklangLineDecorations(ranges, offset, text) {
 
   for (let i = 0; i < text.length; i += 1) {
     const char = text[i];
+    // The `^{...}` temperature sigil uses `%` to separate value from unit
+    // (`^{23-25%C}`), so it's highlighted as a whole token here rather than by
+    // the prose-temperature regex. Handle it before the `%`/brace punctuation
+    // case so the inner chars fold into the single temperature mark.
+    if (char === '^' && text[i + 1] === '{') {
+      const end = findCooklangTokenEnd(text, i);
+      ranges.push(TEMP_DECO.range(offset + i, offset + end));
+      i = Math.max(i, end - 1);
+      continue;
+    }
     if (char === '{' || char === '}' || char === '%') {
       ranges.push(PUNCT_DECO.range(offset + i, offset + i + 1));
       continue;

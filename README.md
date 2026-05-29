@@ -141,6 +141,7 @@ Melt @butter{100%g} in a #saucepan{}.
 Add @flour{2%tbsp} and whisk for ~{2%minutes}.
 Pour in @milk{500%ml} gradually.
 Season with @salt{} and @pepper{}.
+Bake at ^{200%C} until golden.
 ```
 
 | Syntax                  | Meaning                                                          |
@@ -149,6 +150,7 @@ Season with @salt{} and @pepper{}.
 | `@ingredient{}`         | Ingredient with no quantity                                      |
 | `#cookware{}`           | Cookware item                                                    |
 | `~{qty%unit}`           | Timer                                                            |
+| `^{value%unit}`         | Temperature (AjiLab extension); supports ranges                  |
 | `>> key: value`         | Inline metadata, as an alternative to frontmatter                |
 | `= Section Name`        | Section header used to group steps and drive section-aware diffs |
 
@@ -162,6 +164,24 @@ AjiLab supports additional ingredient annotations for optional ingredients, hidd
 | `@-ingredient{}`     | Hidden ingredient, counted in totals but not listed normally        |
 | `@&ingredient{}`     | Reference to an earlier ingredient with the same name; totals merge |
 | `@&(=1)ingredient{}` | Intermediate from section 1; shown where it is consumed             |
+
+### Temperatures
+
+Write temperatures with the `^{value%unit}` sigil. This is an AjiLab extension; standard Cooklang renderers fall back to showing it as plain text.
+
+```cooklang
+Preheat the #oven{} to ^{200%C}.
+Roast at ^{180-200%C} until the core reaches ^{74%C}.
+```
+
+| Syntax          | Meaning                            |
+| --------------- | ---------------------------------- |
+| `^{200%C}`      | A single temperature               |
+| `^{180-200%C}`  | A temperature range                |
+| `^{350%F}`      | Fahrenheit                         |
+
+* The unit can be `C`, `F`, `°C`, `°F`, or the spelled-out `celsius` / `fahrenheit`.
+* The viewer's **°F / °C** toggle converts displayed temperatures on the fly, including both ends of a range.
 
 ### Metrics
 
