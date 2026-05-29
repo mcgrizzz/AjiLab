@@ -133,6 +133,10 @@ const RecipeView = {
   },
 
   async renderDetail(container, versionStr, opts = {}) {
+    // A concrete versionStr (release, beta, draft, …) is an explicit pick: pin
+    // it so the version selector switches to it and tab renderers don't override
+    // it back to their default. Callers that want the default pass null.
+    if (versionStr) this.explicitVersionRequest = versionStr;
     this.activeVersion = await this.fetchVersion(versionStr);
     await this.loadParsed();
     await this.loadImages();

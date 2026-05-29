@@ -394,11 +394,17 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       }
       if (silent) { this.maybeShowUnresolvedWarning(response, true); return; }
       await this.refreshRecipe();
-      const versionKey = editable?.is_draft ? 'draft' : editable?.version_string;
+      // A draft Save that advanced a beta switches the selector to that new beta
+      // so you can see the snapshot you just took. Re-select Draft to keep
+      // iterating. Other saves stay on what you edited.
+      const advancedBeta = editable?.is_draft && advanceBeta && response?.snapshot_version;
+      const versionKey = advancedBeta
+        ? response.snapshot_version
+        : (editable?.is_draft ? 'draft' : editable?.version_string);
       if (versionKey) {
         await this.renderDetail(document.getElementById('view-container'), versionKey, { syncUrl: true, replaceUrl: true });
       }
-      if (!silent) showToast(editable?.is_draft ? 'Draft saved' : 'Version saved');
+      if (!silent) showToast(advancedBeta ? `Saved ${response.snapshot_version}` : (editable?.is_draft ? 'Draft saved' : 'Version saved'));
       this.maybeShowUnresolvedWarning(response, false);
     } catch (e) {
       if (!silent) showToast('Error saving: ' + e.message);
