@@ -36,6 +36,7 @@ const Router = {
           await RecipeView.render(container, m[1], {
             branch: url.searchParams.get('branch') || 'main',
             tab: url.searchParams.get('tab') || 'overview',
+            scale: url.searchParams.get('scale'),
           });
           return;
         }
@@ -46,6 +47,7 @@ const Router = {
             version: m[2],
             branch: url.searchParams.get('branch') || 'main',
             tab: url.searchParams.get('tab') || 'overview',
+            scale: url.searchParams.get('scale'),
           });
           return;
         }
@@ -56,6 +58,7 @@ const Router = {
           await PrintView.render(container, m[1], {
             version: url.searchParams.get('version') || 'draft',
             branch: url.searchParams.get('branch') || 'main',
+            scale: url.searchParams.get('scale'),
           });
           return;
         }

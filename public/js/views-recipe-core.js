@@ -29,7 +29,7 @@ const RecipeView = {
     this.branchSlug = opts.branch || 'main';
     // Backward compat: old bookmarks used ?tab=history before the rename.
     this.activeTab = opts.tab === 'history' ? 'versions' : (opts.tab || 'overview');
-    this.scale = 1;
+    this.scale = parseFloat(opts.scale) > 0 ? parseFloat(opts.scale) : 1;
     this.showAmounts = true;
     this.temperatureUnit = 'F';
     this.ingredientSummaryMode = null;
@@ -74,14 +74,17 @@ const RecipeView = {
     const base = versionKey && versionKey !== 'draft'
       ? `/recipe/${this.slug}/versions/${encodeURIComponent(versionKey)}`
       : `/recipe/${this.slug}`;
-    return this.branchSlug && this.branchSlug !== 'main'
-      ? `${base}?branch=${encodeURIComponent(this.branchSlug)}`
-      : base;
+    const params = new URLSearchParams();
+    if (this.branchSlug && this.branchSlug !== 'main') params.set('branch', this.branchSlug);
+    if (this.scale && this.scale !== 1) params.set('scale', String(this.scale));
+    const qs = params.toString();
+    return qs ? `${base}?${qs}` : base;
   },
 
   printPathFor(versionKey = this.selectedVersionKey()) {
     const params = new URLSearchParams({ version: versionKey || 'draft' });
     if (this.branchSlug && this.branchSlug !== 'main') params.set('branch', this.branchSlug);
+    if (this.scale && this.scale !== 1) params.set('scale', String(this.scale));
     return `/recipe/${this.slug}/print?${params.toString()}`;
   },
 

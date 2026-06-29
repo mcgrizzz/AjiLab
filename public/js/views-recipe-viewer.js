@@ -29,6 +29,10 @@ Object.assign(RecipeView, {
               <button class="scale-btn${this.scale === 1 ? ' active' : ''}" data-scale="1" onclick="RecipeView.setScale(1)">1×</button>
               <button class="scale-btn${this.scale === 2 ? ' active' : ''}" data-scale="2" onclick="RecipeView.setScale(2)">2×</button>
               <button class="scale-btn${this.scale === 3 ? ' active' : ''}" data-scale="3" onclick="RecipeView.setScale(3)">3×</button>
+              <input class="scale-custom-input${[0.5, 1, 2, 3].includes(this.scale) ? '' : ' active'}" type="number" min="0" step="0.25"
+                value="${[0.5, 1, 2, 3].includes(this.scale) ? '' : this.scale}" placeholder="…×" title="Custom multiplier"
+                onchange="RecipeView.setScaleCustom(this.value)"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();RecipeView.setScaleCustom(this.value);this.blur();}" />
             </div>
             ${servings ? `<span class="text-muted" style="font-size:0.8rem">Serves ${escHtml(servings)}</span>` : ''}
           </div>
@@ -149,9 +153,16 @@ Object.assign(RecipeView, {
 
   setScale(s) {
     this.scale = s;
+    this.syncVersionUrl(true);
     document.querySelectorAll('.scale-btn').forEach((button) => {
       button.classList.toggle('active', parseFloat(button.dataset.scale) === s);
     });
+    const customInput = document.querySelector('.scale-custom-input');
+    if (customInput && document.activeElement !== customInput) {
+      const isPreset = [0.5, 1, 2, 3].includes(s);
+      customInput.classList.toggle('active', !isPreset);
+      customInput.value = isPreset ? '' : s;
+    }
     const ingList = document.getElementById('ing-list');
     if (ingList && this.parsed) {
       ingList.innerHTML = CL.renderIngredientSummary(this.parsed.ingredient_summary, s, { mode: this.ingredientSummaryMode });
@@ -160,6 +171,12 @@ Object.assign(RecipeView, {
     if (stepsList && this.parsed) {
       stepsList.innerHTML = CL.renderSteps(this.parsed.steps, s, this.parsed.metadata, this.showAmounts, { temperatureUnit: this.temperatureUnit });
     }
+  },
+
+  setScaleCustom(value) {
+    const val = parseFloat(value);
+    if (isNaN(val) || val <= 0) { this.setScale(this.scale); return; }
+    this.setScale(val);
   },
 
   setIngredientSummaryMode(mode) {

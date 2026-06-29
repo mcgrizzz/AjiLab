@@ -4,13 +4,15 @@ function tagChip(tag) {
   return `<span class="tag-chip" data-tag="${escHtml(tag)}">${escHtml(tag)}<span class="rm" onclick="RecipeView.removeTag(this)">✕</span></span>`;
 }
 
-function recipePathForSelection(slug, version, branch = 'main') {
+function recipePathForSelection(slug, version, branch = 'main', scale = 1) {
   const base = version && !version.is_draft && version.version_string
     ? `/recipe/${slug}/versions/${encodeURIComponent(version.version_string)}`
     : `/recipe/${slug}`;
-  return branch && branch !== 'main'
-    ? `${base}?branch=${encodeURIComponent(branch)}`
-    : base;
+  const params = new URLSearchParams();
+  if (branch && branch !== 'main') params.set('branch', branch);
+  if (scale && scale !== 1) params.set('scale', String(scale));
+  const qs = params.toString();
+  return qs ? `${base}?${qs}` : base;
 }
 
 function escJs(value) {
