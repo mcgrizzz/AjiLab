@@ -2,29 +2,38 @@
 
 A self-hosted recipe lab for people who iterate on recipes over time.
 
-AjiLab is built around the idea that recipes are not static documents. They change through testing, notes, mistakes, branches, and releases. Write recipes in Cooklang, cook from them, log what actually happened, compare changes, and promote successful experiments into named versions.
+AjiLab keeps the recipe, the experiment, and the result together. Write in Cooklang, test variations on branches, record what you actually cooked, and compare changes before promoting an experiment to a named release.
 
-> **Status:** Early, and changing quickly. **AjiLab is written with the use of AI.** I am actively changing the project to fit my own workflow, so expect rough edges and frequent changes. I aim to stay compatible with the Cooklang spec where practical. When AjiLab adds extra behavior, it should remain backward-compatible, although some extensions may look unusual in other Cooklang renderers.
+![Bagels in AjiLab, with ingredients grouped by section, scaling controls, and cooking steps with highlighted ingredients and timers.](docs/screenshots/recipe-overview.png)
+
+*Cook from a recipe with ingredients, equipment, timers, and temperatures in context.*
+
+[Quick start](#quick-start) · [Features](#features) · [Cooklang syntax](#writing-recipes-with-cooklang) · [Documentation](#documentation)
+
+> **Status:** Early and changing quickly. **AjiLab is developed with AI assistance.** I am adapting it to my own workflow, so expect rough edges and frequent changes. Cooklang compatibility is a goal; AjiLab-specific extensions are described below and may render differently in other tools.
 
 ---
 
 ## Quick start
 
+Requires **Docker with Compose**, **Git**, and **OpenSSL**. Run these commands in a shell with those tools installed:
+
 ```bash
-git clone https://github.com/mcgrizzz/AjiLab ajilab && cd ajilab
+git clone https://github.com/mcgrizzz/AjiLab ajilab
+cd ajilab
 echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" > .env
 docker compose up -d
 ```
 
 Open **[http://localhost:3000](http://localhost:3000)**.
 
-Postgres, the app, and nightly backups come up together.
+Compose starts Postgres, the app, and the backup service. The first start installs dependencies and builds the editor bundle; follow progress with `docker compose logs -f ajilab`.
+
+By default, the app pulls the current Git branch on container startup. Set `AUTO_PULL=false` in `.env` to manage updates yourself. See [Deployment & configuration](docs/DEPLOY.md) for configuration and local development.
 
 ---
 
 ## What AjiLab is for
-
-AjiLab is for recipe development, not just recipe storage.
 
 Use it when you want to:
 
@@ -40,6 +49,10 @@ Use it when you want to:
 ## Features
 
 ### Versioned recipes
+
+![AjiLab's Cooklang editor beside a live preview of Sakadane Country Loaf, including hydration and starter metrics and a linked starter recipe.](docs/screenshots/recipe-editor.png)
+
+*Write Cooklang beside a live preview, with computed metrics and linked recipe ingredients.*
 
 Open the **Editor** to write or continue working on a recipe. When you are happy with it, release it as a named version with an optional changelog. Old versions are preserved, so you can always review, compare, fork, or re-release earlier work.
 
@@ -86,6 +99,10 @@ AjiLab provides more than a plain text diff:
 * **Step diff** — grouped by Cooklang section headers such as `= Dough` or `= Bake`
 * **Inline diff** — character-level highlights inside changed lines
 
+![Comparison of Bagels v1.0 and v1.1-beta.1, showing changed quantities, fermentation time, and ingredient totals.](docs/screenshots/version-compare.png)
+
+*Compare a release with its next beta to see what changed in the method and ingredient totals.*
+
 ### Computed metrics
 
 Define derived values in recipe frontmatter: hydration, baker's percentages, salt percentage, yield, or anything else that can be calculated from ingredient quantities.
@@ -124,11 +141,18 @@ Set a thumbnail per recipe. Images are stored in Postgres, so there is no separa
 
 Search across recipe titles, content, and tags from the recipe list.
 
+### Cooking and printing
+
+Scale ingredient quantities, switch between section groups and combined totals, show or hide amounts in the steps, and convert displayed temperatures between °F and °C. Open the print view from a recipe with **Ctrl+P** / **⌘P** for a printable recipe at the selected scale.
+
 ---
 
 ## Writing recipes with Cooklang
 
 Recipes are written in [Cooklang](https://cooklang.org), a plain-text recipe format. Use YAML frontmatter for metadata.
+
+<details>
+<summary>Syntax guide and AjiLab extensions</summary>
 
 ```cooklang
 ---
@@ -191,8 +215,8 @@ Add `metric.<name>: <formula> | <unit>` keys to the frontmatter to compute deriv
 ---
 metric.hydration:    100 * water.g / flour.g    | %
 metric.salt pct:     100 * salt.g / flour.g     | %
-metric._total:       flour.g + water.g + salt.g
-metric.yield:        metric._total              | g
+metric.total:        flour.g + water.g + salt.g | g | hidden
+metric.yield:        metric.total               | g
 ---
 ```
 
@@ -201,7 +225,7 @@ Notes:
 * Reference ingredients as `name.unit`, such as `flour.g` or `water.ml`
 * Use underscores for multi-word ingredient names: `whole_wheat_flour.g`
 * Reference an earlier metric with `metric.<name>`
-* Prefix a metric name with `_` to hide it from the UI while keeping it available to other formulas
+* Add `| hidden` to hide a metric from the UI while keeping it available to later formulas
 * Use the `| %` or `| g` suffix to control display units
 
 ### Recipe references
@@ -218,6 +242,8 @@ Top with @./aioli/v1.2{} to serve.
 | `@./<category>/<slug>{}` | Latest released version in a category path |
 | `@./<slug>/v1.0{}`       | A specific pinned version                  |
 
+</details>
+
 ---
 
 ## Data and backups
@@ -231,9 +257,9 @@ All data lives in a single Postgres database on your server:
 * cook logs
 * images
 
-Nothing is sent to a third-party service.
+Recipe data and images are stored on your server. The web interface loads fonts from Google Fonts.
 
-Backups run automatically every night and write to `./backups/`. For cloud backup, configure the rclone sidecar in `docker-compose.yml`.
+With the supplied Compose setup, backups run when the backup service starts and then daily at 02:00 in the container's timezone. Dumps are written to `./backups/`, with a default 30-day retention period. For off-site backups, configure the optional rclone sidecar in `docker-compose.yml`.
 
 See [docs/BACKUP.md](docs/BACKUP.md) for restore instructions.
 
