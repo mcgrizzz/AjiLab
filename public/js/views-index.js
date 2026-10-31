@@ -1,5 +1,14 @@
 // ── View: Recipe Index ────────────────────────────────────────────────────────
 const IndexView = {
+  // Plain clicks navigate in-app; modified/middle clicks fall through to the
+  // browser so Cmd/Ctrl-click opens a new tab.
+  openRecipe(event, link) {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return true;
+    event.preventDefault();
+    Router.go(link.getAttribute('href'));
+    return false;
+  },
+
   async render(container) {
     container.innerHTML = `
       <div class="search-bar">
@@ -88,7 +97,8 @@ const IndexView = {
         const thumb = r.thumbnail_image_id
           ? `<img src="/api/images/${r.thumbnail_image_id}" alt="${escHtml(r.title)}" loading="lazy" />`
           : '🍽';
-        return `<div class="recipe-card" onclick="Router.go('/recipe/${escHtml(r.slug)}')">
+        const href = `/recipe/${encodeURIComponent(r.slug)}`;
+        return `<a class="recipe-card" href="${escHtml(href)}" onclick="return IndexView.openRecipe(event, this)">
           <div class="recipe-thumb">${thumb}</div>
           <div class="recipe-info">
             <div class="recipe-title">${escHtml(r.title)}</div>
@@ -97,7 +107,7 @@ const IndexView = {
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="color:var(--ink3);flex-shrink:0">
             <path d="M6 4L10 8L6 12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
           </svg>
-        </div>`;
+        </a>`;
       }).join('');
     } catch (e) {
       list.innerHTML = `<div class="empty-state"><p>Error: ${escHtml(e.message)}</p></div>`;

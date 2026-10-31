@@ -102,7 +102,7 @@ Object.assign(RecipeView, {
       </div>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-        <button id="delete-version-btn" class="btn btn-danger" onclick="RecipeView.confirmDeleteVersion('${escJs(versionString)}')" disabled>Delete version</button>
+        <button id="delete-version-btn" class="btn btn-danger-solid" onclick="RecipeView.confirmDeleteVersion('${escJs(versionString)}')" disabled>Delete version</button>
       </div>`);
   },
 

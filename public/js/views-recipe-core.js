@@ -12,7 +12,6 @@ const RecipeView = {
   activeTab: 'overview',
   showAmounts: true,
   temperatureUnit: 'F',
-  unitPrefs: null,
   unitOverrides: null,
   ingredientSummaryMode: null,
   draftEditor: null,
@@ -35,6 +34,7 @@ const RecipeView = {
     this.scale = parseFloat(opts.scale) > 0 ? parseFloat(opts.scale) : 1;
     this.showAmounts = true;
     this.temperatureUnit = 'F';
+    this.closeQtyPopover?.();
     // Per-ingredient display units last until a different recipe is opened.
     if (this.unitOverrides?.slug !== slug) this.unitOverrides = null;
     this.ingredientSummaryMode = null;

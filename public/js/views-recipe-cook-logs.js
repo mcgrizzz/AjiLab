@@ -185,12 +185,15 @@ Object.assign(RecipeView, {
     const log = (this.cookLogs || []).find((entry) => entry.id === logId);
     if (!log) return;
     try {
-      const sourceLabel = `the ${fmtDate(log.cooked_at)} cook log`;
-      const snapshot = await this.confirmReplaceDraft(sourceLabel, log.cooklang_text || null);
-      if (snapshot === false) return;
-      await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/fork-to-draft`, {});
-      this.cookLogEditingId = null;
-      await this.afterDraftReplaced(snapshot, 'Draft replaced with this cook log. Save advances the next beta');
+      await this.replaceDraft({
+        sourceLabel: `the ${fmtDate(log.cooked_at)} cook log`,
+        targetText: log.cooklang_text || null,
+        request: async () => {
+          await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/fork-to-draft`, {});
+          this.cookLogEditingId = null;
+        },
+        message: 'Draft replaced with this cook log. Save advances the next beta',
+      });
     } catch (e) {
       showToast('Error: ' + e.message);
     }

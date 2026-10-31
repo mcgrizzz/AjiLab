@@ -125,14 +125,15 @@ function settleConfirm(value) {
 }
 
 // Promise-based replacement for window.confirm(). bodyHtml must be escaped by
-// the caller. Resolves true on confirm, false on cancel/close.
+// the caller. Resolves true on confirm, false on cancel/close. Danger dialogs
+// start focused on Cancel so Enter never triggers the destructive choice.
 function confirmModal({ title, bodyHtml = '', confirmLabel = 'Confirm', danger = false }) {
   showModal(`
     <div class="modal-title">${escHtml(title)}</div>
     <div class="confirm-modal-body">${bodyHtml}</div>
     <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button id="confirm-modal-ok" class="btn ${danger ? 'btn-danger' : 'btn-primary'}">${escHtml(confirmLabel)}</button>
+      <button id="confirm-modal-cancel" class="btn ${danger ? '' : 'btn-ghost'}" onclick="closeModal()">Cancel</button>
+      <button id="confirm-modal-ok" class="btn ${danger ? 'btn-danger-solid' : 'btn-primary'}">${escHtml(confirmLabel)}</button>
     </div>`);
   return new Promise((resolve) => {
     pendingConfirm = resolve;
@@ -141,7 +142,8 @@ function confirmModal({ title, bodyHtml = '', confirmLabel = 'Confirm', danger =
       settleConfirm(true);
       document.getElementById('modal-overlay').classList.add('hidden');
     });
-    setTimeout(() => ok.focus(), 50);
+    // Focus right away so a fast Enter can't hit the button that opened us.
+    (danger ? document.getElementById('confirm-modal-cancel') : ok).focus();
   });
 }
 

@@ -5,6 +5,8 @@
 > | Finding | Status |
 > |---|---|
 > | U1 Iterate / Start next beta overwrite the draft | **Fixed.** Confirm when the draft (or the editor's unsaved buffer) has text not saved in any version, with a line-change summary; Undo toast restores the previous draft (`POST …/draft/restore`); buttons renamed "Start draft from vX" / "Replace draft with vX…"; same guard on cook-log "Load into draft…". |
+> | U1 follow-ups (review) | **Fixed.** Unsaved editor text is only dropped after the replace succeeds; danger dialogs focus Cancel and use a filled red button; Undo asks before discarding edits made since the replace. |
+> | Index rows not keyboard-reachable (review) | **Fixed.** Rows are real links (Tab, Enter, Cmd/Ctrl-click for a new tab). |
 > | U2 New-cook-log form loses notes | **Fixed.** Backdrop/Esc no longer close a modal with typed input; unsent log fields kept in `sessionStorage` per recipe/branch until created. |
 > | U7 Recipe delete easier than version delete | **Fixed.** Typed recipe-name confirmation; version Delete moved to a ⋯ menu. |
 > | U8 Bare "Viewing" badge | **Partly fixed.** Draft state is labelled and offers Open Editor; badge/sidebar wording still open. |

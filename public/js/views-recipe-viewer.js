@@ -168,6 +168,7 @@ Object.assign(RecipeView, {
 
   // Re-render everything that shows amounts (scale, unit or toggle changes).
   rerenderAmounts() {
+    this.closeQtyPopover();
     if (!this.parsed) return;
     const ingList = document.getElementById('ing-list');
     if (ingList) {
@@ -188,55 +189,30 @@ Object.assign(RecipeView, {
     return { temperatureUnit: this.temperatureUnit, units: this.unitView() };
   },
 
-  // ── Unit preferences ──
-  // System choice (as written / metric / US) per category is a per-browser
-  // preference; per-ingredient overrides ("show the cream in fl oz") come from
-  // click-to-scale and last until a different recipe is opened.
+  // ── Per-ingredient display units ──
+  // Picked from the amount popover ("show the cream in fl oz"); they last
+  // until a different recipe is opened. Steps and print follow them too.
   unitView(slug = this.slug) {
-    if (!this.unitPrefs) this.unitPrefs = Units.loadPrefs();
     const overrides = this.unitOverrides?.slug === slug ? this.unitOverrides.map : {};
-    return { volume: this.unitPrefs.volume, mass: this.unitPrefs.mass, overrides };
+    return { overrides };
   },
 
   unitControlHtml() {
-    const parsed = this.parsed;
-    const categories = Units.categoriesIn(parsed?.ingredient_summary?.flat || parsed?.ingredients);
-    if (!categories.size) return '';
-    const view = this.unitView();
-    const select = (category, label) => {
-      if (!categories.has(category)) return '';
-      const options = [['asis', 'As written'], ['metric', 'Metric'], ['us', 'US']]
-        .map(([value, text]) => `<option value="${value}"${view[category] === value ? ' selected' : ''}>${text}</option>`)
-        .join('');
-      return `<label class="unit-select-label"><span class="unit-select-name">${label}</span>
-        <select class="unit-select" onchange="RecipeView.setUnitSystem('${category}', this.value)">${options}</select>
-      </label>`;
-    };
-    const hasOverrides = Object.keys(view.overrides).length > 0;
-    return `<div class="unit-control">
-      ${select('volume', 'Volume')}
-      ${select('mass', 'Weight')}
-      ${hasOverrides ? `<button class="btn btn-sm unit-reset-btn" onclick="RecipeView.clearUnitOverrides()" title="Undo per-ingredient units you typed">Reset units</button>` : ''}
+    const count = Object.keys(this.unitView().overrides).length;
+    if (!count) return '';
+    return `<div class="unit-reset-line">
+      ${count} ingredient${count === 1 ? '' : 's'} shown in other units ·
+      <button class="link-btn" onclick="RecipeView.clearUnitOverrides()">Use recipe units</button>
     </div>`;
-  },
-
-  setUnitSystem(category, system) {
-    if (!this.unitPrefs) this.unitPrefs = Units.loadPrefs();
-    this.unitPrefs[category] = system;
-    Units.savePrefs(this.unitPrefs);
-    // Picking a system for a category supersedes per-ingredient overrides in it.
-    const map = this.unitOverrides?.slug === this.slug ? this.unitOverrides.map : null;
-    if (map) {
-      for (const [name, unitKey] of Object.entries(map)) {
-        if (Units.UNITS[unitKey]?.category === category) delete map[name];
-      }
-    }
-    this.rerenderAmounts();
   },
 
   setUnitOverride(name, unitKey) {
     if (this.unitOverrides?.slug !== this.slug) this.unitOverrides = { slug: this.slug, map: {} };
     this.unitOverrides.map[Units.overrideKey(name)] = unitKey;
+  },
+
+  clearUnitOverride(name) {
+    if (this.unitOverrides?.slug === this.slug) delete this.unitOverrides.map[Units.overrideKey(name)];
   },
 
   clearUnitOverrides() {
@@ -279,41 +255,95 @@ Object.assign(RecipeView, {
     this.rerenderAmounts();
   },
 
-  // Click-to-scale: type the amount you want of this ingredient, optionally in
-  // another unit ("16 fl oz" against "1 L"). The recipe scales to match and
-  // that ingredient keeps showing the unit you typed.
+  // ── Amount popover (ingredient list) ──
+  // Clicking an amount offers (a) the same amount in other units — pick one
+  // to show this ingredient that way — and (b) a field to type the amount you
+  // have, in any unit ("16 fl oz"), which scales the whole recipe to match.
   editIngredientQty(el) {
     const orig = Units.parseQuantity(el.dataset.orig)?.[0];
     if (!(orig > 0)) return;
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'ing-qty-input';
-    input.value = el.textContent.trim();
-    el.textContent = '';
-    el.appendChild(input);
+    if (this.qtyPopover?.anchorName === el.dataset.name) { this.closeQtyPopover(); return; }
+    this.closeQtyPopover();
+    const name = el.dataset.name || '';
+    const writtenUnit = el.dataset.unit || '';
+    const options = Units.alternatives(el.dataset.orig, writtenUnit, this.scale, this.unitView(), name);
+    const pop = document.createElement('div');
+    pop.className = 'qty-popover';
+    pop.setAttribute('role', 'dialog');
+    pop.setAttribute('aria-label', `Amount of ${name}`);
+    pop.innerHTML = `
+      ${options.length > 1 ? `
+      <div class="qty-popover-label">Show ${escHtml(name)} in</div>
+      <div class="qty-popover-units">${options.map((o) => `
+        <button type="button" class="unit-chip${o.active ? ' active' : ''}" data-unit="${escHtml(o.unitKey)}" aria-pressed="${o.active}">
+          ${escHtml(o.text)}${o.written ? '<span class="unit-chip-note">recipe</span>' : ''}
+        </button>`).join('')}
+      </div>` : ''}
+      <form class="qty-popover-scale">
+        <label class="qty-popover-label" for="qty-popover-input">Scale recipe to this much</label>
+        <div class="qty-popover-row">
+          <input id="qty-popover-input" class="field-input" value="${escHtml(el.textContent.trim())}" autocomplete="off" spellcheck="false" />
+          <button type="submit" class="btn btn-sm btn-primary">Scale</button>
+        </div>
+        <div class="qty-popover-hint" role="alert">Any unit works, e.g. 16 fl oz.</div>
+      </form>`;
+    document.body.appendChild(pop);
+    const r = el.getBoundingClientRect();
+    pop.style.top = `${r.bottom + window.scrollY + 6}px`;
+    const maxLeft = window.scrollX + document.documentElement.clientWidth - pop.offsetWidth - 8;
+    pop.style.left = `${Math.max(window.scrollX + 8, Math.min(r.left + window.scrollX, maxLeft))}px`;
+
+    const refocus = () => {
+      const selector = `.ing-qty-editable[data-name="${cssEscape(name)}"]`;
+      document.querySelector(selector)?.focus();
+    };
+    pop.querySelectorAll('.unit-chip').forEach((chip) => chip.addEventListener('click', () => {
+      const unitKey = chip.dataset.unit;
+      if (unitKey === Units.key(writtenUnit)) this.clearUnitOverride(name);
+      else this.setUnitOverride(name, unitKey);
+      this.closeQtyPopover();
+      this.rerenderAmounts();
+      refocus();
+    }));
+    const input = pop.querySelector('#qty-popover-input');
+    pop.querySelector('form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const result = Units.scaleForTarget(orig, writtenUnit, el.dataset.shownUnit, Units.parseAmount(input.value));
+      if (result.error) {
+        const hint = pop.querySelector('.qty-popover-hint');
+        hint.textContent = result.error;
+        hint.classList.add('qty-popover-error');
+        input.focus();
+        return;
+      }
+      if (result.unitKey) {
+        if (result.unitKey === Units.key(writtenUnit)) this.clearUnitOverride(name);
+        else this.setUnitOverride(name, result.unitKey);
+      }
+      this.closeQtyPopover();
+      this.setScale(result.scale);
+      refocus();
+    });
+    pop.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); this.closeQtyPopover(); el.focus(); }
+    });
+    // Registered synchronously: the mousedown that opened us has already
+    // happened. Only ever closes *this* popover.
+    const onOutside = (e) => {
+      if (this.qtyPopover?.pop !== pop) { document.removeEventListener('mousedown', onOutside); return; }
+      if (!pop.contains(e.target) && !el.contains(e.target)) this.closeQtyPopover();
+    };
+    document.addEventListener('mousedown', onOutside);
+    this.qtyPopover = { pop, anchorName: el.dataset.name, cleanup: () => document.removeEventListener('mousedown', onOutside) };
     input.focus();
     input.select();
-    let done = false;
-    const finish = (apply) => {
-      if (done) return;
-      done = true;
-      if (apply) {
-        const result = Units.scaleForTarget(orig, el.dataset.unit, el.dataset.shownUnit, Units.parseAmount(input.value));
-        if (result.error) {
-          showToast(result.error);
-        } else {
-          if (result.unitKey) this.setUnitOverride(el.dataset.name, result.unitKey);
-          this.setScale(result.scale);
-          return;
-        }
-      }
-      this.setScale(this.scale);
-    };
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
-      if (e.key === 'Escape') { e.preventDefault(); finish(false); }
-    });
-    input.addEventListener('blur', () => finish(false));
+  },
+
+  closeQtyPopover() {
+    if (!this.qtyPopover) return;
+    this.qtyPopover.cleanup();
+    this.qtyPopover.pop.remove();
+    this.qtyPopover = null;
   },
 
   async switchVersion(value) {
@@ -361,8 +391,29 @@ Object.assign(RecipeView, {
     return !(this.recipe?.versions || []).some((v) => !v.is_draft && v.cooklang_text === text);
   },
 
+  // Replace the draft via `request` (a function doing the server call):
+  // confirm if work is at risk, and only drop the editor's unsaved buffer once
+  // the server has actually replaced the draft — a failed request leaves both
+  // the server draft and the local buffer untouched.
+  async replaceDraft({ sourceLabel, targetText = null, request, message }) {
+    let storage = null;
+    try { storage = window.localStorage; } catch {}
+    const key = RecipeEditState.draftKey(this.slug, this.branchSlug);
+    const snapshot = await this.confirmReplaceDraft(sourceLabel, targetText);
+    if (snapshot === false) return false;
+    try {
+      await request();
+    } catch (e) {
+      showToast(`Couldn't replace the draft: ${e.message}. Nothing was changed.`);
+      return false;
+    }
+    RecipeEditState.discard(key, storage);
+    await this.afterDraftReplaced(snapshot, message);
+    return true;
+  },
+
   // Returns the snapshot to offer Undo with (null if there's no draft worth
-  // restoring), or false when the user cancels.
+  // restoring), or false when the user cancels. Doesn't modify anything.
   async confirmReplaceDraft(sourceLabel, targetText = null) {
     let storage = null;
     try { storage = window.localStorage; } catch {}
@@ -392,32 +443,54 @@ Object.assign(RecipeView, {
       });
       if (!ok) return false;
     }
-    RecipeEditState.discard(key, storage);
     return snapshot;
   },
 
   async afterDraftReplaced(snapshot, message) {
     await this.refreshRecipe();
+    const replacedText = this.recipe?.draft?.cooklang_text ?? '';
     this.activeTab = 'editor';
     await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
     if (!snapshot) { showToast(message); return; }
-    showToast(message, { action: { label: 'Undo', onClick: () => this.restoreDraft(snapshot) } });
+    showToast(message, { action: { label: 'Undo', onClick: () => this.restoreDraft(snapshot, replacedText) } });
   },
 
-  async restoreDraft(snapshot) {
+  // replacedText: the draft right after the replacement. If it has changed
+  // since (typing in the editor, saved or not), ask before throwing that away.
+  async restoreDraft(snapshot, replacedText = null) {
     try {
       let storage = null;
       try { storage = window.localStorage; } catch {}
       const key = RecipeEditState.draftKey(this.slug, this.branchSlug);
       await RecipeEditState.settle(key);
-      RecipeEditState.discard(key, storage);
+      await this.refreshRecipe();
+      const local = RecipeEditState.unsavedValue(key, storage);
+      const current = local ? local.text : (this.recipe?.draft?.cooklang_text ?? '');
+      if (replacedText !== null && current !== replacedText) {
+        const ok = await confirmModal({
+          title: 'Undo and lose your newer edits?',
+          bodyHtml: '<p>You\'ve edited the draft since it was replaced. Undoing brings back the previous draft and discards those edits.</p>',
+          confirmLabel: 'Undo anyway',
+          danger: true,
+        });
+        if (!ok) return;
+      }
+      // Stop the open editor from autosaving over the restore.
+      this.destroyDraftEditor();
+      await RecipeEditState.settle(key);
       await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/draft/restore`, snapshot);
+      RecipeEditState.discard(key, storage);
       await this.refreshRecipe();
       this.activeTab = 'editor';
       await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
       showToast('Previous draft restored');
     } catch (e) {
-      showToast('Error: ' + e.message);
+      showToast(`Couldn't undo: ${e.message}`);
+      // The editor may have been torn down above; bring it back with whatever
+      // is still in its buffer.
+      if (this.activeTab === 'editor') {
+        await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true }).catch(() => {});
+      }
     }
   },
 
@@ -425,10 +498,12 @@ Object.assign(RecipeView, {
     try {
       const target = versionString || this.activeVersion?.version_string;
       if (!target) { showToast('No version to fork'); return; }
-      const snapshot = await this.confirmReplaceDraft(target, this.versionText(target));
-      if (snapshot === false) return;
-      await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(target)}/fork`, {});
-      await this.afterDraftReplaced(snapshot, `Draft now starts from ${target}`);
+      await this.replaceDraft({
+        sourceLabel: target,
+        targetText: this.versionText(target),
+        request: () => API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(target)}/fork`, {}),
+        message: `Draft now starts from ${target}`,
+      });
     } catch (e) {
       showToast('Error: ' + e.message);
     }
@@ -448,10 +523,11 @@ Object.assign(RecipeView, {
         await this.forkVersion();
         return;
       }
-      const snapshot = await this.confirmReplaceDraft('the current best');
-      if (snapshot === false) return;
-      await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/draft/fork`, {});
-      await this.afterDraftReplaced(snapshot, 'Draft now starts from the current best');
+      await this.replaceDraft({
+        sourceLabel: 'the current best',
+        request: () => API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/draft/fork`, {}),
+        message: 'Draft now starts from the current best',
+      });
     } catch (e) {
       showToast('Error: ' + e.message);
     }
@@ -549,7 +625,7 @@ Object.assign(RecipeView, {
       </div>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-        <button id="delete-recipe-btn" class="btn btn-danger" onclick="RecipeView.confirmDeleteRecipe()" disabled>Delete recipe</button>
+        <button id="delete-recipe-btn" class="btn btn-danger-solid" onclick="RecipeView.confirmDeleteRecipe()" disabled>Delete recipe</button>
       </div>`);
     setTimeout(() => document.getElementById('delete-recipe-confirm')?.focus(), 80);
   },

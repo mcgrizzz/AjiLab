@@ -399,6 +399,67 @@ body {
 }
 .ing-qty-editable { cursor: pointer; }
 .ing-qty-editable:hover { text-decoration: underline dashed; }
+button.ing-qty {
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--accent);
+  text-align: right;
+  border-radius: 4px;
+}
+
+/* Amount popover: unit choices + scale-to-this-amount field. */
+.qty-popover {
+  position: absolute;
+  z-index: 60;
+  width: min(320px, calc(100vw - 16px));
+  padding: 12px;
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+.qty-popover-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink2);
+}
+.qty-popover-units {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.unit-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: var(--bg2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.unit-chip:hover { background: var(--bg3); }
+.unit-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.unit-chip-note {
+  font-family: var(--font-sans);
+  font-size: 0.68rem;
+  opacity: 0.75;
+}
+.qty-popover-row { display: flex; gap: 6px; }
+.qty-popover-row .field-input { flex: 1; min-width: 0; font-family: var(--font-mono); }
+.qty-popover-hint { margin-top: 6px; font-size: 0.8rem; color: var(--ink2); }
+.qty-popover-hint.qty-popover-error { color: #c03030; }
 .ing-qty-selectable { cursor: pointer; color: var(--green); }
 .ing-qty-selectable:hover { text-decoration: underline solid; }
 .ing-qty-input {
@@ -466,42 +527,12 @@ body {
 .scale-custom-input:focus { outline: none; border-color: var(--accent); }
 .scale-custom-input.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .scale-custom-input.active::placeholder { color: rgba(255, 255, 255, 0.7); }
-/* One "label  [select]" row per category, reset button parked on the right. */
-.unit-control {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 6px 10px;
-  padding: 4px 0 12px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 8px;
+.unit-reset-line {
+  margin: -4px 0 10px;
+  font-size: 0.84rem;
+  color: var(--ink2);
 }
-.unit-select-label {
-  grid-column: 1;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 0.85rem;
-  color: var(--ink3);
-}
-.unit-select-name { min-width: 52px; }
-.unit-select {
-  height: 30px;
-  padding: 0 6px;
-  border: 1px solid var(--border2);
-  border-radius: 8px;
-  background: var(--bg2);
-  color: var(--ink);
-  font: inherit;
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-.unit-select:focus { outline: none; border-color: var(--accent); }
-.unit-reset-btn {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  justify-self: end;
-}
+
 .scale-val {
   font-family: var(--font-mono);
   font-size: 0.9rem;
@@ -1076,6 +1107,14 @@ body {
 @media (prefers-color-scheme: dark) {
   .btn-danger:hover { background: #3d1010; }
 }
+/* Filled destructive button for confirm dialogs: hard to miss, never the default focus. */
+.btn-danger-solid {
+  background: #b3261e;
+  color: #fff;
+  border-color: transparent;
+}
+.btn-danger-solid:hover { background: #8f1d17; color: #fff; }
+.btn-danger-solid:disabled { background: var(--bg3); color: var(--ink3); cursor: not-allowed; }
 .btn-sm { padding: 5px 11px; font-size: 0.82rem; }
 
 /* ── Version list ────────────────────────────────────────────── */
