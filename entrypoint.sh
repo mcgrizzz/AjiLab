@@ -4,10 +4,13 @@ set -e
 # Auto-pull latest code from the remote when the container starts.
 # Requires the repo to be mounted at /app (see docker-compose.yml).
 # Set AUTO_PULL=false to disable.
+#
+# The bind-mounted checkout is owned by the host user, but the container runs
+# as root, so git rejects it as "dubious ownership" unless /app is marked safe.
 if [ "${AUTO_PULL:-true}" = "true" ] && [ -d ".git" ]; then
   echo "[ajilab] Pulling latest code..."
-  BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
-  git pull origin "$BRANCH" || echo "[ajilab] Warning: git pull failed — continuing with existing code"
+  BRANCH="$(git -c safe.directory=/app rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
+  git -c safe.directory=/app pull origin "$BRANCH" || echo "[ajilab] Warning: git pull failed — continuing with existing code"
 fi
 
 # Install/update Node dependencies.

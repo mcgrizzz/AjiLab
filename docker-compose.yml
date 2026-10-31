@@ -40,10 +40,13 @@ services:
       PORT: "3000"
       DATABASE_URL: "postgresql://ajilab:${POSTGRES_PASSWORD:-ajilab}@ajilab-db:5432/ajilab"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000"]
+      # node:22-slim has no wget/curl; use Node's built-in fetch.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
+      # Startup runs git pull + npm install + editor build before listening.
+      start_period: 120s
 
   # ---------------------------------------------------------------------------
   # Nightly pg_dump to ./backups at 02:00 local time. Retains 30 days.
