@@ -1,29 +1,28 @@
 // ── Units: volume/mass conversion for the recipe viewer ─────────────────────
-// Display-only: recipes keep the units they were written in. The viewer asks
-// `present()` how to show an amount given the current scale, the reader's
-// unit preferences (volume/mass system + per-ingredient overrides), and gets
-// back null when the amount should render exactly as before.
+// Display-only: recipes keep the units they were written in. The reader can
+// pick, per ingredient, another unit to show it in (1 L → 33.8 fl oz). The
+// viewer asks `present()` how to show an amount given the scale and those
+// per-ingredient choices, and gets back null when the amount should render
+// exactly as before. Conversions go through a base unit per category.
 const Units = (() => {
   // factor = size in base units (ml for volume, g for mass).
-  // system: which preference converts *away* from this unit. Spoons are used
-  // in both systems, so neither preference rewrites them.
   const UNITS = {
-    ml:      { category: 'volume', factor: 1,         system: 'metric', label: 'ml' },
-    cl:      { category: 'volume', factor: 10,        system: 'metric', label: 'cl' },
-    dl:      { category: 'volume', factor: 100,       system: 'metric', label: 'dl' },
-    l:       { category: 'volume', factor: 1000,      system: 'metric', label: 'L' },
-    tsp:     { category: 'volume', factor: 4.92892,   system: 'both',   label: 'tsp' },
-    tbsp:    { category: 'volume', factor: 14.7868,   system: 'both',   label: 'tbsp' },
-    'fl oz': { category: 'volume', factor: 29.5735,   system: 'us',     label: 'fl oz' },
-    cup:     { category: 'volume', factor: 236.588,   system: 'us',     label: 'cup',    plural: 'cups' },
-    pint:    { category: 'volume', factor: 473.176,   system: 'us',     label: 'pint',   plural: 'pints' },
-    quart:   { category: 'volume', factor: 946.353,   system: 'us',     label: 'quart',  plural: 'quarts' },
-    gallon:  { category: 'volume', factor: 3785.41,   system: 'us',     label: 'gallon', plural: 'gallons' },
-    mg:      { category: 'mass',   factor: 0.001,     system: 'metric', label: 'mg' },
-    g:       { category: 'mass',   factor: 1,         system: 'metric', label: 'g' },
-    kg:      { category: 'mass',   factor: 1000,      system: 'metric', label: 'kg' },
-    oz:      { category: 'mass',   factor: 28.3495,   system: 'us',     label: 'oz' },
-    lb:      { category: 'mass',   factor: 453.592,   system: 'us',     label: 'lb' },
+    ml:      { category: 'volume', factor: 1, label: 'ml' },
+    cl:      { category: 'volume', factor: 10, label: 'cl' },
+    dl:      { category: 'volume', factor: 100, label: 'dl' },
+    l:       { category: 'volume', factor: 1000, label: 'L' },
+    tsp:     { category: 'volume', factor: 4.92892,   label: 'tsp' },
+    tbsp:    { category: 'volume', factor: 14.7868,   label: 'tbsp' },
+    'fl oz': { category: 'volume', factor: 29.5735,     label: 'fl oz' },
+    cup:     { category: 'volume', factor: 236.588,     label: 'cup',    plural: 'cups' },
+    pint:    { category: 'volume', factor: 473.176,     label: 'pint',   plural: 'pints' },
+    quart:   { category: 'volume', factor: 946.353,     label: 'quart',  plural: 'quarts' },
+    gallon:  { category: 'volume', factor: 3785.41,     label: 'gallon', plural: 'gallons' },
+    mg:      { category: 'mass',   factor: 0.001, label: 'mg' },
+    g:       { category: 'mass',   factor: 1, label: 'g' },
+    kg:      { category: 'mass',   factor: 1000, label: 'kg' },
+    oz:      { category: 'mass',   factor: 28.3495,     label: 'oz' },
+    lb:      { category: 'mass',   factor: 453.592,     label: 'lb' },
   };
 
   const ALIASES = {
@@ -53,8 +52,13 @@ const Units = (() => {
   const FRACTIONS = [[0, ''], [1 / 8, '⅛'], [1 / 4, '¼'], [1 / 3, '⅓'], [3 / 8, '⅜'], [1 / 2, '½'],
     [5 / 8, '⅝'], [2 / 3, '⅔'], [3 / 4, '¾'], [7 / 8, '⅞'], [1, '']];
   const VULGAR = { '⅛': 1 / 8, '¼': 1 / 4, '⅓': 1 / 3, '⅜': 3 / 8, '½': 1 / 2, '⅝': 5 / 8, '⅔': 2 / 3, '¾': 3 / 4, '⅞': 7 / 8 };
-  const SYSTEMS = ['asis', 'metric', 'us'];
-  const PREFS_KEY = 'ajilab.unitPrefs';
+  // Units offered in the per-ingredient picker, in display order.
+  const PICKER_UNITS = {
+    volume: ['ml', 'l', 'tsp', 'tbsp', 'fl oz', 'cup', 'pint', 'quart'],
+    mass: ['g', 'kg', 'oz', 'lb'],
+  };
+  // Nobody measures a litre in teaspoons: cap spoons at a cup's worth.
+  const PICKER_MAX = { tsp: 12, tbsp: 16 };
 
   // Canonical key for a unit string, or null when it isn't a volume/mass unit
   // we know (cloves, pinch, cans…). Case only matters for the T/t spoon
@@ -73,9 +77,11 @@ const Units = (() => {
     return k ? { key: k, ...UNITS[k] } : null;
   }
 
-  function unitLabel(unitKey, value) {
+  // Plural follows the number as displayed: 1.06 quarts shows as "1 quart".
+  function unitLabel(unitKey, value, shown = null) {
     const def = UNITS[unitKey];
-    return def.plural && value > 1 + 1e-9 ? def.plural : def.label;
+    const one = shown !== null ? shown === '1' || /^[⅛¼⅓⅜½⅝⅔¾⅞]$/.test(shown) || parseFloat(shown) < 1 : value <= 1 + 1e-9;
+    return def.plural && !one ? def.plural : def.label;
   }
 
   // "16", "1.5", "1/2", "1 1/2", "1½", "½", "16 fl oz", "16oz" → { value, unit }.
@@ -128,53 +134,68 @@ const Units = (() => {
     return trimZeros(value.toFixed(value < 1 ? 2 : 1));
   }
 
-  // Auto-pick a readable unit in the target system for an amount (base units).
-  function pickUnit(system, category, base) {
-    if (category === 'volume') {
-      if (system === 'metric') return base >= 1000 ? 'l' : 'ml';
-      if (base < 14.5) return 'tsp';
-      if (base < 59) return 'tbsp';
-      return 'cup';
-    }
-    if (system === 'metric') return base >= 1000 ? 'kg' : 'g';
-    return base >= 453.592 ? 'lb' : 'oz';
-  }
-
   function overrideKey(name) {
     return String(name ?? '').trim().toLowerCase();
   }
 
-  // How to show `quantity unit` at `scale` under `view`
-  // ({ volume, mass: 'asis'|'metric'|'us', overrides: { ingredientName: unitKey } }).
-  // Returns null when the original rendering should be used unchanged.
+  // Format parsed quantity values (at scale) from `def` into unit `target`.
+  function formatIn(nums, def, writtenUnit, scale, target) {
+    const values = nums.map(n => (n * scale * def.factor) / UNITS[target].factor);
+    const qty = values.map(v => formatNumber(v, target)).join('-');
+    const converted = target !== def.key;
+    // Keep the author's spelling unless we converted, except that "cup"/"cups"
+    // style units follow the scaled amount ("2 cups" at ½× → "1 cup").
+    const written = displayWritten(writtenUnit, def);
+    const followsPlural = def.plural && [def.label, def.plural].includes(written.toLowerCase());
+    const lastShown = qty.split('-').pop();
+    const label = converted || followsPlural ? unitLabel(target, values[values.length - 1], lastShown) : written;
+    return { qty, unit: label, text: `${qty} ${label}`, unitKey: target, converted };
+  }
+
+  // The author's unit, with case-only variants shown canonically ("l" → "L";
+  // a lowercase l reads like a 1 next to a number).
+  function displayWritten(writtenUnit, def) {
+    const written = String(writtenUnit).trim();
+    return written.toLowerCase() === def.label.toLowerCase() ? def.label : written;
+  }
+
+  // The unit the reader picked for this ingredient, if it fits its category.
+  function chosenUnit(def, view, name) {
+    const choice = view?.overrides?.[overrideKey(name)];
+    return choice && UNITS[choice]?.category === def.category ? choice : def.key;
+  }
+
+  // How to show `quantity unit` at `scale` given `view` ({ overrides:
+  // { ingredientName: unitKey } }). Returns null when the original rendering
+  // should be used unchanged.
   function present(quantity, unit, scale = 1, view = null, name = '') {
     const def = lookup(unit);
     if (!def) return null;
     const nums = parseQuantity(quantity);
     if (!nums) return null;
-    const base = nums.map(n => n * scale * def.factor);
+    const target = chosenUnit(def, view, name);
+    if (target === def.key && scale === 1 && displayWritten(unit, def) === String(unit).trim()) return null;
+    return formatIn(nums, def, unit, scale, target);
+  }
 
-    let target = def.key;
-    const override = view?.overrides?.[overrideKey(name)];
-    if (override && UNITS[override]?.category === def.category) {
-      target = override;
-    } else {
-      const system = view?.[def.category];
-      if ((system === 'metric' || system === 'us') && def.system !== system && def.system !== 'both') {
-        target = pickUnit(system, def.category, Math.max(...base));
-      }
-    }
-    if (target === def.key && scale === 1) return null;
-
-    const values = base.map(b => b / UNITS[target].factor);
-    const qty = values.map(v => formatNumber(v, target)).join('-');
-    const converted = target !== def.key;
-    // Keep the author's spelling unless we converted, except that "cup"/"cups"
-    // style units follow the scaled amount ("2 cups" at ½× → "1 cup").
-    const written = String(unit).trim();
-    const followsPlural = def.plural && [def.label, def.plural].includes(written.toLowerCase());
-    const label = converted || followsPlural ? unitLabel(target, values[values.length - 1]) : written;
-    return { qty, unit: label, text: `${qty} ${label}`, unitKey: target, converted };
+  // Unit choices for the picker: same-category units whose value reads
+  // sensibly (⅛ to 1000), plus the recipe's own unit and the current choice.
+  function alternatives(quantity, unit, scale = 1, view = null, name = '') {
+    const def = lookup(unit);
+    if (!def) return [];
+    const nums = parseQuantity(quantity);
+    if (!nums) return [];
+    const current = chosenUnit(def, view, name);
+    const keys = [...PICKER_UNITS[def.category]];
+    if (!keys.includes(def.key)) keys.unshift(def.key);
+    const base = Math.max(...nums) * scale * def.factor;
+    return keys
+      .filter((k) => {
+        if (k === def.key || k === current) return true;
+        const v = base / UNITS[k].factor;
+        return v >= 0.125 && v <= (PICKER_MAX[k] ?? 1000);
+      })
+      .map((k) => ({ ...formatIn(nums, def, unit, scale, k), active: k === current, written: k === def.key }));
   }
 
   // Click-to-scale: the reader typed `typed` (from parseAmount) on an amount
@@ -200,30 +221,6 @@ const Units = (() => {
     return { scale: inWritten / origQty, unitKey: typed.unit ? target.key : null };
   }
 
-  // Which convertible categories appear in a list of ingredients.
-  function categoriesIn(ingredients) {
-    const found = new Set();
-    for (const ing of ingredients || []) {
-      const def = lookup(ing?.units);
-      if (def) found.add(def.category);
-    }
-    return found;
-  }
-
-  function loadPrefs() {
-    const prefs = { volume: 'asis', mass: 'asis' };
-    try {
-      const saved = JSON.parse(window.localStorage.getItem(PREFS_KEY) || '{}');
-      if (SYSTEMS.includes(saved.volume)) prefs.volume = saved.volume;
-      if (SYSTEMS.includes(saved.mass)) prefs.mass = saved.mass;
-    } catch {}
-    return prefs;
-  }
-
-  function savePrefs(prefs) {
-    try { window.localStorage.setItem(PREFS_KEY, JSON.stringify({ volume: prefs.volume, mass: prefs.mass })); } catch {}
-  }
-
-  return { UNITS, key, lookup, unitLabel, parseAmount, parseQuantity, formatNumber, pickUnit,
-    overrideKey, present, scaleForTarget, categoriesIn, loadPrefs, savePrefs };
+  return { UNITS, key, lookup, unitLabel, parseAmount, parseQuantity, formatNumber,
+    overrideKey, present, alternatives, scaleForTarget };
 })();

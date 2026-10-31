@@ -23,7 +23,7 @@ const CL = {
       const isSelectable = !!token;
       const writtenHint = presented?.converted ? `${composeAmount(scaleQty(ing.quantity, scale, isFrac), unit)} as written. ` : '';
       const scaleHint = options.units
-        ? 'Click to scale the recipe by this ingredient (you can type another unit, e.g. 16 fl oz)'
+        ? 'Change units, or scale the recipe to this ingredient'
         : 'Click to scale recipe by this ingredient';
       const actionAttr = isSelectable
         ? ` data-draft-token-id="${escHtml(token.id)}" onclick="RecipeView.selectDraftQuantity('${escHtml(token.id)}', this)"`
@@ -41,7 +41,10 @@ const CL = {
         : '';
       const qtyHtml = wasLabel
         ? `<span class="ing-qty ing-qty-modified"><span class="s-amt-was">${escHtml(wasLabel)}</span> <span class="s-amt-arrow">→</span> <span class="s-amt-modified">${escHtml(qtyStr)}</span></span>`
-        : `<span class="ing-qty${canScale && !isSelectable ? ' ing-qty-editable' : ''}${isSelectable ? ' ing-qty-selectable' : ''}"${actionAttr}>${escHtml(qtyStr)}</span>`;
+        : (canScale && !isSelectable
+          // A real button so the amount popover is reachable by keyboard.
+          ? `<button type="button" class="ing-qty ing-qty-editable"${actionAttr}>${escHtml(qtyStr)}</button>`
+          : `<span class="ing-qty${isSelectable ? ' ing-qty-selectable' : ''}"${actionAttr}>${escHtml(qtyStr)}</span>`);
       return `<li class="${itemCls}">
         ${qtyHtml}
         ${nameHtml}${noteHtml}${optionalHtml}

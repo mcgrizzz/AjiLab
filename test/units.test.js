@@ -6,18 +6,14 @@ import vm from 'node:vm';
 const read = (path) => fs.readFileSync(new URL(path, import.meta.url), 'utf8');
 
 function setup() {
-  const store = new Map();
-  const context = vm.createContext({
-    window: { localStorage: { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) } },
-  });
+  const context = vm.createContext({});
   vm.runInContext(read('../public/js/units.js'), context);
   vm.runInContext(read('../public/js/cooklang-render.js'), context);
-  return { Units: vm.runInContext('Units', context), CL: vm.runInContext('CL', context), store };
+  return { Units: vm.runInContext('Units', context), CL: vm.runInContext('CL', context) };
 }
 
-const asIs = { volume: 'asis', mass: 'asis', overrides: {} };
-const us = { volume: 'us', mass: 'us', overrides: {} };
-const metric = { volume: 'metric', mass: 'metric', overrides: {} };
+const none = { overrides: {} };
+const pick = (name, unitKey) => ({ overrides: { [name]: unitKey } });
 
 test('unit aliases resolve, including spoon shorthands and dotted forms', () => {
   const { Units } = setup();
@@ -47,38 +43,53 @@ test('typed amounts parse whole numbers, decimals, fractions and units', () => {
   assert.equal(Units.parseAmount(''), null);
 });
 
-test('as written leaves amounts alone at 1x and reformats sensibly when scaled', () => {
+test('without a choice, amounts render as written at 1x and reformat sensibly when scaled', () => {
   const { Units } = setup();
-  assert.equal(Units.present(1, 'L', 1, asIs, 'cream'), null);
-  assert.equal(Units.present(250, 'g', 0.5, asIs).text, '125 g');
-  assert.equal(Units.present(2, 'cups', 0.5, asIs).text, '1 cup');
-  assert.equal(Units.present(1, 'cup', 1 / 3, asIs).text, '⅓ cup');
-  assert.equal(Units.present(3, 'cloves', 2, asIs), null, 'unknown units fall back to the old renderer');
+  assert.equal(Units.present(1, 'L', 1, none, 'cream'), null);
+  assert.equal(Units.present(1, 'l', 1, none, 'cream').text, '1 L', 'lowercase l is shown as L');
+  assert.equal(Units.present(250, 'g', 0.5, none).text, '125 g');
+  assert.equal(Units.present(2, 'cups', 0.5, none).text, '1 cup');
+  assert.equal(Units.present(1, 'cup', 1 / 3, none).text, '⅓ cup');
+  assert.equal(Units.present(3, 'cloves', 2, none), null, 'unknown units fall back to the old renderer');
 });
 
-test('US and metric systems convert only units from the other system', () => {
+test('a per-ingredient unit choice converts only that ingredient, within its category', () => {
   const { Units } = setup();
-  assert.equal(Units.present(1, 'L', 1, us).text, '4¼ cups');
-  assert.equal(Units.present(10, 'ml', 1, us).text, '2 tsp');
-  assert.equal(Units.present(45, 'ml', 1, us).text, '3 tbsp');
-  assert.equal(Units.present(2, 'cups', 1, metric).text, '473 ml');
-  assert.equal(Units.present(6, 'cups', 1, metric).text, '1.42 L');
-  assert.equal(Units.present(500, 'g', 1, us).text, '1.1 lb');
-  assert.equal(Units.present(100, 'g', 1, us).text, '3.5 oz');
-  assert.equal(Units.present(8, 'oz', 1, metric).text, '227 g');
-  assert.equal(Units.present(2, 'tbsp', 1, metric), null, 'spoons are left alone in both systems');
-  assert.equal(Units.present(2, 'cups', 1, us), null, 'already US');
-  assert.equal(Units.present('200-300', 'ml', 1, us).text, '⅞-1¼ cups');
+  const view = pick('heavy cream', 'fl oz');
+  assert.equal(Units.present(1, 'L', 1, view, 'Heavy Cream').text, '33.8 fl oz');
+  assert.equal(Units.present(1, 'L', 0.473176, view, 'heavy cream').text, '16 fl oz');
+  assert.equal(Units.present(1, 'L', 1, view, 'milk'), null, 'other ingredients are untouched');
+  assert.equal(Units.present(2, 'cups', 1, pick('milk', 'ml'), 'milk').text, '473 ml');
+  assert.equal(Units.present(1, 'L', 1, pick('cream', 'cup'), 'cream').text, '4¼ cups');
+  assert.equal(Units.present(500, 'g', 1, pick('flour', 'fl oz'), 'flour'), null, 'volume choice ignored for a mass ingredient');
+  assert.equal(Units.present(500, 'g', 1, pick('flour', 'lb'), 'flour').text, '1.1 lb');
+  assert.equal(Units.present('200-300', 'ml', 1, pick('stock', 'cup'), 'stock').text, '⅞-1¼ cups');
 });
 
-test('per-ingredient overrides beat the system choice for matching categories', () => {
+test('picker alternatives show sensible units with converted values and mark the current one', () => {
   const { Units } = setup();
-  const view = { volume: 'metric', mass: 'asis', overrides: { 'heavy cream': 'fl oz', flour: 'fl oz' } };
-  assert.equal(Units.present(1, 'L', 0.473176, view, 'Heavy Cream').text, '16 fl oz');
-  assert.equal(Units.present(500, 'g', 1, view, 'flour'), null, 'volume override ignored for a mass ingredient');
+  const alts = Units.alternatives(1, 'L', 1, none, 'cream');
+  assert.deepEqual(Array.from(alts, a => a.unitKey), ['ml', 'l', 'fl oz', 'cup', 'pint', 'quart'], 'spoons are capped at a cup');
+  assert.equal(alts.find(a => a.unitKey === 'quart').text, '1 quart', 'plural follows the displayed number');
+  const byKey = Object.fromEntries(alts.map(a => [a.unitKey, a]));
+  assert.equal(byKey.l.text, '1 L');
+  assert.equal(byKey.l.written, true);
+  assert.equal(byKey.l.active, true);
+  assert.equal(byKey['fl oz'].text, '33.8 fl oz');
+  assert.equal(byKey.ml.text, '1000 ml');
+
+  const chosen = Units.alternatives(1, 'L', 1, pick('cream', 'fl oz'), 'cream');
+  assert.equal(chosen.find(a => a.active).unitKey, 'fl oz');
+
+  const small = Array.from(Units.alternatives(1, 'tsp', 1, none, 'vanilla'), a => a.unitKey);
+  assert.ok(small.includes('ml') && small.includes('tsp'));
+  assert.ok(!small.includes('l') && !small.includes('cup'), 'units that would read < ⅛ are hidden');
+
+  assert.equal(Units.alternatives(2, 'cloves', 1, none, 'garlic').length, 0, 'no picker for unknown units');
+  assert.deepEqual(Array.from(Units.alternatives(250, 'g', 1, none, 'flour'), a => a.unitKey), ['g', 'kg', 'oz', 'lb']);
 });
 
-test('click-to-scale converts the typed unit into a recipe scale', () => {
+test('scale-to-amount converts the typed unit into a recipe scale', () => {
   const { Units } = setup();
   const cream = Units.scaleForTarget(1, 'L', 'L', Units.parseAmount('16 fl oz'));
   assert.ok(Math.abs(cream.scale - 0.473176) < 1e-6);
@@ -97,24 +108,15 @@ test('click-to-scale converts the typed unit into a recipe scale', () => {
   assert.ok(Units.scaleForTarget(500, 'g', 'g', Units.parseAmount('0')).error);
 });
 
-test('preferences persist through localStorage and ignore junk', () => {
-  const { Units, store } = setup();
-  assert.deepEqual({ ...Units.loadPrefs() }, { volume: 'asis', mass: 'asis' });
-  Units.savePrefs({ volume: 'us', mass: 'metric' });
-  assert.deepEqual({ ...Units.loadPrefs() }, { volume: 'us', mass: 'metric' });
-  store.set('ajilab.unitPrefs', '{"volume":"imperial"}');
-  assert.equal(Units.loadPrefs().volume, 'asis');
-});
-
-test('renderer applies unit preferences to the ingredient list and step amounts', () => {
+test('renderer applies unit choices to the ingredient list and step amounts', () => {
   const { CL } = setup();
   const ings = [
     { name: 'heavy cream', quantity: 1, units: 'L' },
     { name: 'garlic', quantity: 2, units: 'cloves' },
   ];
-  const view = { volume: 'asis', mass: 'asis', overrides: { 'heavy cream': 'fl oz' } };
+  const view = pick('heavy cream', 'fl oz');
   const html = CL.renderIngredients(ings, 0.473176, { units: view });
-  assert.match(html, />16 fl oz</);
+  assert.match(html, /<button type="button" class="ing-qty ing-qty-editable"[^>]*>16 fl oz<\/button>/);
   assert.match(html, /data-unit="L"/);
   assert.match(html, /data-shown-unit="fl oz"/);
   assert.match(html, /0\.47 L as written/);
@@ -124,5 +126,6 @@ test('renderer applies unit preferences to the ingredient list and step amounts'
   assert.match(plain, />1 L</, 'no unit options → unchanged output');
 
   const steps = [[{ type: 'text', value: 'Whisk ' }, { type: 'ingredient', name: 'heavy cream', quantity: 1, units: 'L' }]];
-  assert.match(CL.renderSteps(steps, 1, {}, true, { units: us }), /\(4¼ cups\)/);
+  assert.match(CL.renderSteps(steps, 1, {}, true, { units: pick('heavy cream', 'cup') }), /\(4¼ cups\)/);
+  assert.match(CL.renderSteps(steps, 1, {}, true, { units: none }), /\(1 L\)/);
 });
