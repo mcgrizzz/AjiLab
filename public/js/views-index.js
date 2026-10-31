@@ -84,7 +84,7 @@ const IndexView = {
         if (r.latest_released) badges.push(`<span class="badge badge-released">${escHtml(r.latest_released)}</span>`);
         if (r.latest_beta) badges.push(`<span class="badge badge-beta">${escHtml(r.latest_beta)} beta</span>`);
         if (!r.latest_released && !r.latest_beta) badges.push(`<span class="badge badge-draft">Draft</span>`);
-        if (r.draft_change_label) badges.push(`<span class="badge badge-unsaved">${escHtml(r.draft_change_label)}</span>`);
+        if (r.draft_change_label) badges.push(`<span class="badge badge-in-progress">${escHtml(r.draft_change_label)}</span>`);
         const thumb = r.thumbnail_image_id
           ? `<img src="/api/images/${r.thumbnail_image_id}" alt="${escHtml(r.title)}" loading="lazy" />`
           : '🍽';

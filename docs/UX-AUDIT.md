@@ -1,147 +1,155 @@
-# AjiLab UX/UI audit: the experimental chef
+# AjiLab desktop UX/UI audit
+
+> **Implementation status** (updated as findings are fixed)
+>
+> | Finding | Status |
+> |---|---|
+> | U1 Iterate / Start next beta overwrite the draft | **Fixed.** Confirm when the draft (or the editor's unsaved buffer) has text not saved in any version, with a line-change summary; Undo toast restores the previous draft (`POST …/draft/restore`); buttons renamed "Start draft from vX" / "Replace draft with vX…"; same guard on cook-log "Load into draft…". |
+> | U2 New-cook-log form loses notes | **Fixed.** Backdrop/Esc no longer close a modal with typed input; unsent log fields kept in `sessionStorage` per recipe/branch until created. |
+> | U7 Recipe delete easier than version delete | **Fixed.** Typed recipe-name confirmation; version Delete moved to a ⋯ menu. |
+> | U8 Bare "Viewing" badge | **Partly fixed.** Draft state is labelled and offers Open Editor; badge/sidebar wording still open. |
+> | U10 Ambiguous amounts toggle | **Partly fixed.** Now "Amounts in steps: On/Off". Check-offs, timers, scale on cook logs still open. |
+> | U12 Index badge / + button | **Partly fixed.** Neutral in-progress badge, "New recipe" label. Sorting and activity dates still open. |
+> | U14 Scrollbar layout shift | **Partly fixed.** `scrollbar-gutter: stable`. Nested sidebar scroll still open. |
+> | A3 Native controls / focus | **Partly fixed.** Accent `:focus-visible` ring. Select styling still open. |
+> | A5 Duplicate modal note | **Partly fixed.** Duplicate removed. Other items still open. |
+> | U3, U4, U5, U6, U9, U11, U13, A1, A2, A4 | Open. |
+
+**Audited:** October 31, 2026, on the live deployment (`aji.bridgewater.epi.land`), commit `a42d4c2`
+**Viewport:** 1444 × 1241 desktop, dark theme, Chrome
+**Method:** I walked through the home index, Sakadane Country Loaf (Overview, Editor, Versions, Compare, Cook Logs, New-log form, Promote modal, Recipe menu), TEST (a long draft-only recipe) and Bagels. I read the frontend source to confirm the behavior behind each finding. **This was read-only.** An in-page guard blocked every POST/PUT/DELETE except the read-only `/draft/parse` preview, and the guard logged zero blocked writes. I did not save, release, promote, upload or delete anything.
+
+Priority: **P0** can destroy work · **P1** misleads or blocks a core task · **P2** friction · **P3** polish. UX findings come first and aesthetics follow, as you asked.
+
+---
+
+## Status of the September audit
+
+| Sept finding | Status |
+|---|---|
+| #1 New log source ≠ displayed version | **Fixed.** Viewing Draft → the form proposes "Current draft". |
+| #3 UTC shown as local time | **Fixed.** Shows `03:54 PM` with "Local time (America/New_York)". |
+| #6 Frontmatter shows up as "STEP 1" in compare | **Still open** (see U3). |
+| #8 Dim dark-mode syntax and secondary text | **Still open** (see A1). |
+
+---
+
+## What already works well
+
+- The Overview layout is strong: a sticky ingredients sidebar, a readable step column and a context sidebar (current best and latest log).
+- Scaling is quick: you get presets plus a custom value, and the scale lives in the URL (`?scale=1.5`), so it survives reloads and links. Inline step amounts scale too.
+- Semantic chips (ingredients, cookware, timers, temperatures) make steps easy to scan.
+- The "Recipe as cooked" view (`360 g → 375 g`, strikethrough → new value, left accent on changed steps) is the best part of the app. It shows exactly what changed during a cook.
+- Deleting a version requires typing its name, which is the right level of friction.
+
+---
+
+## UX findings
+
+### U1. P0: "Iterate" and "Start next beta" silently overwrite the draft
+**Observed:** Each version row has **Iterate**, and the Overview's Current Best card has **Start next beta**. Both call `forkVersionAndEdit` → `POST …/versions/:v/fork`, which runs `UPDATE entries SET cooklang_text = …` on the existing draft. Neither asks for confirmation. Sakadane's draft currently differs from v1.1-beta.1: the Starter metric is missing, and you can see that by toggling the version picker. One click on either button would silently replace that work.
+The same action from a cook log (`fork-to-draft`) *does* show a confirm ("The current draft has unreleased changes…"), so the protection is inconsistent.
+**Also:** The label "Start next beta" is misleading. It doesn't create a beta. It replaces the draft with v1.0.
+**Fix:** If the draft differs from its parent, show a confirm with a short diff summary. Better still, snapshot the old draft automatically so the action can be undone. Rename both buttons to say what they do, e.g. "Replace draft with v1.0…". Code: `views-recipe-viewer.js` `forkVersionAndEdit`, `recipe-store.ts` `forkVersionToDraft`.
+
+### U2. P1: The New-cook-log form discards typed notes on a stray click or Esc
+**Observed:** I typed an outcome, clicked the dimmed backdrop, and the modal closed. When I reopened it, the field was empty. `app.js` closes *any* modal on backdrop click or Escape, with no dirty check. This is the form where post-cook observations get typed, and the editor got buffer protection last round but this form didn't.
+**Fix:** Turn off backdrop-to-close for forms (or ask first when they're dirty). Keep the unsent log in `sessionStorage` keyed by recipe/branch until it's submitted.
+
+### U3. P1: Version compare shows wrong numbers and buries what matters
+Comparing v1.0-beta.2 → Draft on Sakadane:
+- **The "Ingredients (totals)" section doesn't show totals.** Water shows `265 g → 30 g (−88.7%)` plus a separate `+ 350 g water`. The real change is 265 → 380 g (+43%). The flour rename shows as two removals and two additions instead of `AP flour 360 g → Bread flour 375 g`. Anyone skimming would draw the wrong conclusion.
+- **Frontmatter still shows up as "STEP 1"**, with the full source URL and metric formulas.
+- **The two sides render differently.** The old side shows rendered values (`23°C–25°C`), and the new side shows raw Cooklang (`^{23-25%C}`, `~{2.5%hours}`).
+- **Step labels use per-section numbers** ("Bake · Step 3"). The Overview numbers steps globally (15), so you can't cross-reference them.
+- **Ingredient changes come after step changes**, and metric deltas (hydration 9x% → 98.3%) aren't shown at all. For a baker these are the headline.
+- **The defaults are arbitrary.** "From" is the *second-oldest* version (`options[length-2]`). Opening the panel shows a spinner that never resolves until you click Compare, because `runCompare` only runs on the button.
+**Fix:** Aggregate ingredients by normalized name and show metric deltas at the top, then ingredients, then method. Move frontmatter into a collapsed "Metadata" group. Render both sides the same way. Default to *current best → selected version* and run the compare automatically on open.
+
+### U4. P1: Cook-log diffs flag changes that didn't happen
+**Observed:** In the 24 May log, step 15 is highlighted as changed with `450 °F → 450°F`. Only the whitespace or format differs. False positives teach the user to ignore the highlighting.
+**Fix:** Compare normalized values (same quantity, unit and temperature after conversion) before marking a token as changed.
+
+### U5. P1: The page hierarchy favors managing releases over cooking
+- **Overview:** The only primary (filled) button is **Promote v1.1-beta.1…**, a high-consequence publish action. Its label is also truncated. There's no "Log this cook" or "Print" here. Print is buried in the gear's "Recipe menu", or Ctrl+P, which isn't discoverable.
+- **Cook Logs:** Every card has a filled orange **Mark differences** and an outlined **Promote to release**, which puts five primary-colored buttons on one screen.
+- **Promote gives no evidence.** v1.1-beta.1 has **zero** cook logs (the latest is from v1.0-beta.3), and the modal neither warns about that nor shows what changed against the current best.
+**Fix:** Use one primary action per view. On Overview that should be cooking ("Log this cook", carrying version and scale), with Print as a secondary button. Move Promote to a secondary or overflow spot. In the Promote modal, show "N cooks logged on this version" and the diff against current best, and pre-fill the changelog from it. On log cards, make "Mark differences" secondary unless the log has no recorded deviations yet.
+
+### U6. P1: Branches, a headline feature in the README, can't be found in the UI
+**Observed:** The API has `POST /recipes/:slug/branches`, but no frontend code calls it. The branch selector only renders when `branches.length > 1`. A user can't create a branch or even learn that branches exist.
+**Fix:** Add "New branch from this version…" to the version row overflow menu, and always show the branch name (`main`) beside the version picker.
+
+### U7. P1: Deleting a whole recipe is easier than deleting one version
+**Observed:** Deleting a version needs a typed confirmation. Deleting the *whole recipe* (every version, photo and cook log) uses a native `confirm()` (`views-recipe-viewer.js:370`). Every version row also has a red inline **Delete** right next to Iterate.
+**Fix:** Require typing the recipe name for recipe deletion. Move version Delete into an overflow menu.
+
+### U8. P2: Viewing state and available actions are unclear
+- Switching to **Draft** in the version picker shows a bare **"Viewing"** badge with nothing after it. The `primaryLabel = 'Viewing'` fallback hits this case, and the banner shows no actions (no Release or Edit), even though the draft is editable.
+- The meaning of the header badges ("Best: v1.0", the picker value and "Latest · …") isn't explained, and they change between tabs.
+- The sidebar's "Current best" card and "Latest cook log" card show the same sentence ("Even better flavor…"), so it's unclear whether that's a changelog or a log outcome.
+**Fix:** Label every state ("Viewing · Draft (unreleased)") and always offer that state's next action. Prefix sidebar text with its type ("Changelog:" / "Outcome:").
+
+### U9. P2: Editor friction
+- The toolbar (`Editing Draft · Saved · [Save]`) scrolls off-screen. The source and preview scroll as one page, so on long recipes the preview drifts away from the line you're editing.
+- "Saved" sits next to a "Save" button. With autosave, the button reads as either redundant or a hint that something isn't saved.
+- **Release version…** is a full-width orange bar at the very bottom with left-aligned text. It looks like a banner, not a button.
+- The syntax hint is at the top, but the metadata snippet chips are at the bottom, below the code.
+- The frontmatter `title: Sakadane Country Bread` disagrees with the recipe title "Sakadane Country Loaf", and the UI doesn't say which one wins.
+- Preview steps omit inline amounts (`Bread flour`), while Overview shows `Bread flour (75 g)`.
+**Fix:** Make the toolbar sticky. Scroll each pane on its own with synced scrolling. Replace Save/Saved with a single status pill (Saved / Saving / Unsaved ⟳ Retry). Put Release in the toolbar. Warn when the frontmatter title differs from the recipe title.
+
+### U10. P2: No cooking aids on the recipe view
+Ingredients can't be checked off, steps can't be marked done, and timer chips aren't clickable, even though timers are already parsed (e.g. `40 min`, `18-24 hours`). The **"✓ Hide amounts"** toggle has an ambiguous state: the checkmark appears while amounts are *shown*. Scale isn't carried into a new cook log.
+**Fix:** Let users check off ingredients and steps (kept per session in `localStorage`), and make timers start a countdown on click. Rename the toggle to a clear on/off "Amounts in steps". Record scale on the cook log.
 
-Audited September 8, 2026. Documentation/screenshots commit: `ac1b19e`.
+### U11. P2: The cook-log feed hides the most useful content
+Cards show only the one-line outcome. **"Changes to try next"**, the input for the next iteration, sits inside a collapsed "Details" toggle on only one card. The expanded recipe sits in a narrow column with a ~250 px empty left gutter. Per-step actions hide behind faint ⋮ icons.
+**Fix:** Show *Changes to try next* inline on each card. Use the full card width for the expanded recipe. Show step actions on row hover.
 
-## Follow-up: fixes and design direction
+### U12. P2: The home index doesn't help you pick up where you left off
+It's a single list stretched across 1444 px. It shows no last-cooked or last-edited date, no tags, and no sorting. The red **"Draft in progress"** badge on TEST reads like an error. A search with no results doesn't offer "Create 'zzqx'". The **+** button has no text label.
+**Fix:** Sort by recent activity, and show "Last cooked May 24 · 4 logs". Make the draft badge neutral. Label the button "+ New recipe".
 
-Findings 1–3 have been addressed in the local working tree: the cook-log form follows the selected version or draft; editor buffers retain unsaved text and tags across navigation/reloads with visible status and retry; timestamps use local wall-clock time and preserve the original instant when only notes change. Browser verification intercepted all writes. The original findings below describe the audited behavior, not the updated implementation.
+### U13. P2: Ctrl+P is hijacked and immediately opens the native print dialog
+Ctrl+P navigates to `/print` and immediately calls `window.print()`, so there's no preview and no options (version, scale, include notes). During this audit, that dialog blocked browser automation until it was dismissed by hand.
+**Fix:** Show the print view with options and let the user press Print. Given your paper-first workflow, put Print beside the recipe title.
 
-**Published versions are intentionally editable.** Keep that behavior. The proposed middle ground is a stable public label such as `v1.0` pointing to its latest revision, with prior revisions retained underneath. Ordinary recipe views show only the latest content. An optional History view offers timestamped diffs and restore; restoring creates another revision. Cook logs retain the exact source snapshot used. Corrections should not force a new public version number.
+### U14. P3: Layout shifts and nested scrolling
+- Pages without a scrollbar (Versions, Cook Logs) shift the header horizontally compared with pages that have one: the gear and + buttons jump. Use `scrollbar-gutter: stable`.
+- On long recipes (TEST), the sticky ingredients panel gets its own inner scrollbar inside the page scroll.
 
-**Design for print, annotate, then transcribe.** The current workflow is paper-first. A useful next increment is a printable cook sheet tied to an exact recipe copy, with version, scale, date, and space for actual quantities, timing, results, and next changes. A short link or QR code could reopen that copy in a focused “Record this cook” screen. Let the chef attach a photo of the marked-up sheet and enter only deviations and results. This is a proposal; print snapshots, revision history, and the transcription screen are not implemented in this pass.
+---
 
-After that workflow is comfortable, add optional measured fields and compare completed cooks side by side. Avoid requiring a detailed experimental plan or a phone at the workbench for every cook.
+## Aesthetic findings
 
-## Assessment
+### A1. P1: Contrast and type size (still open from September)
+Measured on the live page: `.text-muted` **3.4:1 at 12.8 px**, sidebar card titles **3.4:1 at 11.8 px**, badges **3.1:1 at 11.5 px**. All are below WCAG AA's 4.5:1 for small text. Editor syntax colors (dark green and brown on near-black) are still hard to read. Body copy sizes of 11.5–12.8 px are common.
+**Fix:** Set a floor of ≥ 4.5:1 and ≥ 13 px for anything functional. Use separate, brighter syntax tokens for dark mode.
 
-AjiLab has useful foundations for recipe experimentation: Cooklang, live derived metrics, recipe references, version comparison, and cook logs that preserve a source snapshot. The biggest opportunity is to make the **cook session** as clear and reliable as the recipe editor.
+### A2. P2: Color meanings overlap
+Orange is used for primary buttons, ingredient amounts, the active tab, the linked-recipe chip and the selected scale. Green is used for ingredient chips, the "released" badge and "from v1.0-beta.3" tags, so betas are green there but amber everywhere else. Amounts are orange on Overview but green in the editor preview.
+**Fix:** Give each color one job. For example, accent = action/selection, green = released, amber = beta, and use one neutral-warm tone for quantities everywhere.
 
-A chef should be able to answer: **What did I start with? What did I change? What actually happened? What evidence supports the next change?** Today, some of those answers depend on remembering a version selector, editing a log after creation, or reconstructing the experiment from prose.
+### A3. P2: Native controls break the visual language
+The version picker, compare selects and log Source select are unstyled native `<select>`s with the OS blue highlight. The search box shows WebKit's blue clear "×". Focus rings use the default near-black `auto` outline, which is barely visible on the dark background.
+**Fix:** Style the selects, or use a custom popover for the version picker, which would also make room to show status and log count per version. Style the clear button. Add a visible `:focus-visible` ring in the accent color.
 
-Prioritize record integrity and workflow clarity before adding more visual polish.
+### A4. P3: Diff colors are too loud
+The compare panel's full-width saturated red, amber and green bars outweigh everything else on the page and clash with the muted notebook palette used elsewhere. Use thin left rules with tinted text, as the cook-log diff already does well.
 
-## Scope and method
+### A5. P3: Typography and smaller details
+- Three families: Lora headings, Nunito Sans body and monospace. Version strings are monospace on the Versions tab but sans everywhere else. Pick one treatment.
+- Recipes without photos fall back to a 🍽 emoji tile. A monogram or neutral pattern would fit the palette better.
+- Full-width pages (Versions, index, Cook Logs) have long empty right-hand areas. Use a max-width that matches the recipe page (~1100 px).
+- The New-cook-log modal is ~390 px wide on a 1444 px screen, and its "use Mark differences afterwards" note appears twice. Widen it to two columns and remove the duplicate.
 
-Inspected the running app through the supplied Tailscale address in dark mode, at 1440 × 1000 desktop and 390 × 844 mobile viewports. Walked through Bagels and Sakadane Country Loaf: overview, editor, published-version editing, version comparison, cook-log feed, new-log form, and recipe menu. Checked relevant local code to corroborate behavior.
+---
 
-Browser requests that could change stored data were blocked. The read-only parsing endpoint remained available. Local editor text was used to test navigation and failed-save behavior; no recipe changes were saved. Successful writes, promotion, branch creation, concurrent editing, and actual kitchen use were not tested. Recommendations below are design judgments, not findings from chef usability interviews.
+## Suggested order
 
-## Preserve these strengths
-
-- Ingredient quantities, equipment, timers, and temperatures are visually distinct in the cooking view.
-- The editor puts formulas and computed results close together on desktop.
-- Cook logs separate the source recipe from the recipe as cooked. The database stores both texts; preserve this foundation.
-- “What worked,” “Problems found,” and “Changes to try next” encourage useful reflection.
-- The subdued palette and typography suit a personal notebook. Improve hierarchy and legibility without replacing that character.
-
-## Findings
-
-### 1. P1 — A new cook log can start from a different version than the displayed recipe
-
-**Observed:** Sakadane Country Loaf opens on `v1.1-beta.1`, with `Best: v1.0` also displayed. Opening **New cook log** selects `v1.0` as its source. The form defaults to the current best release, rather than the selected recipe version.
-
-**Chef impact:** A cook using the beta can accidentally record results against the stable recipe. Subsequent comparisons start from the wrong baseline, even if the notes are accurate.
-
-**Recommendation:** Add **Start cook / Log this version** beside the displayed recipe. Carry the selected version, branch, and scale into the session explicitly. Show a persistent line such as “Cooking v1.1-beta.1 · main · 1×”; do not silently substitute the best release. If the user starts from the general log feed without a selected source, make source choice explicit.
-
-**Acceptance:** Starting a log from a selected beta proposes that beta. An intentional source change is visible before creation. A scaled cooking session retains its scale and quantities.
-
-Code: [default recipe selection](../public/js/views-recipe-core.js), [new-log source default](../public/js/views-recipe-cook-logs.js), functions `defaultActiveVersion` and `openCookLogModal`.
-
-### 2. P1 — Failed saves and navigation can discard observations
-
-**Observed:** With writes blocked to simulate a failed autosave, typing a local note in the beta editor, switching to Overview, and returning to Editor loses the note without a confirmation dialog. A released-version edit also disappears on tab changes without saving. The code debounces autosave by 1.5 seconds and suppresses errors for silent saves.
-
-**Chef impact:** A brief network interruption or a quick tab switch can erase measurements recorded during a cook. The chef has no reliable indication of whether the record survived.
-
-**Recommendation:** Keep an editor buffer keyed by recipe, branch, and editing target. Show persistent **Unsaved / Saving / Saved / Could not save** status. Preserve failed edits locally, offer retry, and protect navigation while work remains unsaved. Bind delayed saves to their original target rather than whichever editor is currently active.
-
-**Acceptance:** Failed-save edits survive tab navigation and reload; errors stay visible until resolved. Released-version edits receive equivalent navigation protection. Test switching targets before the debounce expires.
-
-Code: [editor](../public/js/views-recipe-editor.js), `renderEditorTab` and `saveDraft`.
-
-### 3. P1 — Cook-log timestamps use UTC as local time
-
-**Observed:** With the browser set to America/New_York, the actual local time was 16:46 while the new-log field contained `2026-09-08T20:46`. The default is produced by slicing an ISO UTC timestamp; submission interprets that field as local time.
-
-**Chef impact:** Cook records can be shifted by hours, complicating fermentation notes and the chronology of experiments. Editing an existing log uses the same conversion pattern.
-
-**Recommendation:** Format the input in local time, convert to UTC only for storage, and show the timezone near the field. Separate “started cooking” from “logged at” if session tracking is added.
-
-**Acceptance:** Creating and reopening a log preserves the intended wall-clock time in UTC and non-UTC zones, including daylight-saving transitions.
-
-Code: [cook-log form](../public/js/views-recipe-cook-logs.js), `openCookLogModal` and `saveCookLog`.
-
-### 4. Design decision — Keep editable releases, with revisions underneath
-
-**Observed:** Opening released `v1.0` in the editor allows **Save changes** to overwrite it. The warning is explicit, which is good, but editing the released recipe remains available. Betas are also editable in place. “Save” has different consequences for a draft, beta, release, and cook log.
-
-**Chef impact:** Two cooks labeled with the same version can refer to different recipe contents. Existing cook-log source snapshots mitigate this; the issue is that the version label alone no longer guarantees reproducibility.
-
-**Recommendation, revised after discussion:** Keep editing the named release directly. Save revisions underneath it, while showing only the latest copy in normal use. Offer revision history and restore as secondary actions; keep **Start experiment from this version** available for deliberate variations. Label snapshot creation separately from saving work.
-
-**Acceptance:** Every cook can reopen its exact baseline. A published correction retains the prior content and records what changed. Buttons explain whether they save work, create a snapshot, or publish a release.
-
-Code: [released-version warning and save behavior](../public/js/views-recipe-editor.js).
-
-### 5. P2 — Cook logging starts after the outcome, rather than supporting the experiment as it happens
-
-**Observed:** A new log requires an outcome. Actual measurements are adjusted after creation. The form instructs the user to use **Edit recipe**, while the current workflow exposes **Mark differences** and opens that panel after creation.
-
-**Chef impact:** The user must reconstruct quantities and decisions after cooking, when small deviations are easy to forget. There is no visible place in this form to state the hypothesis before seeing the result.
-
-**Recommendation:** Support a lightweight session lifecycle: **Planned → Cooking → Evaluated**. At start, capture the baseline and one optional “What am I testing?” field. During cooking, make deviations and observations quick to enter. Request the outcome at completion. Retain a fast retrospective-log path and fix the existing instructional copy immediately.
-
-**Acceptance:** A session can be saved before an outcome exists; the baseline remains fixed; deviations are recorded against it. The UI distinguishes unreviewed copied quantities from confirmed “as cooked” measurements.
-
-Code: [log form and post-create flow](../public/js/views-recipe-cook-logs.js), [snapshot storage](../src/recipe-store.ts).
-
-### 6. P2 — Comparing text is easier than comparing experimental outcomes
-
-**Observed:** The country-loaf feed shows four useful outcome summaries and filters by source version. It does not present the runs side by side with their measurements. In the Bagels version comparison, frontmatter and a long source URL appear as “STEP 1” before the meaningful dough changes.
-
-**Chef impact:** It takes manual reconstruction to answer “Did the extra fermentation improve the crust?” or “Which runs produced the best flavor?” Metadata noise also competes with changes that affect the food.
-
-**Recommendation:** Separate comparison into **Ingredients / Method / Metadata**, with raw text secondary. Add an optional run table showing source, hypothesis, changed variables, actual measurements, outcome, and next action. Start with a few user-defined numeric or categorical fields with units; retain prose. Distinguish measured values from formula-derived values, and show missing data explicitly.
-
-**Acceptance:** A chef can compare two runs without opening multiple editors. A source-URL change does not appear as a cooking step. Hydration or timing differences can be read alongside outcomes, without implying that one uncontrolled run establishes causation.
-
-### 7. P2 — Mobile prioritizes recipe management over the active cook
-
-**Observed:** At 390 px, the Cook Logs tab is partially offscreen. The overview puts promotion, metrics, and the ingredient list before the method; the first screen contains no cooking steps. The editor initially shows mostly frontmatter. Controls measured approximately 24–32 px high include grouping, scaling, temperatures, and log filters. The new-log form places Source and Cooked at side by side, truncating the date/time display.
-
-**Chef impact:** With a phone on a flour-covered counter, navigation and precise taps compete with cooking. Recording a deviation is less accessible than releasing a recipe.
-
-**Recommendation:** Add an explicit cooking mode with a sticky **Ingredients / Method / Log** switch and a prominent quick observation action. Use generous touch targets, around 44–48 px for frequent cooking controls. Stack narrow form fields, make all primary tabs discoverable, and provide **Write / Preview** switching in the mobile editor. Keep promotion in the review workflow.
-
-**Acceptance:** At 390 px, Method and Log are reachable without searching or horizontal tab discovery. The complete date/time can be read. Frequent actions work comfortably with one thumb.
-
-### 8. P2 — Dark-mode secondary text and editor syntax are difficult to read
-
-**Observed:** Green and brown syntax tokens are subdued against the dark editor. Labels and instructional text are also low emphasis, particularly on the mobile log form. The overall page palette works better than these smaller details.
-
-**Chef impact:** Ingredient syntax and units are precisely the details that must remain legible under imperfect kitchen lighting. Low-emphasis instructions can conceal important source and saving behavior.
-
-**Recommendation:** Give dark mode its own brighter syntax colors, strengthen essential labels, and reserve faint text for genuinely optional information. Keep status words alongside color. Check computed contrast and real phone readability before choosing final colors.
-
-**Acceptance:** Ingredients, units, timers, and field labels remain easy to distinguish at normal text size. Validate the final palette rather than treating this visual review as a formal accessibility certification.
-
-## Suggested sequence
-
-1. **Protect the record:** save-state recovery, local-time handling, selected-source propagation, and clearer save/snapshot labels.
-2. **Make the cook session explicit:** frozen baseline, planned change, quick deviations, optional in-progress state, and mobile cooking navigation.
-3. **Make results comparable:** structured optional observations, a run comparison table, and less noisy recipe diffs.
-4. **Polish the interface:** contrast, touch targets, clearer form layout, and progressive disclosure of metadata.
-
-The first implementation pass addresses findings 1–3. Validate those changes in normal use before committing to the larger experiment model.
-
-## Proposed session model
-
-| Stage | Primary question | Information to preserve |
-| --- | --- | --- |
-| Plan | What am I testing? | Exact baseline, branch, batch scale, hypothesis, intended variable change |
-| Cook | What did I actually do? | Actual quantities, temperatures, timing, observations, photos |
-| Evaluate | How did it turn out? | Outcome, optional measurements or ratings, uncertainty, next change |
-| Adopt | What belongs in the recipe? | Selected successful changes, supporting cook logs, new revision |
-
-Treat this as a suggested direction to validate with a few real cooks, not a requirement to turn every recipe into a laboratory form.
+1. **Protect work:** U1 (overwrite confirm or auto-snapshot), U2 (modal dirty guard), U7 (recipe delete).
+2. **Make the data trustworthy:** U3 (compare totals and rendering), U4 (false-positive diffs).
+3. **Re-center on cooking:** U5 (one primary action; put Log and Print on Overview), U10, U11, U13.
+4. **Make features discoverable:** U6 (branches), U8, U9, U12.
+5. **Polish:** A1 (contrast) first, then A2–A5 and U14.
