@@ -50,13 +50,15 @@ set -euo pipefail
 STACK_DIR=$1 SERVICE=$2 BRANCH=$3 LOCAL=$4 TIMEOUT=$5 FORCE_BUILD=$6
 cd "$STACK_DIR"
 
-app_git() { docker compose exec -T -w /app "$SERVICE" git -c safe.directory=/app "$@"; }
+# </dev/null: this script arrives on ssh's stdin, and `docker compose exec`
+# would otherwise consume the rest of it.
+app_git() { docker compose exec -T -w /app "$SERVICE" git -c safe.directory=/app "$@" </dev/null; }
 
 # Wait until the server logs its startup line, then fail if the pull failed.
 wait_for_start() {
   local since=$1 deadline=$((SECONDS + TIMEOUT)) logs
   while :; do
-    logs="$(docker compose logs --no-color --no-log-prefix --since "$since" "$SERVICE" 2>&1 || true)"
+    logs="$(docker compose logs --no-color --no-log-prefix --since "$since" "$SERVICE" 2>&1 </dev/null || true)"
     grep -q "AjiLab running" <<<"$logs" && break
     if (( SECONDS >= deadline )); then
       tail -40 <<<"$logs"
@@ -105,10 +107,10 @@ if [ "$FORCE_BUILD" = 1 ] || [ -n "$BUILD_CHANGES" ]; then
     echo "[remote] build inputs changed: $(tr '\n' ' ' <<<"$BUILD_CHANGES")"
   fi
   echo "[remote] rebuilding and recreating $SERVICE"
-  docker compose up -d --build --no-deps "$SERVICE"
+  docker compose up -d --build --no-deps "$SERVICE" </dev/null
 elif [ "$OLD" != "$NEW" ]; then
   echo "[remote] restarting $SERVICE"
-  docker compose restart "$SERVICE"
+  docker compose restart "$SERVICE" </dev/null
 else
   echo "[remote] already up to date at ${NEW:0:7}"
   exit 0
