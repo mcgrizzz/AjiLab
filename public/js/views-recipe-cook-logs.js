@@ -233,25 +233,23 @@ Object.assign(RecipeView, {
     const versions = (this.recipe.versions || []).filter((v) => !v.is_draft && v.version_string);
     const defaultSourceKey = existing
       ? (existing.source_kind === 'draft' ? '__draft__' : (existing.source_version_string || '__draft__'))
-      : (this.recipe.current_best_release?.version_string
-          || this.recipe.active_experiment?.version_string
-          || versions[0]?.version_string
-          || '__draft__');
+      : RecipeEditState.cookLogSourceKey(this.recipe, this.activeVersion);
     const sourceOptions = [`<option value="__draft__" ${defaultSourceKey === '__draft__' ? 'selected' : ''}>Current draft</option>`]
       .concat(versions.map((v) => `<option value="${escHtml(v.version_string)}" ${v.version_string === defaultSourceKey ? 'selected' : ''}>${escHtml(v.version_string)} (${escHtml(v.status)})</option>`))
       .join('');
-    const cookedAtDefault = (existing?.cooked_at || new Date().toISOString()).slice(0, 16);
+    const cookedAtDefault = RecipeEditState.localDateTimeInput(existing?.cooked_at || new Date());
     showModal(`
       <div class="modal-title">${existing ? 'Edit cook log notes' : 'New cook log'}</div>
       <div class="cook-log-modal-row">
         <div class="field-group mt8" style="flex:1">
           <label class="field-label" for="cl-source">Source</label>
           <select id="cl-source" class="field-input" ${existing ? 'disabled' : ''}>${sourceOptions}</select>
-          ${existing ? '' : '<small style="color:var(--ink3);font-size:0.78rem">The recipe is snapshotted from this source on create. Edit measurements in the full recipe editor afterwards.</small>'}
+          ${existing ? '' : '<small style="color:var(--ink2);font-size:0.78rem">A copy of this version is saved with the log. Use Mark differences afterwards to record what you changed.</small>'}
         </div>
         <div class="field-group mt8" style="flex:1">
           <label class="field-label" for="cl-cooked-at">Cooked at</label>
           <input id="cl-cooked-at" class="field-input" type="datetime-local" value="${escHtml(cookedAtDefault)}" />
+          <small style="color:var(--ink2);font-size:0.78rem">Local time (${escHtml(Intl.DateTimeFormat().resolvedOptions().timeZone)})</small>
         </div>
       </div>
       <div class="field-group mt12">
@@ -276,7 +274,7 @@ Object.assign(RecipeView, {
       </div>
       ${existing ? '' : `
       <div class="text-muted" style="font-size:0.82rem;margin-top:10px;padding:10px;background:var(--bg2);border-radius:8px">
-        After creating, hit <strong>Edit recipe</strong> on the new log card to adjust quantities in the full editor.
+        After creating, use <strong>Mark differences</strong> to record actual quantities and changes to the method.
       </div>`}
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -288,10 +286,13 @@ Object.assign(RecipeView, {
   async saveCookLog(existingId) {
     const sourceKey = document.getElementById('cl-source')?.value || '__draft__';
     const cookedAtLocal = document.getElementById('cl-cooked-at')?.value;
+    const existing = existingId ? (this.cookLogs || []).find(log => log.id === existingId) : null;
+    // Preserve the exact instant (including seconds and a DST fold) when only notes change.
+    const cookedAt = RecipeEditState.cookLogTimestamp(cookedAtLocal, existing?.cooked_at);
     const outcome = (document.getElementById('cl-outcome')?.value || '').trim();
     if (!outcome) { showToast('Outcome is required'); return; }
     const body = {
-      cooked_at: cookedAtLocal ? new Date(cookedAtLocal).toISOString() : undefined,
+      cooked_at: cookedAt,
       outcome,
       what_worked: document.getElementById('cl-worked')?.value || '',
       problems_found: document.getElementById('cl-problems')?.value || '',

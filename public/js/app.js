@@ -14,6 +14,7 @@ const Router = {
   },
 
   async dispatch(path) {
+    RecipeView.destroyDraftEditor();
     const url = new URL(path, location.origin);
     const pathname = url.pathname;
     const container = document.getElementById('view-container');

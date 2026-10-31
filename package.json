@@ -8,7 +8,7 @@
     "restore": "tsx scripts/restore.ts",
     "transfer": "tsx --experimental-wasm-modules scripts/transfer.ts",
     "build:editor": "esbuild src/browser/codemirror-vendor.js --bundle --format=esm --platform=browser --outfile=public/vendor/codemirror.js",
-    "test": "tsx --test test/"
+    "test": "tsx --experimental-wasm-modules --test test/*.test.js"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.3",

@@ -44,8 +44,9 @@ Object.assign(RecipeView, {
       return;
     }
     const isEditingDraft = !!editable?.is_draft;
-    const text = editable?.cooklang_text || '';
-    const tags = JSON.parse(editable?.tags || '[]');
+    const session = this.openEditorSaveSession(editable);
+    const text = session.value.text;
+    const tags = session.value.tags;
     this.selectedDraftTokenId = null;
     this.draftQuantityTokens = [];
     this.draftPreviewState = null;
@@ -60,6 +61,10 @@ Object.assign(RecipeView, {
         <div class="editor-toolbar">
           <span class="editor-hint">@ingredient{qty%unit} &nbsp;#cookware &nbsp;~{time%min}</span>
           <span class="text-muted" style="font-size:0.82rem">${escHtml(this.editTargetLabel())}</span>
+          <span class="editor-save-state">
+            <span id="editor-save-status" class="editor-save-status" role="status" aria-live="polite"></span>
+            <button id="editor-save-retry" class="btn btn-sm editor-save-retry" hidden onclick="RecipeView.saveDraft({ advanceBeta: false })">Save now</button>
+          </span>
           ${isEditingCookLog
             ? `<button class="btn btn-sm" onclick="RecipeView.exitCookLogEdit()">← Back to cook logs</button>
                <button class="btn btn-sm btn-primary" onclick="RecipeView.saveDraft({ advanceBeta: false })">Save</button>`
@@ -146,23 +151,67 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     document.getElementById('tag-input')?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); this.addTag(); }
     });
-    let saveTimer;
     let previewTimer;
     document.getElementById('draft-text')?.addEventListener('input', () => {
       this.selectedDraftTokenId = null;
       this.draftQuantityAnchor = null;
-      clearTimeout(saveTimer);
-      // Don't silently autosave over a published release — overwriting it should
-      // be an explicit "Save changes" click. Drafts, betas, and cook logs keep
-      // the autosave behavior.
-      if (!isEditingReleased) {
-        saveTimer = setTimeout(() => this.saveDraft({ silent: true, advanceBeta: false }), 1500);
-      }
+      this.captureEditorChanges(session);
       clearTimeout(previewTimer);
       previewTimer = setTimeout(() => this.updatePreview(), 500);
       this.renderDraftQuantityPanel();
     });
+    session.onChange = () => this.renderEditorSaveStatus(session);
+    this.renderEditorSaveStatus(session);
     this.updatePreview();
+  },
+
+  openEditorSaveSession(editable) {
+    const slug = this.slug;
+    const branch = this.branchSlug;
+    const kind = editable._cookLogId ? 'cook-log' : (editable.is_draft ? 'draft' : 'version');
+    const target = editable._cookLogId || (editable.is_draft ? 'draft' : editable.version_string);
+    const base = `/recipes/${encodeURIComponent(slug)}/branches/${encodeURIComponent(branch)}`;
+    const endpoint = kind === 'cook-log' ? `${base}/cook-logs/${encodeURIComponent(target)}`
+      : kind === 'draft' ? `${base}/draft` : `${base}/versions/${encodeURIComponent(target)}`;
+    let storage = null;
+    try { storage = window.localStorage; } catch {}
+    const session = RecipeEditState.open({
+      key: JSON.stringify([slug, branch, kind, target]),
+      initial: { text: editable.cooklang_text || '', tags: JSON.parse(editable.tags || '[]') },
+      storage,
+      autosave: editable.status !== 'released' && editable.status !== 'archived',
+      write: (value, options) => API.put(endpoint, {
+        cooklang_text: value.text, tags: value.tags,
+        ...(kind === 'draft' ? { advance_beta: options.advanceBeta === true } : {}),
+      }),
+    });
+    session.target = { slug, branch, kind, key: target };
+    session.requestSave = () => this.saveDraft({ silent: true, session });
+    this.editorSaveSession = session;
+    return session;
+  },
+
+  captureEditorChanges(session = this.editorSaveSession) {
+    if (!session || session !== this.editorSaveSession) return;
+    const textarea = document.getElementById('draft-text');
+    if (!textarea) return;
+    const tags = [...document.querySelectorAll('#tag-list .tag-chip')].map(el => el.dataset.tag);
+    session.update(textarea.value, tags);
+  },
+
+  renderEditorSaveStatus(session) {
+    if (session !== this.editorSaveSession) return;
+    const status = document.getElementById('editor-save-status');
+    const retry = document.getElementById('editor-save-retry');
+    if (status) {
+      status.textContent = session.status + (session.dirty && session.storageFailed
+        ? ' — browser recovery unavailable; keep this page open' : '');
+      status.dataset.dirty = String(session.dirty);
+    }
+    if (retry) {
+      retry.hidden = !session.dirty || session.status === 'Saving…';
+      retry.textContent = session.status.startsWith('Could not save') ? 'Retry save' : 'Save now';
+    }
   },
 
   // ── Inline quantity panel ────────────────────────────────────────────────────
@@ -352,62 +401,71 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
   // ── Save ─────────────────────────────────────────────────────────────────────
 
   async saveDraft(options = {}) {
-    const editable = this.getEditableVersion();
+    const session = options.session || this.editorSaveSession;
+    if (!session) return false;
+    if (session === this.editorSaveSession) this.captureEditorChanges(session);
     const silent = options.silent === true;
-    const advanceBeta = options.advanceBeta === true;
-    const text = document.getElementById('draft-text')?.value ?? '';
-    const tags = [...document.querySelectorAll('#tag-list .tag-chip')].map((el) => el.dataset.tag);
-    let response = null;
+    const advanceBeta = options.advanceBeta === true && session.target.kind === 'draft';
+    const result = await session.save({ advanceBeta });
+    if (!result.ok) {
+      if (!silent) showToast('Error saving: ' + result.error.message);
+      return false;
+    }
+    // A delayed response belongs to the captured target, not the current screen.
+    if (session.target.slug !== this.slug || session.target.branch !== this.branchSlug || session.dirty) return true;
+    const { response, value } = result;
+    const text = value.text;
+    const tags = value.tags;
+    const target = session.target;
     try {
-      if (editable?._cookLogId) {
-        await API.put(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(editable._cookLogId)}`, { cooklang_text: text, tags });
+      if (target.kind === 'cook-log') {
         const nextTags = tags.slice();
         const list = this.cookLogs || [];
-        const idx = list.findIndex((entry) => entry.id === editable._cookLogId);
+        const idx = list.findIndex((entry) => entry.id === target.key);
         if (idx >= 0) list[idx] = { ...list[idx], cooklang_text: text, tags: nextTags };
-        this.activeVersion = { ...this.activeVersion, cooklang_text: text, tags: JSON.stringify(nextTags) };
-        if (silent) return;
+        if (this.activeVersion?._cookLogId === target.key) {
+          this.activeVersion = { ...this.activeVersion, cooklang_text: text, tags: JSON.stringify(nextTags) };
+        }
+        if (session !== this.editorSaveSession || this.activeTab !== 'editor') return true;
+        if (silent) return true;
         showToast('Cook log saved');
-        return;
-      }
-      if (editable?.is_draft) {
-        response = await API.put(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/draft`, { cooklang_text: text, tags, advance_beta: advanceBeta });
-      } else if (editable?.version_string) {
-        // Any saved version (beta, released, archived) updates in place.
-        await API.put(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(editable.version_string)}`, { cooklang_text: text, tags });
-      } else {
-        throw new Error('No editable version selected');
+        return true;
       }
       const nextTags = JSON.stringify(tags);
-      if (editable?.is_draft && this.recipe?.draft) {
+      if (target.kind === 'draft' && this.recipe?.draft) {
         this.recipe.draft = { ...this.recipe.draft, cooklang_text: text, tags: nextTags };
       }
-      if (!editable?.is_draft && editable?.version_string) {
+      if (target.kind === 'version') {
         this.recipe.versions = (this.recipe.versions || []).map((version) => (
-          version.version_string === editable.version_string
+          version.version_string === target.key
             ? { ...version, cooklang_text: text, tags: nextTags }
             : version
         ));
       }
-      if (this.activeVersion) {
+      if (this.activeVersion && !this.activeVersion._cookLogId
+          && (this.activeVersion.is_draft ? 'draft' : this.activeVersion.version_string) === target.key) {
         this.activeVersion = { ...this.activeVersion, cooklang_text: text, tags: nextTags };
       }
-      if (silent) { this.maybeShowUnresolvedWarning(response, true); return; }
+      if (session !== this.editorSaveSession || this.activeTab !== 'editor') return true;
+      if (silent) { this.maybeShowUnresolvedWarning(response, true); return true; }
       await this.refreshRecipe();
+      if (session !== this.editorSaveSession || session.dirty) return true;
       // A draft Save that advanced a beta switches the selector to that new beta
       // so you can see the snapshot you just took. Re-select Draft to keep
       // iterating. Other saves stay on what you edited.
-      const advancedBeta = editable?.is_draft && advanceBeta && response?.snapshot_version;
+      const advancedBeta = target.kind === 'draft' && advanceBeta && response?.snapshot_version;
       const versionKey = advancedBeta
         ? response.snapshot_version
-        : (editable?.is_draft ? 'draft' : editable?.version_string);
+        : target.key;
       if (versionKey) {
         await this.renderDetail(document.getElementById('view-container'), versionKey, { syncUrl: true, replaceUrl: true });
       }
-      if (!silent) showToast(advancedBeta ? `Saved ${response.snapshot_version}` : (editable?.is_draft ? 'Draft saved' : 'Version saved'));
+      if (!silent) showToast(advancedBeta ? `Saved ${response.snapshot_version}` : (target.kind === 'draft' ? 'Draft saved' : 'Version saved'));
       this.maybeShowUnresolvedWarning(response, false);
+      return true;
     } catch (e) {
       if (!silent) showToast('Error saving: ' + e.message);
+      return false;
     }
   },
 
@@ -433,10 +491,12 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     chip.innerHTML = tagChip(val);
     list.appendChild(chip.firstElementChild);
     input.value = '';
+    this.captureEditorChanges();
   },
 
   removeTag(el) {
     el.closest('.tag-chip')?.remove();
+    this.captureEditorChanges();
   },
 
   // ── Images ───────────────────────────────────────────────────────────────────

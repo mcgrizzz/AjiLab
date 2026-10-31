@@ -25,6 +25,7 @@ const RecipeView = {
   backlinks: [],
 
   async render(container, slug, opts = {}) {
+    this.destroyDraftEditor();
     this.slug = slug;
     this.branchSlug = opts.branch || 'main';
     // Backward compat: old bookmarks used ?tab=history before the rename.
@@ -136,6 +137,7 @@ const RecipeView = {
   },
 
   async renderDetail(container, versionStr, opts = {}) {
+    this.destroyDraftEditor();
     // A concrete versionStr (release, beta, draft, …) is an explicit pick: pin
     // it so the version selector switches to it and tab renderers don't override
     // it back to their default. Callers that want the default pass null.
@@ -150,6 +152,7 @@ const RecipeView = {
   },
 
   renderScaffold(container) {
+    this.destroyDraftEditor();
     const recipe = this.recipe;
     const branches = recipe.branches || [];
     const branchOptions = branches.map((entry) => `
@@ -282,6 +285,8 @@ const RecipeView = {
   },
 
   destroyDraftEditor() {
+    this.editorSaveSession?.detach();
+    this.editorSaveSession = null;
     if (this.draftEditor?.destroy) this.draftEditor.destroy();
     this.draftEditor = null;
   },
@@ -328,6 +333,7 @@ const RecipeView = {
   editCookLogRecipe(logId) {
     const log = (this.cookLogs || []).find((entry) => entry.id === logId);
     if (!log) { showToast('Cook log not found'); return; }
+    this.destroyDraftEditor();
     this.cookLogEditingId = logId;
     this.activeVersion = this.cookLogToEditableTarget(log);
     this.renderScaffold(document.getElementById('view-container'));
