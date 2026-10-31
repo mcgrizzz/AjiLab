@@ -199,3 +199,9 @@ function waitForImageReady(img) {
 function waitForNextPaint() {
   return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 }
+
+// Scale factors from click-to-scale can be long (16 fl oz / 1 L = 0.4731…);
+// keep the exact value for math but show three decimals.
+function roundScale(scale) {
+  return Math.round(scale * 1000) / 1000;
+}

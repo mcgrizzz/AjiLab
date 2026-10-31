@@ -30,15 +30,17 @@ Object.assign(RecipeView, {
               <button class="scale-btn${this.scale === 2 ? ' active' : ''}" data-scale="2" onclick="RecipeView.setScale(2)">2×</button>
               <button class="scale-btn${this.scale === 3 ? ' active' : ''}" data-scale="3" onclick="RecipeView.setScale(3)">3×</button>
               <input class="scale-custom-input${[0.5, 1, 2, 3].includes(this.scale) ? '' : ' active'}" type="number" min="0" step="0.25"
-                value="${[0.5, 1, 2, 3].includes(this.scale) ? '' : this.scale}" placeholder="…×" title="Custom multiplier"
+                value="${[0.5, 1, 2, 3].includes(this.scale) ? '' : roundScale(this.scale)}" placeholder="…×" title="Custom multiplier"
                 onchange="RecipeView.setScaleCustom(this.value)"
                 onkeydown="if(event.key==='Enter'){event.preventDefault();RecipeView.setScaleCustom(this.value);this.blur();}" />
             </div>
             ${servings ? `<span class="text-muted" style="font-size:0.8rem">Serves ${escHtml(servings)}</span>` : ''}
           </div>
+          <div id="unit-control">${this.unitControlHtml()}</div>
           ${ingredientToggle}
           <div id="ing-list">${CL.renderIngredientSummary(parsed.ingredient_summary, this.scale, {
             mode: this.ingredientSummaryMode,
+            units: this.unitView(),
           })}</div>
         </div>` : ''}
         ${hasCookware ? `
@@ -62,9 +64,7 @@ Object.assign(RecipeView, {
             ${inlineAddNotes}
           </div>
         </div>
-        <div id="steps-list">${CL.renderSteps(parsed.steps, this.scale, parsed.metadata, this.showAmounts, {
-          temperatureUnit: this.temperatureUnit,
-        })}</div>
+        <div id="steps-list">${CL.renderSteps(parsed.steps, this.scale, parsed.metadata, this.showAmounts, this.stepRenderOptions())}</div>
       </div>` : '';
 
     const metricsHtml = CL.renderMetrics(parsed.metrics);
@@ -161,16 +161,87 @@ Object.assign(RecipeView, {
     if (customInput && document.activeElement !== customInput) {
       const isPreset = [0.5, 1, 2, 3].includes(s);
       customInput.classList.toggle('active', !isPreset);
-      customInput.value = isPreset ? '' : s;
+      customInput.value = isPreset ? '' : roundScale(s);
     }
+    this.rerenderAmounts();
+  },
+
+  // Re-render everything that shows amounts (scale, unit or toggle changes).
+  rerenderAmounts() {
+    if (!this.parsed) return;
     const ingList = document.getElementById('ing-list');
-    if (ingList && this.parsed) {
-      ingList.innerHTML = CL.renderIngredientSummary(this.parsed.ingredient_summary, s, { mode: this.ingredientSummaryMode });
+    if (ingList) {
+      ingList.innerHTML = CL.renderIngredientSummary(this.parsed.ingredient_summary, this.scale, {
+        mode: this.ingredientSummaryMode,
+        units: this.unitView(),
+      });
     }
     const stepsList = document.getElementById('steps-list');
-    if (stepsList && this.parsed) {
-      stepsList.innerHTML = CL.renderSteps(this.parsed.steps, s, this.parsed.metadata, this.showAmounts, { temperatureUnit: this.temperatureUnit });
+    if (stepsList) {
+      stepsList.innerHTML = CL.renderSteps(this.parsed.steps, this.scale, this.parsed.metadata, this.showAmounts, this.stepRenderOptions());
     }
+    const unitControl = document.getElementById('unit-control');
+    if (unitControl) unitControl.innerHTML = this.unitControlHtml();
+  },
+
+  stepRenderOptions() {
+    return { temperatureUnit: this.temperatureUnit, units: this.unitView() };
+  },
+
+  // ── Unit preferences ──
+  // System choice (as written / metric / US) per category is a per-browser
+  // preference; per-ingredient overrides ("show the cream in fl oz") come from
+  // click-to-scale and last until a different recipe is opened.
+  unitView(slug = this.slug) {
+    if (!this.unitPrefs) this.unitPrefs = Units.loadPrefs();
+    const overrides = this.unitOverrides?.slug === slug ? this.unitOverrides.map : {};
+    return { volume: this.unitPrefs.volume, mass: this.unitPrefs.mass, overrides };
+  },
+
+  unitControlHtml() {
+    const parsed = this.parsed;
+    const categories = Units.categoriesIn(parsed?.ingredient_summary?.flat || parsed?.ingredients);
+    if (!categories.size) return '';
+    const view = this.unitView();
+    const select = (category, label) => {
+      if (!categories.has(category)) return '';
+      const options = [['asis', 'As written'], ['metric', 'Metric'], ['us', 'US']]
+        .map(([value, text]) => `<option value="${value}"${view[category] === value ? ' selected' : ''}>${text}</option>`)
+        .join('');
+      return `<label class="unit-select-label">${label}
+        <select class="unit-select" onchange="RecipeView.setUnitSystem('${category}', this.value)">${options}</select>
+      </label>`;
+    };
+    const hasOverrides = Object.keys(view.overrides).length > 0;
+    return `<div class="unit-control">
+      ${select('volume', 'Volume')}
+      ${select('mass', 'Weight')}
+      ${hasOverrides ? `<button class="btn btn-sm unit-reset-btn" onclick="RecipeView.clearUnitOverrides()" title="Undo per-ingredient units you typed">Reset units</button>` : ''}
+    </div>`;
+  },
+
+  setUnitSystem(category, system) {
+    if (!this.unitPrefs) this.unitPrefs = Units.loadPrefs();
+    this.unitPrefs[category] = system;
+    Units.savePrefs(this.unitPrefs);
+    // Picking a system for a category supersedes per-ingredient overrides in it.
+    const map = this.unitOverrides?.slug === this.slug ? this.unitOverrides.map : null;
+    if (map) {
+      for (const [name, unitKey] of Object.entries(map)) {
+        if (Units.UNITS[unitKey]?.category === category) delete map[name];
+      }
+    }
+    this.rerenderAmounts();
+  },
+
+  setUnitOverride(name, unitKey) {
+    if (this.unitOverrides?.slug !== this.slug) this.unitOverrides = { slug: this.slug, map: {} };
+    this.unitOverrides.map[Units.overrideKey(name)] = unitKey;
+  },
+
+  clearUnitOverrides() {
+    this.unitOverrides = { slug: this.slug, map: {} };
+    this.rerenderAmounts();
   },
 
   setScaleCustom(value) {
@@ -195,37 +266,43 @@ Object.assign(RecipeView, {
     this.showAmounts = !this.showAmounts;
     const button = document.getElementById('amounts-btn');
     if (button) button.textContent = this.showAmounts ? '✓ Hide amounts' : '⊕ Show amounts';
-    const stepsList = document.getElementById('steps-list');
-    if (stepsList && this.parsed) {
-      stepsList.innerHTML = CL.renderSteps(this.parsed.steps, this.scale, this.parsed.metadata, this.showAmounts, { temperatureUnit: this.temperatureUnit });
-    }
+    this.rerenderAmounts();
   },
 
   toggleTemperatureUnit() {
     this.temperatureUnit = this.temperatureUnit === 'F' ? 'C' : 'F';
     const button = document.getElementById('temp-btn');
     if (button) button.textContent = `Temps: °${this.temperatureUnit}`;
-    const stepsList = document.getElementById('steps-list');
-    if (stepsList && this.parsed) {
-      stepsList.innerHTML = CL.renderSteps(this.parsed.steps, this.scale, this.parsed.metadata, this.showAmounts, { temperatureUnit: this.temperatureUnit });
-    }
+    this.rerenderAmounts();
   },
 
+  // Click-to-scale: type the amount you want of this ingredient, optionally in
+  // another unit ("16 fl oz" against "1 L"). The recipe scales to match and
+  // that ingredient keeps showing the unit you typed.
   editIngredientQty(el) {
-    const orig = parseFloat(el.dataset.orig);
-    if (isNaN(orig) || orig === 0) return;
+    const orig = Units.parseQuantity(el.dataset.orig)?.[0];
+    if (!(orig > 0)) return;
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'ing-qty-input';
-    input.value = el.textContent.trim().split(/\s/)[0];
+    input.value = el.textContent.trim();
     el.textContent = '';
     el.appendChild(input);
     input.focus();
     input.select();
+    let done = false;
     const finish = (apply) => {
+      if (done) return;
+      done = true;
       if (apply) {
-        const val = parseFloat(input.value);
-        if (!isNaN(val) && val > 0) { this.setScale(val / orig); return; }
+        const result = Units.scaleForTarget(orig, el.dataset.unit, el.dataset.shownUnit, Units.parseAmount(input.value));
+        if (result.error) {
+          showToast(result.error);
+        } else {
+          if (result.unitKey) this.setUnitOverride(el.dataset.name, result.unitKey);
+          this.setScale(result.scale);
+          return;
+        }
       }
       this.setScale(this.scale);
     };

@@ -40,9 +40,10 @@ const PrintView = {
           </div>
           ${servings ? `<div class="print-servings">Serves ${escHtml(servings)}</div>` : ''}
           ${CL.renderMetrics(parsed.metrics)}
-          ${parsed.ingredients?.length ? `<div class="section-head">Ingredients</div>${CL.renderIngredientSummary(parsed.ingredient_summary, scale, { mode: ingredientSummaryMode })}` : ''}
+          ${parsed.ingredients?.length ? `<div class="section-head">Ingredients</div>${CL.renderIngredientSummary(parsed.ingredient_summary, scale, { mode: ingredientSummaryMode, units: RecipeView.unitView(slug) })}` : ''}
           ${parsed.steps?.length ? `<div class="section-head mt16">Steps</div>${CL.renderSteps(parsed.steps, scale, parsed.metadata, true, {
             temperatureUnit: RecipeView.temperatureUnit,
+            units: RecipeView.unitView(slug),
           })}` : ''}
           ${notes ? `<div class="section-head mt16 print-notes-title">Notes</div><div class="notes-box print-notes">${formatMultilineText(notes)}</div>` : ''}
         </div>`;

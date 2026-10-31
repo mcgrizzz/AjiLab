@@ -389,7 +389,7 @@ body {
   font-family: var(--font-mono);
   font-size: 0.85rem;
   color: var(--accent);
-  width: 64px;
+  width: 88px;
   padding: 0 2px;
   border: 1px solid var(--accent);
   border-radius: 3px;
@@ -427,7 +427,7 @@ body {
 .scale-btn:hover { background: var(--bg3); color: var(--ink); }
 .scale-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .scale-custom-input {
-  width: 60px;
+  width: 70px;
   height: 32px;
   padding: 0 8px;
   border: 1px solid var(--border2);
@@ -450,6 +450,38 @@ body {
 .scale-custom-input:focus { outline: none; border-color: var(--accent); }
 .scale-custom-input.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .scale-custom-input.active::placeholder { color: rgba(255, 255, 255, 0.7); }
+/* Label | select rows, with the reset button parked on the right. */
+.unit-control {
+  display: grid;
+  grid-template-columns: max-content max-content 1fr;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 4px 0 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+.unit-select-label {
+  display: contents;
+  font-size: 0.85rem;
+  color: var(--ink3);
+}
+.unit-select {
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: var(--bg2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.unit-select:focus { outline: none; border-color: var(--accent); }
+.unit-reset-btn {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  justify-self: end;
+}
 .scale-val {
   font-family: var(--font-mono);
   font-size: 0.9rem;

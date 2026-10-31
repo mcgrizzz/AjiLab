@@ -12,17 +12,23 @@ const CL = {
       const isFrac = rawQty && /[\/⅛¼⅓⅜½⅝⅔¾⅞]/.test(String(ing.quantity));
       const qty = rawQty ? scaleQty(ing.quantity, scale, isFrac) : '';
       const unit = ing.units || '';
-      const qtyStr = qty ? `${qty}${unit ? ' ' + unit : ''}` : unit || '';
+      // options.units: reader's unit preferences (viewer/print only).
+      const presented = rawQty ? presentAmount(ing.quantity, unit, scale, options.units, ing.name) : null;
+      const qtyStr = presented ? presented.text : (qty ? `${qty}${unit ? ' ' + unit : ''}` : unit || '');
       // disableScale: cook log context — click-to-scale doesn't apply (cook log
       // is fixed at scale 1) and the input-box-never-closes UX is a known dead
       // end. Suppress the data-orig handler entirely.
       const canScale = rawQty && !isNaN(parseFloat(String(ing.quantity))) && !options.disableScale;
       const token = rawQty && options.resolveIngredientToken ? options.resolveIngredientToken(ing) : null;
       const isSelectable = !!token;
+      const writtenHint = presented?.converted ? `${composeAmount(scaleQty(ing.quantity, scale, isFrac), unit)} as written. ` : '';
+      const scaleHint = options.units
+        ? 'Click to scale the recipe by this ingredient (you can type another unit, e.g. 16 fl oz)'
+        : 'Click to scale recipe by this ingredient';
       const actionAttr = isSelectable
         ? ` data-draft-token-id="${escHtml(token.id)}" onclick="RecipeView.selectDraftQuantity('${escHtml(token.id)}', this)"`
         : (canScale
-          ? ` data-orig="${escHtml(String(ing.quantity))}" onclick="RecipeView.editIngredientQty(this)" title="Click to scale recipe by this ingredient"`
+          ? ` data-orig="${escHtml(String(ing.quantity))}" data-unit="${escHtml(unit)}" data-shown-unit="${escHtml(presented ? presented.unit : unit)}" data-name="${escHtml(ing.name || '')}" onclick="RecipeView.editIngredientQty(this)" title="${escHtml(writtenHint + scaleHint)}"`
           : '');
       const nameHtml = renderIngredientName(ing);
       const noteHtml = ing.note ? ` <span class="ing-note">(${escHtml(ing.note)})</span>` : '';
@@ -120,7 +126,7 @@ const CL = {
             const hasQty = token.quantity !== '' && token.quantity != null;
             const editAttrs = hasQty ? cookLogEditAttrs('ingredient', ingEditIdx, token.units) : '';
             if (hasQty) ingEditIdx++;
-            const amtHtml = ingredientAmountHtml(token, scale, showAmounts, editAttrs);
+            const amtHtml = ingredientAmountHtml(token, scale, showAmounts, editAttrs, options.units);
             const noteHtml = token.note ? ` <span class="s-component-note">(${escHtml(token.note)})</span>` : '';
             const optHtml = token.optional ? ' <span class="s-component-optional">(optional)</span>' : '';
             if (token.recipe_reference) {
@@ -476,8 +482,16 @@ function ingredientSourceAmount(token) {
   return composeAmount(token.source_quantity, token.source_units, token.source_range);
 }
 
-function ingredientLogAmount(token, scale) {
+// Unit-preference-aware amount (see units.js), or null to render as written.
+function presentAmount(quantity, units, scale, unitView, name) {
+  if (!unitView || typeof Units === 'undefined') return null;
+  return Units.present(quantity, units, scale, unitView, name);
+}
+
+function ingredientLogAmount(token, scale, unitView = null) {
   if (token.quantity === undefined || token.quantity === null || token.quantity === '') return '';
+  const presented = presentAmount(token.quantity, token.units, scale, unitView, token.name);
+  if (presented) return presented.text;
   const isFrac = /[\/⅛¼⅓⅜½⅝⅔¾⅞]/.test(String(token.quantity));
   const q = scaleQty(token.quantity, scale, isFrac);
   return `${q}${token.units ? ' ' + token.units : ''}`;
@@ -487,9 +501,10 @@ function ingredientLogAmount(token, scale) {
 // just `(now)`. Returns '' when neither side has anything to show.
 // editAttrs is appended to the span so the cook-log click-to-edit handler
 // fires when the user clicks the amount.
-function ingredientAmountHtml(token, scale, showAmounts, editAttrs = '') {
+function ingredientAmountHtml(token, scale, showAmounts, editAttrs = '', unitView = null) {
   if (!showAmounts) return '';
-  const now = ingredientLogAmount(token, scale);
+  // Cook-log diffs compare raw recipe amounts; don't convert those.
+  const now = ingredientLogAmount(token, scale, hasSourceDiff(token) ? null : unitView);
   const editCls = editAttrs ? ' s-cl-editable' : '';
   if (!hasSourceDiff(token)) {
     return now ? ` <span class="s-ing-amt${editCls}"${editAttrs}> (${escHtml(now)})</span>` : '';
