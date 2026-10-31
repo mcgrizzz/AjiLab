@@ -160,12 +160,13 @@ test('a chosen unit steps down for small rows of the same ingredient', () => {
 
 test('sameAmount treats formatting-only differences as equal', () => {
   const { Units } = setup();
+  // Bare F/C come from ^{…} tokens, which carry kind 'temperature'.
   const same = (a, b) => Units.sameAmount(a, b);
-  assert.ok(same({ quantity: 450, units: '°F' }, { quantity: 450, units: 'F' }));
-  assert.ok(same({ quantity: 450, units: '°F' }, { quantity: 232, units: 'C' }), '450 °F ≈ 232 °C');
-  assert.ok(!same({ quantity: 450, units: 'F' }, { quantity: 475, units: 'F' }));
-  assert.ok(!same({ quantity: 450, units: 'F' }, { quantity: 230, units: 'C' }), 'beyond 1 °C is a change');
-  assert.ok(!same({ quantity: 26.5, units: 'C' }, { quantity: 27, units: '°C' }), 'same unit: any numeric change counts');
+  assert.ok(same({ quantity: 450, units: '°F' }, { quantity: 450, units: 'F', kind: 'temperature' }));
+  assert.ok(same({ quantity: 450, units: '°F' }, { quantity: 232, units: 'C', kind: 'temperature' }), '450 °F ≈ 232 °C');
+  assert.ok(!same({ quantity: 450, units: 'F', kind: 'temperature' }, { quantity: 475, units: 'F', kind: 'temperature' }));
+  assert.ok(!same({ quantity: 450, units: 'F', kind: 'temperature' }, { quantity: 230, units: 'C', kind: 'temperature' }), 'beyond 1 °C is a change');
+  assert.ok(!same({ quantity: 26.5, units: 'C', kind: 'temperature' }, { quantity: 27, units: '°C' }), 'same unit: any numeric change counts');
   assert.ok(!same({ quantity: 500, units: 'g' }, { quantity: 501, units: 'g' }));
   assert.ok(same({ quantity: 1, units: 'L' }, { quantity: 1000, units: 'ml' }));
   assert.ok(same({ quantity: 25, units: 'min' }, { quantity: 25, units: 'minutes' }));
@@ -173,7 +174,7 @@ test('sameAmount treats formatting-only differences as equal', () => {
   assert.ok(!same({ quantity: 1, units: 'cup' }, { quantity: 236, units: 'g' }), 'volume vs mass never matches');
   assert.ok(same({ quantity: 2, units: 'cloves' }, { quantity: '2', units: 'Cloves' }));
   assert.ok(!same({ quantity: 2, units: 'cloves' }, { quantity: 2, units: 'heads' }));
-  assert.ok(same({ quantity: '23-25', units: 'C', range: { min: 23, max: 25 } }, { quantity: '23-25', units: '°C' }));
+  assert.ok(same({ quantity: '23-25', units: 'C', kind: 'temperature', range: { min: 23, max: 25 } }, { quantity: '23-25', units: '°C' }));
   assert.ok(same({ quantity: '', units: '' }, { quantity: null, units: undefined }));
   assert.ok(!same({ quantity: 1, units: '' }, { quantity: '', units: '' }));
 });
@@ -194,14 +195,24 @@ test('percentChange converts units and skips temperatures', () => {
   assert.equal(Math.round(Units.percentChange({ quantity: 265, units: 'g' }, { quantity: 380, units: 'g' }) * 10) / 10, 43.4);
   assert.equal(Math.round(Units.percentChange({ quantity: 1, units: 'kg' }, { quantity: 1500, units: 'g' })), 50);
   assert.equal(Units.percentChange({ quantity: 1, units: 'cup' }, { quantity: 100, units: 'g' }), null);
-  assert.equal(Units.percentChange({ quantity: 450, units: 'F' }, { quantity: 500, units: 'F' }), null);
+  assert.equal(Units.percentChange({ quantity: 450, units: 'F', kind: 'temperature' }, { quantity: 500, units: 'F', kind: 'temperature' }), null);
   assert.equal(Units.percentChange({ quantity: 2, units: 'cloves' }, { quantity: 3, units: 'cloves' }), 50);
 });
 
-test('a bare lowercase "c" is a cup, not Celsius', () => {
+test('a bare C is a cup in ingredient amounts and Celsius inside ^{…} / %{…}', () => {
   const { Units } = setup();
-  assert.equal(Units.temperatureKey('c'), null);
-  assert.equal(Units.temperatureKey('C'), 'C');
-  assert.equal(Units.temperatureKey('°c'), 'C');
+  // Ingredient amounts (no token context): C and c are cups.
+  assert.equal(Units.temperatureKey('C', false), null);
+  assert.equal(Units.temperatureKey('c', false), null);
+  assert.equal(Units.temperatureKey('°C', false), 'C');
+  assert.equal(Units.temperatureKey('celsius', false), 'C');
+  assert.equal(Units.compareAmounts({ quantity: 1, units: 'C' }, { quantity: 240, units: 'ml' }), 'near');
   assert.equal(Units.sameAmount({ quantity: 1, units: 'c' }, { quantity: 1, units: 'cup' }), true);
+  assert.equal(Units.comparableUnits('C', 'ml'), true);
+  // ^{…} and %{…} tokens: bare C/F are temperatures.
+  const temp = (q, u) => ({ quantity: q, units: u, kind: 'temperature', type: 'inlineQuantity' });
+  assert.equal(Units.sameAmount(temp(232, 'C'), temp(450, 'F')), true);
+  assert.equal(Units.sameAmount(temp(23, 'c'), temp(23, 'C')), true);
+  assert.equal(Units.sameAmount({ quantity: 450, units: 'F', type: 'inlineQuantity' }, { quantity: '450 °F', units: '°F', type: 'inlineQuantity' }), true);
+  assert.equal(Units.percentChange(temp(450, 'F'), temp(500, 'F')), null);
 });

@@ -306,15 +306,25 @@ const Units = (() => {
   }
 
   // ── Comparison ──
-  // A bare lowercase "c" is a cup (the cooklang parser writes cups as "c");
-  // Celsius needs "C", "°c" or the word.
-  function temperatureKey(unit) {
-    const written = String(unit ?? '').trim().replace(/\s+/g, '');
-    if (written === 'c') return null;
-    const raw = written.toLowerCase().replace(/^degrees?/, '').replace(/^°/, '');
-    if (raw === 'f' || raw === 'fahrenheit') return 'F';
-    if (raw === 'c' || raw === 'celsius') return 'C';
-    return null;
+  // Temperature unit, or null. Whether a bare "C"/"F" counts depends on where
+  // the amount comes from: inside ^{…} or %{…} it is a temperature, but in an
+  // ingredient amount "C" and "c" mean cup (@milk{1%C}). Pass allowBare=false
+  // for ingredient amounts; "°C", "degrees F", "celsius" always count.
+  function temperatureKey(unit, allowBare = true) {
+    const raw = String(unit ?? '').trim().toLowerCase().replace(/\s+/g, '');
+    const stripped = raw.replace(/^degrees?/, '').replace(/^°/, '');
+    if (stripped === 'fahrenheit') return 'F';
+    if (stripped === 'celsius') return 'C';
+    if (stripped !== 'f' && stripped !== 'c') return null;
+    return allowBare || stripped !== raw ? stripped.toUpperCase() : null;
+  }
+
+  // Temperature unit of an amount, by context: ^{…} tokens carry
+  // kind 'temperature' and %{…} tokens type 'inlineQuantity'. Anything else
+  // (ingredients, timers, ingredient totals) needs an explicit "°".
+  function amountTemperature(amount) {
+    const bare = amount?.kind === 'temperature' || amount?.type === 'inlineQuantity';
+    return temperatureKey(amount?.units, bare);
   }
 
   function toCelsius(value, unitKey) {
@@ -368,8 +378,8 @@ const Units = (() => {
     const av = amountValues(a);
     const bv = amountValues(b);
     if (!av || !bv) return verdict(looseText(a) === looseText(b));
-    const at = temperatureKey(a?.units);
-    const bt = temperatureKey(b?.units);
+    const at = amountTemperature(a);
+    const bt = amountTemperature(b);
     if (at || bt) {
       if (!at || !bt) return 'different';
       if (at === bt) return verdict(av.every((v, i) => exact(v, bv[i])));
@@ -400,7 +410,7 @@ const Units = (() => {
   function percentChange(a, b) {
     const av = amountValues(a);
     const bv = amountValues(b);
-    if (!av || !bv || temperatureKey(a?.units) || temperatureKey(b?.units)) return null;
+    if (!av || !bv || amountTemperature(a) || amountTemperature(b)) return null;
     let af = 1;
     let bf = 1;
     const ad = lookup(a?.units);
@@ -418,10 +428,11 @@ const Units = (() => {
     return ((to - from) / from) * 100;
   }
 
-  // Can a and b be measured on one scale (same category, or same unknown unit)?
+  // Can ingredient amounts in these units be measured on one scale (same
+  // category, or same unknown unit)?
   function comparableUnits(aUnits, bUnits) {
-    const at = temperatureKey(aUnits);
-    const bt = temperatureKey(bUnits);
+    const at = temperatureKey(aUnits, false);
+    const bt = temperatureKey(bUnits, false);
     if (at || bt) return !!at && !!bt;
     const ad = lookup(aUnits);
     const bd = lookup(bUnits);

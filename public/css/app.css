@@ -1100,6 +1100,13 @@ button.ing-qty {
   border-color: transparent;
 }
 .btn-primary:hover { background: var(--accent2); color: #fff; }
+/* Important but not the main action (Promote on Overview). */
+.btn-outline {
+  background: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border2));
+  color: color-mix(in srgb, var(--accent) 85%, var(--ink));
+}
+.btn-outline:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--accent); }
 .btn-ghost {
   background: none;
   border-color: transparent;
@@ -1678,25 +1685,38 @@ textarea.field-input { min-height: 80px; resize: vertical; }
   text-transform: uppercase;
   margin-bottom: 6px;
 }
-.diff-added   { background: #e6f4ea; border-left: 3px solid var(--green); padding: 6px 10px; border-radius: 0 var(--r) var(--r) 0; font-size: 0.88rem; margin: 3px 0; }
-.diff-removed { background: #fff0ec; border-left: 3px solid #c04040; padding: 6px 10px; border-radius: 0 var(--r) var(--r) 0; font-size: 0.88rem; margin: 3px 0; }
-.diff-changed { background: #fff8e0; border-left: 3px solid var(--gold); padding: 6px 10px; border-radius: 0 var(--r) var(--r) 0; font-size: 0.88rem; margin: 3px 0; }
-.diff-row-meta { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink2); }
-/* Near-equal amounts (1 cup vs 240 ml): rewritten, not changed. */
-.diff-same    { background: var(--bg2); border-left: 3px solid var(--border); padding: 6px 10px; border-radius: 0 var(--r) var(--r) 0; font-size: 0.88rem; margin: 3px 0; color: var(--ink2); }
-@media (prefers-color-scheme: dark) {
-  .diff-added   { background: #1a3d22; }
-  .diff-removed { background: #3d1010; }
-  .diff-changed { background: #3d2d00; }
+/* Diff rows: a thin tinted rule on the left and colour on the values only,
+   so the compare reads in the same quiet register as the cook-log diff (A4). */
+.diff-added, .diff-removed, .diff-changed, .diff-swap, .diff-same {
+  --diff-rule: var(--border);
+  border-left: 2px solid var(--diff-rule);
+  padding: 4px 0 4px 12px;
+  margin: 2px 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
 }
+.diff-added   { --diff-rule: color-mix(in srgb, var(--green) 65%, transparent); }
+.diff-removed { --diff-rule: color-mix(in srgb, #c04040 60%, transparent); }
+.diff-changed { --diff-rule: color-mix(in srgb, var(--gold) 70%, transparent); }
+.diff-swap    { --diff-rule: color-mix(in srgb, var(--accent) 60%, transparent); border-left-style: dashed; }
+/* Near-equal amounts (1 cup vs 240 ml): rewritten, not changed. */
+.diff-same    { color: var(--ink2); }
+.diff-row-meta { font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink3); margin-left: 4px; }
+.diff-from { color: var(--ink3); }
+.diff-removed .diff-from { text-decoration: line-through; text-decoration-color: color-mix(in srgb, #c04040 55%, transparent); }
+.diff-changed .diff-to { color: color-mix(in srgb, var(--gold) 80%, var(--ink)); font-weight: 600; }
+.diff-swap .diff-to    { color: color-mix(in srgb, var(--accent) 80%, var(--ink)); font-weight: 600; }
+.diff-added .diff-to   { color: var(--green); font-weight: 600; }
+.diff-name { font-weight: 600; }
+.diff-swap .diff-name-from { color: var(--ink3); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--ink3) 60%, transparent); }
 .diff-sign { font-family: var(--font-mono); font-weight: 700; }
 .diff-tag {
   display: inline-block;
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--ink2);
+  color: color-mix(in srgb, var(--accent) 75%, var(--ink));
   border: 1px solid currentColor;
   border-radius: 3px;
   padding: 0 4px;
@@ -1705,8 +1725,7 @@ textarea.field-input { min-height: 80px; resize: vertical; }
 }
 .diff-metric { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .diff-metric-name { font-weight: 600; text-transform: capitalize; }
-.diff-metric-value { font-family: var(--font-mono); font-size: 0.95rem; }
-.diff-changed .diff-metric-value { font-weight: 600; }
+.diff-metric .diff-from, .diff-metric .diff-to { font-family: var(--font-mono); font-size: 0.95rem; }
 .diff-summary { cursor: pointer; margin-bottom: 0; }
 details[open] > .diff-summary { margin-bottom: 10px; }
 .diff-meta {
@@ -2339,6 +2358,17 @@ body.print-route header {
   gap: 6px;
   flex-wrap: wrap;
 }
+/* Promote dialog: how much cooking backs the version. */
+.release-evidence {
+  margin-top: 10px;
+  font-size: 0.84rem;
+  color: var(--ink2);
+  padding: 8px 10px;
+  border-left: 2px solid var(--border2);
+}
+.release-evidence:empty { display: none; }
+.release-evidence-warn { border-left-color: color-mix(in srgb, var(--gold) 70%, transparent); }
+.release-evidence .link-btn { margin-left: 4px; }
 .overview-sidebar-card-quiet {
   padding: 12px 14px;
   background: transparent;

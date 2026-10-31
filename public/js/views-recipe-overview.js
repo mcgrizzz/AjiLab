@@ -66,24 +66,37 @@ Object.assign(RecipeView, {
     this.renderImageManager();
   },
 
+  // Cooking comes first: "Log this cook" is the one filled button and logs the
+  // version (and scale) on screen; Print sits beside it. Releasing is a
+  // deliberate step, so Promote/Release is outlined.
   overviewPrimaryBannerHtml(primary, primaryLabel, isExperimentPrimary, best) {
     const badgeClass = primary.is_draft ? 'draft' : primary.status;
-    const actions = [];
+    const versionName = primary.is_draft ? 'the draft' : (primary.version_string || 'this version');
+    const scaleNote = this.scale && this.scale !== 1 ? ` at ${formatEditableQuantity(this.scale)}×` : '';
+    const actions = [
+      `<button class="btn btn-sm btn-primary" onclick="RecipeView.logThisCook()" title="Log a cook of ${escHtml(versionName)}${escHtml(scaleNote)}">Log this cook</button>`,
+      `<button class="btn btn-sm" onclick="RecipeView.openPrintView()" title="Print ${escHtml(versionName)}${escHtml(scaleNote)} (Ctrl+P)">Print</button>`,
+    ];
     if (isExperimentPrimary) {
       const releaseLabel = primary.is_draft
         ? 'Release version…'
         : `Promote ${escHtml(primary.version_string || 'beta')}…`;
-      actions.push(`<button class="btn btn-sm btn-primary" onclick="RecipeView.openReleaseModal()">${releaseLabel}</button>`);
+      actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openReleaseModal()">${releaseLabel}</button>`);
       if (best) {
-        actions.push(`<button class="btn btn-sm" onclick="RecipeView.setTab('editor')">Open Editor</button>`);
+        actions.push(`<button class="btn btn-sm btn-ghost" onclick="RecipeView.setTab('editor')">Open Editor</button>`);
       }
     } else if (primary.is_draft) {
-      actions.push(`<button class="btn btn-sm" onclick="RecipeView.setTab('editor')">Open Editor</button>`);
+      actions.push(`<button class="btn btn-sm btn-ghost" onclick="RecipeView.setTab('editor')">Open Editor</button>`);
     }
     return `<div class="overview-primary-banner">
       <span class="badge badge-${badgeClass}">${primaryLabel}</span>
-      ${actions.length ? `<div class="overview-primary-banner-actions">${actions.join('')}</div>` : ''}
+      <div class="overview-primary-banner-actions">${actions.join('')}</div>
     </div>`;
+  },
+
+  // New cook log for the version on screen, noting the scale if not 1×.
+  logThisCook() {
+    this.openCookLogModal(undefined, { scale: this.scale });
   },
 
   overviewSidebarHtml() {
@@ -195,11 +208,49 @@ Object.assign(RecipeView, {
         <textarea id="rel-changelog" class="field-input" placeholder="What changed in this version?"></textarea>
       </div>
       <div class="text-muted" style="font-size:0.82rem;margin-top:10px">Source: ${escHtml(sourceLabel)}</div>
+      ${sourceVersion === 'draft' ? '' : `<div id="rel-evidence" class="release-evidence" aria-live="polite"></div>`}
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
         <button class="btn btn-primary" onclick="RecipeView.release()">Release</button>
       </div>`);
     setTimeout(() => document.getElementById('rel-version')?.select(), 100);
+    if (sourceVersion !== 'draft') this.loadReleaseEvidence(sourceVersion);
+  },
+
+  // How much cooking backs this version: promoting something nobody has
+  // cooked should be a conscious choice.
+  async loadReleaseEvidence(versionString) {
+    const el = document.getElementById('rel-evidence');
+    if (!el) return;
+    el.textContent = 'Checking cook logs…';
+    let logs;
+    try {
+      logs = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(versionString)}/cook-logs`);
+    } catch {
+      if (document.getElementById('rel-evidence') === el) el.textContent = '';
+      return;
+    }
+    if (document.getElementById('rel-evidence') !== el) return; // modal changed
+    const list = Array.isArray(logs) ? logs : [];
+    const best = this.recipe.current_best_release?.version_string;
+    const compareLink = best && best !== versionString
+      ? ` <button type="button" class="link-btn" onclick="RecipeView.showCompare('${escJs(best)}', '${escJs(versionString)}')">See changes from ${escHtml(best)}</button>`
+      : '';
+    if (!list.length) {
+      el.className = 'release-evidence release-evidence-warn';
+      el.innerHTML = `<strong>No cooks logged on ${escHtml(versionString)} yet.</strong> Consider cooking it before promoting.${compareLink}`;
+      return;
+    }
+    const latest = list.reduce((a, b) => (new Date(a.cooked_at) > new Date(b.cooked_at) ? a : b));
+    el.className = 'release-evidence';
+    el.innerHTML = `${list.length} cook${list.length === 1 ? '' : 's'} logged on ${escHtml(versionString)} · latest ${escHtml(fmtDate(latest.cooked_at))}${latest.outcome ? `: “${escHtml(latest.outcome)}”` : ''}.${compareLink}`;
+  },
+
+  // Open the Versions tab's compare on a given pair.
+  showCompare(from, to) {
+    closeModal();
+    this.pendingCompare = { from, to };
+    this.setTab('versions');
   },
 
   async release() {

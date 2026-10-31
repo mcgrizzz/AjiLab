@@ -173,7 +173,11 @@ Object.assign(RecipeView, {
     }
     const opts = (selected) => options.map((option) => `
       <option value="${escHtml(option.val)}" ${option.val === selected ? 'selected' : ''}>${escHtml(option.label)}</option>`).join('');
-    const { from, to } = this.defaultComparePair(options.map((option) => option.val));
+    const keys = options.map((option) => option.val);
+    const pending = this.pendingCompare;
+    const { from, to } = pending && keys.includes(pending.from) && keys.includes(pending.to)
+      ? pending
+      : this.defaultComparePair(keys);
     return `
       <div class="compare-selectors">
         <select id="cmp-from" aria-label="Compare from" onchange="RecipeView.runCompare()">${opts(from)}</select>
@@ -198,6 +202,14 @@ Object.assign(RecipeView, {
   bindComparePanel(root) {
     const panel = root.querySelector('.versions-compare-section');
     if (!panel) return;
+    if (this.pendingCompare) {
+      // Opened via "See changes from …": show it right away.
+      this.pendingCompare = null;
+      panel.open = true;
+      panel.dataset.loaded = '1';
+      this.runCompare();
+      panel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
     panel.addEventListener('toggle', () => {
       if (panel.open && !panel.dataset.loaded) {
         panel.dataset.loaded = '1';
@@ -218,7 +230,7 @@ Object.assign(RecipeView, {
     const requestId = (this.compareRequestId = (this.compareRequestId || 0) + 1);
     result.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
     try {
-      const cmp = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+      const cmp = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&temp=${encodeURIComponent(this.temperatureUnit || 'F')}`);
       if (requestId !== this.compareRequestId) return; // a newer pick won
       this.renderCompareResult(result, cmp);
     } catch (e) {
@@ -265,12 +277,15 @@ Object.assign(RecipeView, {
 
   renderMetricChanges(metrics) {
     if (!metrics.length) return '';
+    const from = (text) => `<span class="diff-from">${escHtml(text || '—')}</span>`;
+    const to = (text) => `<span class="diff-to">${escHtml(text || '—')}</span>`;
+    const meta = (text) => (text ? `<span class="diff-row-meta">${escHtml(text)}</span>` : '');
     return `<div class="diff-metrics">${metrics.map((metric) => {
       const name = `<span class="diff-metric-name">${escHtml(metric.name)}</span>`;
-      if (metric.kind === 'added') return `<div class="diff-metric diff-added">${name} <span class="diff-metric-value">${escHtml(metric.to_display || '—')}</span> <span class="diff-row-meta">new</span></div>`;
-      if (metric.kind === 'removed') return `<div class="diff-metric diff-removed">${name} <span class="diff-metric-value">${escHtml(metric.from_display || '—')}</span> <span class="diff-row-meta">removed</span></div>`;
-      if (metric.kind === 'same') return `<div class="diff-metric diff-same">${name} <span class="diff-metric-value">${escHtml(metric.to_display || '—')}</span> <span class="diff-row-meta">unchanged</span></div>`;
-      return `<div class="diff-metric diff-changed">${name} <span class="diff-metric-value">${escHtml(metric.from_display || '—')} → ${escHtml(metric.to_display || '—')}</span>${metric.delta_display ? ` <span class="diff-row-meta">${escHtml(metric.delta_display)}</span>` : ''}</div>`;
+      if (metric.kind === 'added') return `<div class="diff-metric diff-added">${name} ${to(metric.to_display)}${meta('new')}</div>`;
+      if (metric.kind === 'removed') return `<div class="diff-metric diff-removed">${name} ${from(metric.from_display)}${meta('removed')}</div>`;
+      if (metric.kind === 'same') return `<div class="diff-metric diff-same">${name} <span class="diff-to">${escHtml(metric.to_display || '—')}</span>${meta('unchanged')}</div>`;
+      return `<div class="diff-metric diff-changed">${name} ${from(metric.from_display)} → ${to(metric.to_display)}${meta(metric.delta_display)}</div>`;
     }).join('')}</div>`;
   },
 
@@ -283,13 +298,17 @@ Object.assign(RecipeView, {
     if (!changed.length && !renamed.length && !removed.length && !added.length && !approx.length) {
       return '<p class="text-muted compare-empty">No ingredient changes.</p>';
     }
-    const pct = (row) => (row.percent_change === null || row.percent_change === undefined ? '' : ` <span class="diff-row-meta">${escHtml(formatPercentChange(row.percent_change))}</span>`);
+    const name = (text, cls = 'diff-name') => `<span class="${cls}">${escHtml(text)}</span>`;
+    const from = (text) => `<span class="diff-from">${escHtml(text)}</span>`;
+    const to = (text) => `<span class="diff-to">${escHtml(text)}</span>`;
+    const meta = (text) => (text ? `<span class="diff-row-meta">${escHtml(text)}</span>` : '');
+    const pct = (row) => (row.percent_change === null || row.percent_change === undefined ? '' : meta(formatPercentChange(row.percent_change)));
     const rows = [
-      ...changed.map((row) => `<div class="diff-changed">${escHtml(row.name)} ${escHtml(row.from_display)} → ${escHtml(row.to_display)}${pct(row)}</div>`),
-      ...renamed.map((row) => `<div class="diff-changed"><span class="diff-tag">swap</span> ${escHtml(row.from_name)} ${escHtml(row.from_display)} → ${escHtml(row.name)} ${escHtml(row.to_display)}${pct(row)}</div>`),
-      ...removed.map((row) => `<div class="diff-removed"><span class="diff-sign" aria-hidden="true">−</span> ${escHtml(row.name)} ${escHtml(row.from_display)} <span class="diff-row-meta">removed</span></div>`),
-      ...added.map((row) => `<div class="diff-added"><span class="diff-sign" aria-hidden="true">+</span> ${escHtml(row.name)} ${escHtml(row.to_display)} <span class="diff-row-meta">added</span></div>`),
-      ...approx.map((row) => `<div class="diff-same" title="Written in different units but within 2% of each other">≈ ${escHtml(row.name)} ${escHtml(row.from_display)} → ${escHtml(row.to_display)} <span class="diff-row-meta">same amount</span></div>`),
+      ...changed.map((row) => `<div class="diff-changed">${name(row.name)} ${from(row.from_display)} → ${to(row.to_display)}${pct(row)}</div>`),
+      ...renamed.map((row) => `<div class="diff-swap"><span class="diff-tag">swap</span> ${name(row.from_name, 'diff-name diff-name-from')} ${from(row.from_display)} → ${name(row.name)} ${to(row.to_display)}${pct(row)}</div>`),
+      ...removed.map((row) => `<div class="diff-removed">${name(row.name)} ${from(row.from_display)}${meta('removed')}</div>`),
+      ...added.map((row) => `<div class="diff-added">${name(row.name)} ${to(row.to_display)}${meta('added')}</div>`),
+      ...approx.map((row) => `<div class="diff-same" title="Written in different units but within 2% of each other">≈ ${name(row.name)} ${escHtml(row.from_display)} → ${escHtml(row.to_display)}${meta('same amount')}</div>`),
     ];
     return rows.join('');
   },
@@ -300,13 +319,16 @@ Object.assign(RecipeView, {
       let body;
       if (change.kind === 'added') body = `<span class="diff-token-add">${value(change.to)}</span>`;
       else if (change.kind === 'removed') body = `<span class="diff-token-del">${value(change.from)}</span>`;
+      else if (change.inline_tokens) body = `<span class="diff-meta-value">${this.renderInlineTokens(change.inline_tokens)}</span>`;
       else body = `<span class="diff-token-del">${value(change.from)}</span><span class="diff-arrow"> → </span><span class="diff-token-add">${value(change.to)}</span>`;
       return `<dt>${escHtml(change.key)}</dt><dd>${body}</dd>`;
     }).join('')}</dl>`;
   },
 
-  renderStepChanges(changes) {
-    const renderInline = (tokens) => (tokens || []).map((token) => {
+  // Word-level diff: unchanged text plain, removed struck through, added
+  // highlighted, swaps as "old → new".
+  renderInlineTokens(tokens) {
+    return (tokens || []).map((token) => {
       if (token.op === 'context') return escHtml(token.text);
       if (token.op === 'replace') {
         const del = token.removed ? `<span class="diff-token-del">${escHtml(token.removed)}</span>` : '';
@@ -317,6 +339,10 @@ Object.assign(RecipeView, {
       const tcls = token.op === 'removed' ? 'diff-token-del' : 'diff-token-add';
       return `<span class="${tcls}">${escHtml(token.text)}</span>`;
     }).join('');
+  },
+
+  renderStepChanges(changes) {
+    const renderInline = (tokens) => this.renderInlineTokens(tokens);
 
     return `<ul class="step-diff-list">${changes.map((change) => {
       if (change.kind === 'section-renamed') {

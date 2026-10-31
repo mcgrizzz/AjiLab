@@ -62,7 +62,7 @@ Versions are immutable-ish snapshots. They have a non-null `version_string` and 
 | `DELETE` | `…/versions/:v` | Delete a version |
 | `POST` | `…/versions/:v/fork` | Replace the draft with this version's content |
 | `POST` | `…/release` | Release. Body: `{ version_string, status, changelog?, source_version? }` |
-| `GET` | `…/compare` | Diff. Query: `?from=v1.0&to=v1.1`. `from`/`to` may also be `draft`, `cooklog:<id>`, or `cooklog-source:<id>` |
+| `GET` | `…/compare` | Diff. Query: `?from=v1.0&to=v1.1`. `from`/`to` may also be `draft`, `cooklog:<id>`, or `cooklog-source:<id>`. Optional `temp=C\|F` shows step temperatures in that unit |
 
 `POST …/release` releases the draft by default; pass `source_version` to release a specific existing version under a new name (re-release / status change).
 

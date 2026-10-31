@@ -170,24 +170,61 @@ function snapToNumbers(tokens: InlineDiffToken[]): InlineDiffToken[] {
       }
     }
   }
-  const kept = tokens.filter((token) => token.op !== "context" || token.text !== "");
-  // Changes split by a single space are one change: "[1 → 240] [cup → ml]"
-  // reads as "[1 cup → 240 ml]".
+  return tidyEdges(mergeAcrossSpaces(tokens.filter((token) => token.op !== "context" || token.text !== "")));
+}
+
+// Changes split only by a space are one change: "[1 → 240] [cup → ml]" reads
+// as "[1 cup → 240 ml]", and "[+,] [+and water (30 g)]" as one added phrase
+// instead of a lone-comma chip.
+function mergeAcrossSpaces(tokens: InlineDiffToken[]): InlineDiffToken[] {
   const merged: InlineDiffToken[] = [];
-  for (let i = 0; i < kept.length; i++) {
-    const token = kept[i];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
     const prev = merged[merged.length - 1];
-    const next = kept[i + 1];
-    if (token.op === "context" && token.text === " " && prev?.op === "replace" && next?.op === "replace"
-      && prev.removed && prev.added && next.removed && next.added) {
-      prev.removed += ` ${next.removed}`;
-      prev.added += ` ${next.added}`;
+    const next = tokens[i + 1];
+    if (token.op === "context" && /^\s{1,2}$/.test(token.text) && prev?.op === "replace" && next?.op === "replace") {
+      prev.removed += token.text + next.removed;
+      prev.added += token.text + next.added;
       i += 1;
       continue;
     }
-    merged.push(token);
+    merged.push(token.op === "replace" ? { ...token } : token);
   }
   return merged;
+}
+
+// Whitespace both sides of a change share at its edges belongs to the
+// surrounding sentence, not the highlighted chip.
+function tidyEdges(tokens: InlineDiffToken[]): InlineDiffToken[] {
+  const out: InlineDiffToken[] = [];
+  const pushContext = (text: string) => {
+    if (!text) return;
+    const last = out[out.length - 1];
+    if (last?.op === "context") last.text += text;
+    else out.push({ op: "context", text });
+  };
+  for (const token of tokens) {
+    if (token.op === "context") {
+      pushContext(token.text);
+      continue;
+    }
+    let { removed, added } = token;
+    let lead = 0;
+    while (lead < Math.min(removed.length, added.length) && removed[lead] === added[lead] && /\s/.test(removed[lead])) lead++;
+    let trail = 0;
+    while (
+      trail < Math.min(removed.length, added.length) - lead
+      && removed[removed.length - 1 - trail] === added[added.length - 1 - trail]
+      && /\s/.test(removed[removed.length - 1 - trail])
+    ) trail++;
+    pushContext(removed.slice(0, lead));
+    const tail = trail ? removed.slice(removed.length - trail) : "";
+    removed = removed.slice(lead, removed.length - trail);
+    added = added.slice(lead, added.length - trail);
+    if (removed || added) out.push({ op: "replace", removed, added });
+    pushContext(tail);
+  }
+  return out;
 }
 
 function isShortBoundary(text: string): boolean {

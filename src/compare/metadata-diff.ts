@@ -3,11 +3,17 @@
 // metadata, not method. The compare view lists their changes in a collapsed
 // "Metadata" group instead of as a phantom "Step 1".
 
+import { inlineWordDiff } from "./inline-diff.ts";
+import type { InlineDiffToken } from "./types.ts";
+
 export interface MetadataChange {
   key: string;
   kind: "changed" | "added" | "removed";
   from: string | null;
   to: string | null;
+  // For "changed": word-level diff, so only AP_flour → Bread_flour lights up
+  // inside a long formula.
+  inline_tokens?: InlineDiffToken[];
 }
 
 // Split a leading `---` … `---` frontmatter block off the recipe text.
@@ -62,7 +68,10 @@ export function diffMetadata(fromText: string, toText: string): MetadataChange[]
   const out: MetadataChange[] = [];
   for (const [key, value] of from) {
     if (!to.has(key)) out.push({ key, kind: "removed", from: value, to: null });
-    else if (to.get(key) !== value) out.push({ key, kind: "changed", from: value, to: to.get(key) ?? null });
+    else if (to.get(key) !== value) {
+      const next = to.get(key) ?? "";
+      out.push({ key, kind: "changed", from: value, to: next, inline_tokens: inlineWordDiff(value, next) });
+    }
   }
   for (const [key, value] of to) {
     if (!from.has(key)) out.push({ key, kind: "added", from: null, to: value });

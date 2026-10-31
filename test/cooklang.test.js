@@ -1041,3 +1041,13 @@ test("annotateCookLogDiff ignores equivalent units but flags real changes", () =
   assert.ok(inlineTokens(changed.steps[0]).some((t) => t.source_quantity === 450));
   assert.equal(changed.steps[0].find((t) => t && t.type === "timer").source_quantity, 30);
 });
+
+test("a bare C in an ingredient amount is a cup; ^{…%C} stays Celsius", () => {
+  const parsed = parseCooklang("Warm @milk{1%C} to ^{40%C}.");
+  assert.equal(parsed.ingredient_summary.flat[0].units, "c");
+  const temp = parsed.steps[0].find((t) => t.kind === "temperature");
+  assert.equal(temp.units, "C");
+  // Same-length rewrite: editable token offsets still point at the source.
+  const tok = parsed.editable_tokens.find((t) => t.kind === "ingredient");
+  assert.equal("Warm @milk{1%C} to ^{40%C}.".slice(tok.rangeStart, tok.rangeEnd), "1");
+});

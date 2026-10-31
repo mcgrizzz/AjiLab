@@ -15,7 +15,7 @@ interface SharedUnits {
   sameAmount(a: Amount, b: Amount): boolean;
   percentChange(a: Amount, b: Amount): number | null;
   comparableUnits(aUnits: unknown, bUnits: unknown): boolean;
-  temperatureKey(unit: unknown): "F" | "C" | null;
+  temperatureKey(unit: unknown, allowBare?: boolean): "F" | "C" | null;
 }
 
 const Units = (globalThis as unknown as { Units: SharedUnits }).Units;
@@ -40,6 +40,8 @@ export function comparableUnits(aUnits: unknown, bUnits: unknown): boolean {
   return Units.comparableUnits(aUnits, bUnits);
 }
 
-export function temperatureKey(unit: unknown): "F" | "C" | null {
-  return Units.temperatureKey(unit);
+// Bare "C"/"F" count unless allowBare is false (ingredient amounts, where
+// "C" is a cup).
+export function temperatureKey(unit: unknown, allowBare = true): "F" | "C" | null {
+  return Units.temperatureKey(unit, allowBare);
 }

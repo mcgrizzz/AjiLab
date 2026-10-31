@@ -219,14 +219,15 @@ Object.assign(RecipeView, {
     try {
       const fromKey = `cooklog-source:${logId}`;
       const toKey = `cooklog:${logId}`;
-      const cmp = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/compare?from=${encodeURIComponent(fromKey)}&to=${encodeURIComponent(toKey)}`);
+      const cmp = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/compare?from=${encodeURIComponent(fromKey)}&to=${encodeURIComponent(toKey)}&temp=${encodeURIComponent(this.temperatureUnit || 'F')}`);
       this.renderCompareResult(target, cmp);
     } catch (e) {
       target.innerHTML = `<p class="text-muted">Error: ${escHtml(e.message)}</p>`;
     }
   },
 
-  openCookLogModal(existingId) {
+  // options.scale: the scale the cook used (from Overview's "Log this cook").
+  openCookLogModal(existingId, options = {}) {
     const existing = existingId ? (this.cookLogs || []).find((log) => log.id === existingId) : null;
     const versions = (this.recipe.versions || []).filter((v) => !v.is_draft && v.version_string);
     const defaultSourceKey = existing
@@ -279,6 +280,11 @@ Object.assign(RecipeView, {
         <button class="btn btn-primary" onclick="RecipeView.saveCookLog('${escJs(existingId || '')}')">${existing ? 'Save notes' : 'Create cook log'}</button>
       </div>`);
     if (!existing) this.trackUnsentCookLog();
+    // Cook logs record amounts at 1×; note a different scale so it isn't lost.
+    const notes = document.getElementById('cl-notes');
+    if (!existing && notes && !notes.value && options.scale && options.scale !== 1) {
+      notes.value = `Cooked at ${formatEditableQuantity(options.scale)}× scale.`;
+    }
     setTimeout(() => document.getElementById('cl-outcome')?.focus(), 80);
   },
 
@@ -347,6 +353,11 @@ Object.assign(RecipeView, {
       }
       closeModal();
       await this.refreshRecipe();
+      // Logged from Overview: land on the new log in Cook Logs.
+      if (created && this.activeTab !== 'cook-logs') {
+        this.activeTab = 'cook-logs';
+        this.syncTabUrl();
+      }
       this.renderScaffold(document.getElementById('view-container'));
       this.renderHeaderThumbnail();
       // Always repaint the cook logs tab so the feed isn't blank behind any

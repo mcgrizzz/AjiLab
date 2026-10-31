@@ -550,3 +550,42 @@ test("metric diff reports deltas from the displayed values", () => {
   const b = parseFloat(hydration.to_display);
   assert.equal(hydration.delta_display, `${b - a >= 0 ? "+" : "−"}${Math.round(Math.abs(b - a) * 10) / 10} pts`);
 });
+
+test("an ingredient written in C (cups) compares as volume, not temperature", () => {
+  const diff = diffIngredients(
+    parseCooklang("Add @milk{1%C}.").ingredient_summary.flat,
+    parseCooklang("Add @milk{240%ml}.").ingredient_summary.flat,
+  );
+  assert.deepEqual(diff.approx.map((r) => r.name), ["milk"], JSON.stringify(diff));
+  assert.equal(diff.changed.length, 0);
+});
+
+test("punctuation-only edits merge into one readable change", () => {
+  const [change] = diffStepBlocks(
+    "Mix @flour{45%g} and @salt{2%g} in a #bowl{}.",
+    "Mix @flour{45%g}, @salt{2%g}, and @water{30%g} in a #bowl{}.",
+  );
+  const replaces = change.inline_tokens.filter((t) => t.op === "replace").map((t) => [t.removed, t.added]);
+  assert.deepEqual(replaces, [[" and", ","], ["", ", and water (30 g)"]], JSON.stringify(change.inline_tokens));
+  const text = change.inline_tokens.map((t) => t.text ?? "[]").join("");
+  assert.equal(text, "Mix flour (45 g)[] salt (2 g)[] in a bowl.");
+});
+
+test("metadata changes carry a word-level diff", () => {
+  const [change] = diffMetadata(
+    "---\nmetric.solid: AP_flour.g + rye.g | g\n---\nMix.",
+    "---\nmetric.solid: Bread_flour.g + rye.g | g\n---\nMix.",
+  );
+  const replaces = change.inline_tokens.filter((t) => t.op === "replace").map((t) => [t.removed, t.added]);
+  assert.deepEqual(replaces, [["AP_flour", "Bread_flour"]]);
+});
+
+test("step temperatures follow the reader's chosen unit", () => {
+  const from = "Ferment at 26.5°C, keep at 23°C–25°C, bake at ^{450%F}.";
+  const to = "Ferment at ^{23%C}, keep at ^{23-25%C}, bake at 450 °F.";
+  const [inF] = diffStepBlocks(from, to, { temperatureUnit: "F" });
+  assert.deepEqual(inF.inline_tokens.filter((t) => t.op === "replace").map((t) => [t.removed, t.added]), [["79.7", "73.4"]]);
+  assert.ok(inF.inline_tokens.some((t) => t.op === "context" && t.text.includes("73.4-77°F")), JSON.stringify(inF.inline_tokens));
+  const [inC] = diffStepBlocks(from, to, { temperatureUnit: "C" });
+  assert.deepEqual(inC.inline_tokens.filter((t) => t.op === "replace").map((t) => [t.removed, t.added]), [["26.5", "23"]]);
+});

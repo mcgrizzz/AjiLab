@@ -18,9 +18,15 @@ import { temperatureKey } from "../quantity.ts";
 
 type Group = { name: string | null; blocks: StepBlock[] };
 
-export function diffStepBlocks(fromText: string, toText: string): StepChange[] {
-  const fromGroups = groupBySectionName(parseBlocks(fromText));
-  const toGroups = groupBySectionName(parseBlocks(toText));
+export interface StepDiffOptions {
+  // Show (and compare) every temperature in this unit, as the Overview's
+  // Temps toggle does. Omit to keep each side as written.
+  temperatureUnit?: "C" | "F" | null;
+}
+
+export function diffStepBlocks(fromText: string, toText: string, options: StepDiffOptions = {}): StepChange[] {
+  const fromGroups = groupBySectionName(parseBlocks(fromText, options));
+  const toGroups = groupBySectionName(parseBlocks(toText, options));
   const out: StepChange[] = [];
   for (const [fromGroup, toGroup] of pairGroups(fromGroups, toGroups)) {
     if (fromGroup && toGroup) {
@@ -114,7 +120,7 @@ function diffSectionBlocks(
   for (let i = pairs; i < toBlocks.length; i++) out.push(blockChange("added", sectionName, toBlocks[i]));
 }
 
-function parseBlocks(text: string): StepBlock[] {
+function parseBlocks(text: string, options: StepDiffOptions): StepBlock[] {
   const out: StepBlock[] = [];
   let currentSection: string | null = null;
   let stepNumber = 0; // counts across the whole recipe, like the Overview
@@ -148,11 +154,11 @@ function parseBlocks(text: string): StepBlock[] {
       continue;
     }
     if (firstLine.startsWith(">") || firstLine.startsWith("--")) {
-      out.push({ kind: "note", section_name: currentSection, step_number: null, text: readableText(joined) });
+      out.push({ kind: "note", section_name: currentSection, step_number: null, text: readableText(joined, options.temperatureUnit) });
       continue;
     }
     stepNumber += 1;
-    out.push({ kind: "step", section_name: currentSection, step_number: stepNumber, text: readableText(joined) });
+    out.push({ kind: "step", section_name: currentSection, step_number: stepNumber, text: readableText(joined, options.temperatureUnit) });
   }
   return out;
 }
@@ -187,17 +193,35 @@ function tokenText(token: ParsedStep): string {
   }
 }
 
+// Same rounding as the Overview (cooklang-render.js formatTemperatureNumber).
+function temperatureNumber(value: number): string {
+  const rounded = Math.abs(value - Math.round(value)) < 0.05 ? Math.round(value) : Number(value.toFixed(1));
+  return String(rounded);
+}
+
+function convertTemperature(value: number, from: string, to: string): number {
+  if (from === to) return value;
+  return to === "F" ? (value * 9) / 5 + 32 : ((value - 32) * 5) / 9;
+}
+
 // Write temperatures one way however they were typed: "450 °F" → "450°F",
-// "23°C–25°C" → "23-25°C".
-function normalizeTemperatures(text: string): string {
-  return text
+// "23°C–25°C" → "23-25°C"; then into `unit` if one was picked.
+function normalizeTemperatures(text: string, unit: "C" | "F" | null | undefined): string {
+  const tidy = text
     .replace(/(\d+(?:\.\d+)?)\s*°\s*([CF])\b/g, "$1°$2")
     .replace(/(\d+(?:\.\d+)?)°([CF])\s*[-–]\s*(\d+(?:\.\d+)?)°\2/g, "$1-$3°$2");
+  if (!unit) return tidy;
+  return tidy.replace(/(\d+(?:\.\d+)?)(?:-(\d+(?:\.\d+)?))?°([CF])\b/g, (match, a, b, from) => {
+    if (from === unit) return match;
+    const first = temperatureNumber(convertTemperature(parseFloat(a), from, unit));
+    const second = b === undefined ? null : temperatureNumber(convertTemperature(parseFloat(b), from, unit));
+    return `${first}${second === null ? "" : `-${second}`}°${unit}`;
+  });
 }
 
 // The block as the reader sees it in the Overview. Falls back to the raw text
 // if it doesn't parse.
-export function readableText(raw: string): string {
+export function readableText(raw: string, temperatureUnit: "C" | "F" | null = null): string {
   let text = raw;
   try {
     const parsed = parseCooklang(raw);
@@ -207,7 +231,7 @@ export function readableText(raw: string): string {
   } catch {
     // keep raw
   }
-  return normalizeTemperatures(text.replace(/\s+/g, " ").trim());
+  return normalizeTemperatures(text.replace(/\s+/g, " ").trim(), temperatureUnit);
 }
 
 function groupBySectionName(blocks: StepBlock[]): Group[] {

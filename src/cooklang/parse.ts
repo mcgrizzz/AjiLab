@@ -354,6 +354,15 @@ function detectDeviation(items: any[]): "added" | "skipped" | undefined {
   return m[1] === "+" ? "added" : "skipped";
 }
 
+// In an ingredient amount a bare "C" is a cup (@milk{1%C}), as cooks write
+// it. The upstream parser reads it as Celsius and would total the milk as
+// "1 °C"; hand it the lowercase "c" (its cup symbol) instead. Same length, so
+// source offsets are unchanged. Temperatures use ^{…%C}, which
+// extractTemperatures has already lifted out of the text.
+export function cupsNotCelsius(text: string): string {
+  return text.replace(/(@[^@#~{}\n]*\{[^{}%\n]*%\s*)C(\s*\})/g, "$1c$2");
+}
+
 export function parseCooklang(text: string): ParsedRecipe {
   if (!text || !text.trim()) {
     return {
@@ -368,7 +377,7 @@ export function parseCooklang(text: string): ParsedRecipe {
   }
   try {
     const { cleaned, extractions: temperatureExtractions } = extractTemperatures(text);
-    const [recipe] = parser.parse(cleaned);
+    const [recipe] = parser.parse(cupsNotCelsius(cleaned));
     // Annotation scans use the ORIGINAL text — `@` / `#` patterns are
     // untouched by temperature extraction.
     const ingredientAnnotations = collectComponentAnnotations(text, "@");
