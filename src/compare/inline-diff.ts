@@ -138,7 +138,56 @@ export function inlineWordDiff(oldStr: string, newStr: string): InlineDiffToken[
     }
     out.push({ op: "replace", removed, added });
   }
-  return out;
+  return snapToNumbers(out);
+}
+
+// Widen each change to whole numbers: "for 2[+.5] hours" reads as
+// "for [2 → 2.5] hours". Number pieces at the edge of neighbouring context
+// move into both sides of the change.
+function snapToNumbers(tokens: InlineDiffToken[]): InlineDiffToken[] {
+  const numberish = /[\d.]/;
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.op !== "replace") continue;
+    const prev = tokens[i - 1];
+    const startsNumeric = numberish.test(token.removed[0] || "") || numberish.test(token.added[0] || "");
+    if (prev?.op === "context" && startsNumeric) {
+      const tail = prev.text.match(/\d[\d.]*$/)?.[0] || "";
+      if (tail) {
+        prev.text = prev.text.slice(0, -tail.length);
+        token.removed = token.removed ? tail + token.removed : tail;
+        token.added = token.added ? tail + token.added : tail;
+      }
+    }
+    const next = tokens[i + 1];
+    const endsNumeric = numberish.test(token.removed.slice(-1)) || numberish.test(token.added.slice(-1));
+    if (next?.op === "context" && endsNumeric) {
+      const head = next.text.match(/^[\d.]*\d/)?.[0] || "";
+      if (head) {
+        next.text = next.text.slice(head.length);
+        token.removed = token.removed ? token.removed + head : head;
+        token.added = token.added ? token.added + head : head;
+      }
+    }
+  }
+  const kept = tokens.filter((token) => token.op !== "context" || token.text !== "");
+  // Changes split by a single space are one change: "[1 → 240] [cup → ml]"
+  // reads as "[1 cup → 240 ml]".
+  const merged: InlineDiffToken[] = [];
+  for (let i = 0; i < kept.length; i++) {
+    const token = kept[i];
+    const prev = merged[merged.length - 1];
+    const next = kept[i + 1];
+    if (token.op === "context" && token.text === " " && prev?.op === "replace" && next?.op === "replace"
+      && prev.removed && prev.added && next.removed && next.added) {
+      prev.removed += ` ${next.removed}`;
+      prev.added += ` ${next.added}`;
+      i += 1;
+      continue;
+    }
+    merged.push(token);
+  }
+  return merged;
 }
 
 function isShortBoundary(text: string): boolean {

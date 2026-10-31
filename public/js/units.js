@@ -306,8 +306,12 @@ const Units = (() => {
   }
 
   // ── Comparison ──
+  // A bare lowercase "c" is a cup (the cooklang parser writes cups as "c");
+  // Celsius needs "C", "°c" or the word.
   function temperatureKey(unit) {
-    const raw = String(unit ?? '').trim().toLowerCase().replace(/\s+/g, '').replace(/^degrees?/, '').replace(/^°/, '');
+    const written = String(unit ?? '').trim().replace(/\s+/g, '');
+    if (written === 'c') return null;
+    const raw = written.toLowerCase().replace(/^degrees?/, '').replace(/^°/, '');
     if (raw === 'f' || raw === 'fahrenheit') return 'F';
     if (raw === 'c' || raw === 'celsius') return 'C';
     return null;
@@ -344,36 +348,90 @@ const Units = (() => {
     return Math.abs(a - b) <= 1e-9;
   }
 
-  // Are two amounts ({ quantity, units, range? }) the same once units are
-  // converted? In the same unit the numbers must match exactly (26.5 → 27 °C
-  // is an edit). Across units, allow for the rounding conversions involve:
-  // temperatures within 1 °C (450 °F ≈ 232 °C), everything else within 0.5%.
-  // Unknown units must match by name; non-numeric amounts compare as text.
-  function sameAmount(a, b) {
+  // Within 2%: the gap between kitchen conventions, e.g. 1 cup = 240 ml on a
+  // nutrition label vs the exact 236.6 ml.
+  function near(a, b) {
+    return Math.abs(a - b) <= 0.02 * Math.max(Math.abs(a), Math.abs(b));
+  }
+
+  // How two amounts ({ quantity, units, range? }) relate once units are
+  // converted: 'same', 'near' or 'different'.
+  //  - In the same unit the numbers must match exactly (26.5 → 27 °C is an edit).
+  //  - Across units, allow for the rounding conversions involve: temperatures
+  //    within 1 °C (450 °F ≈ 232 °C), everything else within 0.5% → 'same'.
+  //  - Across units within 2% (1 cup vs 240 ml) → 'near': the author likely
+  //    just rewrote the amount. Highlighting treats this as a change; totals
+  //    can show it as "≈ same".
+  //  - Unknown units must match by name; non-numeric amounts compare as text.
+  function compareAmounts(a, b) {
+    const verdict = (same) => (same ? 'same' : 'different');
     const av = amountValues(a);
     const bv = amountValues(b);
-    if (!av || !bv) return looseText(a) === looseText(b);
+    if (!av || !bv) return verdict(looseText(a) === looseText(b));
     const at = temperatureKey(a?.units);
     const bt = temperatureKey(b?.units);
     if (at || bt) {
-      if (!at || !bt) return false;
-      if (at === bt) return av.every((v, i) => exact(v, bv[i]));
-      return av.every((v, i) => Math.abs(toCelsius(v, at) - toCelsius(bv[i], bt)) < 1);
+      if (!at || !bt) return 'different';
+      if (at === bt) return verdict(av.every((v, i) => exact(v, bv[i])));
+      return verdict(av.every((v, i) => Math.abs(toCelsius(v, at) - toCelsius(bv[i], bt)) < 1));
     }
     const ad = lookup(a?.units);
     const bd = lookup(b?.units);
     if (ad || bd) {
-      if (!ad || !bd || ad.category !== bd.category) return false;
-      if (ad.key === bd.key) return av.every((v, i) => exact(v, bv[i]));
-      return av.every((v, i) => close(v * ad.factor, bv[i] * bd.factor));
+      if (!ad || !bd || ad.category !== bd.category) return 'different';
+      if (ad.key === bd.key) return verdict(av.every((v, i) => exact(v, bv[i])));
+      const abase = av.map((v) => v * ad.factor);
+      const bbase = bv.map((v) => v * bd.factor);
+      if (abase.every((v, i) => close(v, bbase[i]))) return 'same';
+      return abase.every((v, i) => near(v, bbase[i])) ? 'near' : 'different';
     }
     const au = String(a?.units ?? '').trim().toLowerCase();
     const bu = String(b?.units ?? '').trim().toLowerCase();
-    return au === bu && av.every((v, i) => exact(v, bv[i]));
+    return verdict(au === bu && av.every((v, i) => exact(v, bv[i])));
+  }
+
+  function sameAmount(a, b) {
+    return compareAmounts(a, b) === 'same';
+  }
+
+  // Percent change from a to b, converting units (a range counts as its
+  // midpoint). Null when the amounts can't be put on one scale, or for
+  // temperatures, where a percentage means nothing.
+  function percentChange(a, b) {
+    const av = amountValues(a);
+    const bv = amountValues(b);
+    if (!av || !bv || temperatureKey(a?.units) || temperatureKey(b?.units)) return null;
+    let af = 1;
+    let bf = 1;
+    const ad = lookup(a?.units);
+    const bd = lookup(b?.units);
+    if (ad || bd) {
+      if (!ad || !bd || ad.category !== bd.category) return null;
+      af = ad.factor;
+      bf = bd.factor;
+    } else if (String(a?.units ?? '').trim().toLowerCase() !== String(b?.units ?? '').trim().toLowerCase()) {
+      return null;
+    }
+    const from = ((av[0] + av[1]) / 2) * af;
+    const to = ((bv[0] + bv[1]) / 2) * bf;
+    if (!(from > 0)) return null;
+    return ((to - from) / from) * 100;
+  }
+
+  // Can a and b be measured on one scale (same category, or same unknown unit)?
+  function comparableUnits(aUnits, bUnits) {
+    const at = temperatureKey(aUnits);
+    const bt = temperatureKey(bUnits);
+    if (at || bt) return !!at && !!bt;
+    const ad = lookup(aUnits);
+    const bd = lookup(bUnits);
+    if (ad || bd) return !!ad && !!bd && ad.category === bd.category;
+    return String(aUnits ?? '').trim().toLowerCase() === String(bUnits ?? '').trim().toLowerCase();
   }
 
   return { UNITS, key, lookup, unitLabel, parseAmount, parseQuantity, formatNumber,
-    overrideKey, present, alternatives, scaleForTarget, temperatureKey, sameAmount };
+    overrideKey, present, alternatives, scaleForTarget, temperatureKey,
+    compareAmounts, sameAmount, percentChange, comparableUnits };
 })();
 
 if (typeof globalThis !== 'undefined') globalThis.Units = Units;

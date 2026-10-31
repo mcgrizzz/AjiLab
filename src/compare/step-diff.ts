@@ -1,37 +1,91 @@
 // ── Section-aware step diff ──────────────────────────────────────────────────
-// Groups raw cooklang into ordered blocks (section heads, steps, notes), pairs
+// Groups raw cooklang into ordered blocks (steps, notes) per section, pairs
 // them across versions by section + ordinal, and emits a list of changes —
 // each carrying its own context (section name, step number) and a token-level
 // intra-step word diff so the surrounding sentence stays readable.
+//
+// Both sides are compared as the reader sees them, not as written:
+// `@flour{45%g}` reads "flour (45 g)", `^{450%F}` and plain "450 °F" both read
+// "450°F". So a step only shows as changed when what it says changed.
+// Step numbers count across the whole recipe, matching the Overview.
 
 import type { StepBlock, StepChange } from "./types.ts";
 import { inlineWordDiff } from "./inline-diff.ts";
+import { splitFrontmatter } from "./metadata-diff.ts";
+import { parseCooklang } from "../cooklang.ts";
+import type { ParsedStep } from "../cooklang.ts";
+import { temperatureKey } from "../quantity.ts";
+
+type Group = { name: string | null; blocks: StepBlock[] };
 
 export function diffStepBlocks(fromText: string, toText: string): StepChange[] {
   const fromGroups = groupBySectionName(parseBlocks(fromText));
   const toGroups = groupBySectionName(parseBlocks(toText));
   const out: StepChange[] = [];
-  const usedToKeys = new Set<string>();
-  // Walk from-sections in source order so the diff matches reading order.
-  for (const { name: sectionName, blocks: fromBlocks } of fromGroups) {
-    const key = sectionKey(sectionName);
-    const toEntry = toGroups.find((g) => sectionKey(g.name) === key);
-    if (!toEntry) {
-      for (const block of fromBlocks) {
-        out.push({ kind: "removed", section_name: sectionName, step_number: block.step_number, block_kind: block.kind, text: block.text });
+  for (const [fromGroup, toGroup] of pairGroups(fromGroups, toGroups)) {
+    if (fromGroup && toGroup) {
+      if (sectionKey(fromGroup.name) !== sectionKey(toGroup.name)) {
+        out.push({ kind: "section-renamed", section_name: toGroup.name, from_section_name: fromGroup.name });
       }
-      continue;
-    }
-    usedToKeys.add(key);
-    diffSectionBlocks(sectionName, fromBlocks, toEntry.blocks, out);
-  }
-  for (const { name: sectionName, blocks: toBlocks } of toGroups) {
-    if (usedToKeys.has(sectionKey(sectionName))) continue;
-    for (const block of toBlocks) {
-      out.push({ kind: "added", section_name: sectionName, step_number: block.step_number, block_kind: block.kind, text: block.text });
+      diffSectionBlocks(toGroup.name, fromGroup.blocks, toGroup.blocks, out);
+    } else if (fromGroup) {
+      for (const block of fromGroup.blocks) out.push(blockChange("removed", fromGroup.name, block));
+    } else if (toGroup) {
+      for (const block of toGroup.blocks) out.push(blockChange("added", toGroup.name, block));
     }
   }
   return out;
+}
+
+function blockChange(kind: "added" | "removed", sectionName: string | null, block: StepBlock): StepChange {
+  return { kind, section_name: sectionName, step_number: block.step_number, block_kind: block.kind, text: block.text };
+}
+
+// Pair sections across versions in reading order (of the newer side). Same
+// name pairs first; a leftover section sitting where a leftover section was
+// (same neighbour before it) is a rename ("Day before" → "1-3 Days before").
+function pairGroups(fromGroups: Group[], toGroups: Group[]): Array<[Group | null, Group | null]> {
+  const toMatch: number[] = toGroups.map(() => -1);
+  const fromUsed = new Set<number>();
+  toGroups.forEach((toGroup, j) => {
+    const i = fromGroups.findIndex((g, idx) => !fromUsed.has(idx) && sectionKey(g.name) === sectionKey(toGroup.name));
+    if (i >= 0) {
+      toMatch[j] = i;
+      fromUsed.add(i);
+    }
+  });
+  toGroups.forEach((_, j) => {
+    if (toMatch[j] >= 0) return;
+    const i = j === 0 ? 0 : toMatch[j - 1] + 1;
+    if ((j === 0 || toMatch[j - 1] >= 0) && i < fromGroups.length && !fromUsed.has(i)) {
+      toMatch[j] = i;
+      fromUsed.add(i);
+    }
+  });
+
+  const pairs: Array<[Group | null, Group | null]> = [];
+  const emitted = new Set<number>();
+  let next = 0;
+  toGroups.forEach((toGroup, j) => {
+    const i = toMatch[j];
+    if (i >= 0) {
+      // Sections dropped before this one read best right where they were.
+      for (; next < i; next++) {
+        if (!fromUsed.has(next) && !emitted.has(next)) {
+          pairs.push([fromGroups[next], null]);
+          emitted.add(next);
+        }
+      }
+      pairs.push([fromGroups[i], toGroup]);
+      next = Math.max(next, i + 1);
+    } else {
+      pairs.push([null, toGroup]);
+    }
+  });
+  fromGroups.forEach((group, i) => {
+    if (!fromUsed.has(i) && !emitted.has(i)) pairs.push([group, null]);
+  });
+  return pairs;
 }
 
 function diffSectionBlocks(
@@ -50,35 +104,39 @@ function diffSectionBlocks(
     out.push({
       kind: "modified",
       section_name: sectionName,
-      step_number: f.step_number,
-      block_kind: f.kind,
+      step_number: t.step_number,
+      from_step_number: f.step_number,
+      block_kind: t.kind,
       inline_tokens: inlineWordDiff(f.text, t.text),
     });
   }
-  for (let i = pairs; i < fromBlocks.length; i++) {
-    const b = fromBlocks[i];
-    out.push({ kind: "removed", section_name: sectionName, step_number: b.step_number, block_kind: b.kind, text: b.text });
-  }
-  for (let i = pairs; i < toBlocks.length; i++) {
-    const b = toBlocks[i];
-    out.push({ kind: "added", section_name: sectionName, step_number: b.step_number, block_kind: b.kind, text: b.text });
-  }
+  for (let i = pairs; i < fromBlocks.length; i++) out.push(blockChange("removed", sectionName, fromBlocks[i]));
+  for (let i = pairs; i < toBlocks.length; i++) out.push(blockChange("added", sectionName, toBlocks[i]));
 }
 
 function parseBlocks(text: string): StepBlock[] {
   const out: StepBlock[] = [];
   let currentSection: string | null = null;
-  let stepIndex = 0; // step counter within the current section
+  let stepNumber = 0; // counts across the whole recipe, like the Overview
   // Paragraph blocks are separated by blank lines. Section headings (`= Name`)
   // and metadata (`>> key: value`) get their own implicit boundaries.
-  const lines = text.split(/\r?\n/);
+  const lines = splitFrontmatter(text).body.split(/\r?\n/);
   const paragraphs: string[][] = [[]];
   for (const raw of lines) {
-    if (raw.trim() === "") {
+    const line = raw.trim();
+    if (line === "" || line.startsWith(">>")) {
       if (paragraphs[paragraphs.length - 1].length > 0) paragraphs.push([]);
-    } else {
-      paragraphs[paragraphs.length - 1].push(raw);
+      continue;
     }
+    if (line.startsWith("=")) {
+      // A heading ends the paragraph before it and stands alone, so a step
+      // written on the next line ("= Day before\nDo a refeed…") is kept.
+      if (paragraphs[paragraphs.length - 1].length > 0) paragraphs.push([]);
+      paragraphs[paragraphs.length - 1].push(raw);
+      paragraphs.push([]);
+      continue;
+    }
+    paragraphs[paragraphs.length - 1].push(raw);
   }
   for (const paragraph of paragraphs) {
     if (paragraph.length === 0) continue;
@@ -86,29 +144,74 @@ function parseBlocks(text: string): StepBlock[] {
     if (!joined) continue;
     const firstLine = paragraph[0].trim();
     if (firstLine.startsWith("=")) {
-      // Section heading. Strip leading `=` runs and trailing trim runs.
-      const name = firstLine.replace(/^=+\s*/, "").replace(/\s*=+$/, "").trim() || null;
-      currentSection = name;
-      stepIndex = 0;
+      currentSection = firstLine.replace(/^=+\s*/, "").replace(/\s*=+$/, "").trim() || null;
       continue;
     }
-    if (firstLine.startsWith(">>")) {
-      // Metadata line — these are header-y, surfaced separately if needed.
-      // Skip from step diff to avoid noisy "metadata changed" entries.
+    if (firstLine.startsWith(">") || firstLine.startsWith("--")) {
+      out.push({ kind: "note", section_name: currentSection, step_number: null, text: readableText(joined) });
       continue;
     }
-    if (firstLine.startsWith(">") && !firstLine.startsWith(">>")) {
-      out.push({ kind: "note", section_name: currentSection, step_number: null, text: joined });
-      continue;
-    }
-    stepIndex += 1;
-    out.push({ kind: "step", section_name: currentSection, step_number: stepIndex, text: joined });
+    stepNumber += 1;
+    out.push({ kind: "step", section_name: currentSection, step_number: stepNumber, text: readableText(joined) });
   }
   return out;
 }
 
-function groupBySectionName(blocks: StepBlock[]): Array<{ name: string | null; blocks: StepBlock[] }> {
-  const groups: Array<{ name: string | null; blocks: StepBlock[] }> = [];
+// ── Readable text ──
+
+function quantityText(quantity: unknown, units: string): string {
+  let qty = String(quantity ?? "").trim();
+  if (units && qty.endsWith(units)) qty = qty.slice(0, -units.length).trim();
+  return qty.replace(/\s*[-–]\s*/g, "-");
+}
+
+function temperatureText(quantity: unknown, units: string): string {
+  return `${quantityText(quantity, units)}°${temperatureKey(units)}`;
+}
+
+function tokenText(token: ParsedStep): string {
+  switch (token.type) {
+    case "ingredient": {
+      const qty = quantityText(token.quantity, token.units || "");
+      const amount = qty ? ` (${[qty, token.units].filter(Boolean).join(" ")})` : "";
+      const note = token.note ? ` (${token.note})` : "";
+      return `${token.name || token.value}${amount}${note}${token.optional ? " (optional)" : ""}`;
+    }
+    case "cookware":
+      return token.name || token.value;
+    case "inlineQuantity":
+      if (token.kind === "temperature" || temperatureKey(token.units)) return temperatureText(token.quantity, token.units || "");
+      return token.value;
+    default:
+      return token.value || "";
+  }
+}
+
+// Write temperatures one way however they were typed: "450 °F" → "450°F",
+// "23°C–25°C" → "23-25°C".
+function normalizeTemperatures(text: string): string {
+  return text
+    .replace(/(\d+(?:\.\d+)?)\s*°\s*([CF])\b/g, "$1°$2")
+    .replace(/(\d+(?:\.\d+)?)°([CF])\s*[-–]\s*(\d+(?:\.\d+)?)°\2/g, "$1-$3°$2");
+}
+
+// The block as the reader sees it in the Overview. Falls back to the raw text
+// if it doesn't parse.
+export function readableText(raw: string): string {
+  let text = raw;
+  try {
+    const parsed = parseCooklang(raw);
+    if (!parsed.error && parsed.steps.length) {
+      text = parsed.steps.map((step) => step.map(tokenText).join("")).join(" ");
+    }
+  } catch {
+    // keep raw
+  }
+  return normalizeTemperatures(text.replace(/\s+/g, " ").trim());
+}
+
+function groupBySectionName(blocks: StepBlock[]): Group[] {
+  const groups: Group[] = [];
   for (const block of blocks) {
     const last = groups[groups.length - 1];
     if (last && sectionKey(last.name) === sectionKey(block.section_name)) {

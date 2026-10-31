@@ -1,3 +1,16 @@
+// Ingredient diff between two ingredient lists. Callers pass the per-name
+// totals (`ingredient_summary.flat`), so water used in two steps compares as
+// one amount: 265 g → 380 g, not 265 g → 30 g plus a new 350 g.
+//
+// Amounts compare after unit conversion (shared logic in public/js/units.js):
+//   same      → not listed (1 L vs 1000 ml)
+//   near      → `approx`: across units within 2% (1 cup vs 240 ml), shown as
+//               "≈ same" rather than a change
+//   different → `changed`, with a percent change across units where possible
+// An ingredient that disappears while a similar one appears (AP flour → Bread
+// flour) is reported as a swap in `renamed` instead of a removal + addition.
+import { compareAmounts, percentChange, comparableUnits } from "./quantity.ts";
+
 export function diffIngredients(fromIngredients, toIngredients) {
   const fromBuckets = bucketIngredients(filterComparableIngredients(fromIngredients));
   const toBuckets = bucketIngredients(filterComparableIngredients(toIngredients));
@@ -6,6 +19,7 @@ export function diffIngredients(fromIngredients, toIngredients) {
   const added = [];
   const removed = [];
   const changed = [];
+  const approx = [];
 
   for (const key of keys) {
     const fromList = fromBuckets.get(key) || [];
@@ -16,37 +30,71 @@ export function diffIngredients(fromIngredients, toIngredients) {
       const fromIng = fromList[idx];
       const toIng = toList[idx];
       if (fromIng && toIng) {
-        if (
-          String(fromIng.quantity) !== String(toIng.quantity) ||
-          normalizeUnit(fromIng.units) !== normalizeUnit(toIng.units)
-        ) {
-          changed.push(createRow("changed", fromIng, toIng));
-        }
+        const verdict = compareAmounts(amountOf(fromIng), amountOf(toIng));
+        if (verdict === "near") approx.push(createRow("approx", fromIng, toIng));
+        else if (verdict === "different") changed.push(createRow("changed", fromIng, toIng));
       } else if (toIng) {
-        if (hasMeaningfulAmount(toIng)) {
-          added.push(createRow("added", null, toIng));
-        }
+        if (hasMeaningfulAmount(toIng)) added.push({ ing: toIng });
       } else if (fromIng) {
-        if (hasMeaningfulAmount(fromIng)) {
-          removed.push(createRow("removed", fromIng, null));
-        }
+        if (hasMeaningfulAmount(fromIng)) removed.push({ ing: fromIng });
       }
     }
   }
 
+  const renamed = pairSwaps(removed, added).map(([fromIng, toIng]) => createRow("renamed", fromIng, toIng));
   const sortRows = (rows) => rows.sort((a, b) => a.name.localeCompare(b.name));
 
   return {
-    added: sortRows(added),
-    removed: sortRows(removed),
+    added: sortRows(added.filter((entry) => !entry.paired).map((entry) => createRow("added", null, entry.ing))),
+    removed: sortRows(removed.filter((entry) => !entry.paired).map((entry) => createRow("removed", entry.ing, null))),
     changed: sortRows(changed),
+    renamed: sortRows(renamed),
+    approx: sortRows(approx),
   };
 }
 
+const STOP_WORDS = new Set(["a", "an", "and", "of", "the", "or", "with", "for", "to", "in", "fresh", "dried"]);
+
+function nameWords(name) {
+  return new Set(
+    String(name || "").toLowerCase().split(/[^a-z0-9]+/).filter((word) => word && !STOP_WORDS.has(word)),
+  );
+}
+
+// Pair removed/added ingredients that look like one ingredient swapped for
+// another: they share a word ("AP flour" / "Bread flour") and are measured the
+// same way. Best overlap pairs first; each entry pairs at most once. Marks the
+// paired entries and returns [fromIng, toIng] pairs.
+function pairSwaps(removed, added) {
+  const candidates = [];
+  for (const r of removed) {
+    const rWords = nameWords(r.ing.name);
+    for (const a of added) {
+      if (!comparableUnits(r.ing.units, a.ing.units)) continue;
+      const aWords = nameWords(a.ing.name);
+      let shared = 0;
+      for (const word of rWords) if (aWords.has(word)) shared += 1;
+      if (!shared) continue;
+      const union = new Set([...rWords, ...aWords]).size;
+      candidates.push({ r, a, score: shared / union });
+    }
+  }
+  candidates.sort((x, y) => y.score - x.score);
+  const pairs = [];
+  for (const { r, a } of candidates) {
+    if (r.paired || a.paired) continue;
+    r.paired = true;
+    a.paired = true;
+    pairs.push([r.ing, a.ing]);
+  }
+  return pairs;
+}
+
 // Classification (cook log vs source semantics):
-//   within-spec: the "to" scalar lands inside the "from" range, units match
+//   within-spec: the "to" scalar lands inside the "from" range, units match;
+//                or the amounts are near-equal across units
 //   deviation:   numeric changed and either no range existed or the value is
-//                outside it; or units changed
+//                outside it; or units changed; or the ingredient was swapped
 //   addition:    only present in `to`
 //   removal:     only present in `from`
 // Powers the cherry-pick promote UI — defaults pre-check `deviation` and
@@ -55,6 +103,8 @@ export function diffIngredients(fromIngredients, toIngredients) {
 export function classifyIngredientRow(row, fromIng) {
   if (row.status === "added") return "addition";
   if (row.status === "removed") return "removal";
+  if (row.status === "approx") return "within-spec";
+  if (row.status === "renamed") return "deviation";
   // changed
   const range = fromIng?.range;
   const toQty = parseQuantityNumber(row.to_quantity);
@@ -63,6 +113,10 @@ export function classifyIngredientRow(row, fromIng) {
     if (toQty >= range.min && toQty <= range.max) return "within-spec";
   }
   return "deviation";
+}
+
+function amountOf(ingredient) {
+  return { quantity: ingredient?.quantity, units: ingredient?.units, range: ingredient?.range ?? null };
 }
 
 function bucketIngredients(ingredients) {
@@ -106,8 +160,9 @@ function createRow(status, fromIng, toIng) {
       toUnits || fromUnits,
       status === "removed"
     ),
-    percent_change: computePercentChange(fromQuantity, fromUnits, toQuantity, toUnits),
+    percent_change: fromIng && toIng ? percentChange(amountOf(fromIng), amountOf(toIng)) : null,
   };
+  if (status === "renamed") row.from_name = (fromIng?.name || "").trim();
   row.classification = classifyIngredientRow(row, fromIng);
   return row;
 }
@@ -127,14 +182,6 @@ function formatIngredientAmount(quantity, units, useZeroFallback) {
   const unit = String(units || "").trim();
   if (!qty) return unit || "0";
   return unit ? `${qty} ${unit}` : qty;
-}
-
-function computePercentChange(fromQuantity, fromUnits, toQuantity, toUnits) {
-  if (normalizeUnit(fromUnits) !== normalizeUnit(toUnits)) return null;
-  const fromValue = parseQuantityNumber(fromQuantity);
-  const toValue = parseQuantityNumber(toQuantity);
-  if (fromValue === null || toValue === null || fromValue === 0) return null;
-  return ((toValue - fromValue) / fromValue) * 100;
 }
 
 function parseQuantityNumber(quantity) {

@@ -33,6 +33,7 @@ Object.assign(RecipeView, {
           <div class="versions-compare-body">${this.compareSectionHtml()}</div>
         </details>
       </div>`;
+    this.bindComparePanel(body);
     if (this.focusedVersion) {
       const safeVersion = (window.CSS && CSS.escape) ? CSS.escape(this.focusedVersion) : this.focusedVersion.replace(/"/g, '\\"');
       const target = body.querySelector(`.version-item[data-version="${safeVersion}"]`);
@@ -172,16 +173,37 @@ Object.assign(RecipeView, {
     }
     const opts = (selected) => options.map((option) => `
       <option value="${escHtml(option.val)}" ${option.val === selected ? 'selected' : ''}>${escHtml(option.label)}</option>`).join('');
-    const fromVal = options.length >= 2 ? options[options.length - 2].val : options[0].val;
-    const toVal = this.selectedVersionKey() || options[0].val;
+    const { from, to } = this.defaultComparePair(options.map((option) => option.val));
     return `
       <div class="compare-selectors">
-        <select id="cmp-from">${opts(fromVal)}</select>
+        <select id="cmp-from" aria-label="Compare from" onchange="RecipeView.runCompare()">${opts(from)}</select>
         <span class="vs">→</span>
-        <select id="cmp-to">${opts(toVal)}</select>
-        <button class="btn btn-sm" onclick="RecipeView.runCompare()">Compare</button>
+        <select id="cmp-to" aria-label="Compare to" onchange="RecipeView.runCompare()">${opts(to)}</select>
       </div>
-      <div id="compare-result"><div class="loading"><div class="spinner"></div></div></div>`;
+      <div id="compare-result"></div>`;
+  },
+
+  // Default: what you'd cook today (the current best release) → the version
+  // you're looking at. When those are the same, compare against the version
+  // before it instead.
+  defaultComparePair(keys) {
+    const to = keys.includes(this.selectedVersionKey()) ? this.selectedVersionKey() : keys[0];
+    const best = this.recipe.current_best_release?.version_string || this.recipe.latest_released || null;
+    if (best && best !== to && keys.includes(best)) return { from: best, to };
+    const idx = keys.indexOf(to);
+    return { from: keys[idx + 1] || keys[idx - 1], to };
+  },
+
+  // The compare panel is a <details>; run as soon as it opens.
+  bindComparePanel(root) {
+    const panel = root.querySelector('.versions-compare-section');
+    if (!panel) return;
+    panel.addEventListener('toggle', () => {
+      if (panel.open && !panel.dataset.loaded) {
+        panel.dataset.loaded = '1';
+        this.runCompare();
+      }
+    });
   },
 
   async runCompare() {
@@ -189,53 +211,98 @@ Object.assign(RecipeView, {
     const to = document.getElementById('cmp-to')?.value;
     const result = document.getElementById('compare-result');
     if (!from || !to || !result) return;
+    if (from === to) {
+      result.innerHTML = '<p class="text-muted compare-empty">Pick two different versions to compare.</p>';
+      return;
+    }
+    const requestId = (this.compareRequestId = (this.compareRequestId || 0) + 1);
     result.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
     try {
       const cmp = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+      if (requestId !== this.compareRequestId) return; // a newer pick won
       this.renderCompareResult(result, cmp);
     } catch (e) {
-      result.innerHTML = `<div class="tab-content"><p class="text-muted">Error: ${escHtml(e.message)}</p></div>`;
+      if (requestId !== this.compareRequestId) return;
+      result.innerHTML = `<div class="tab-content"><p class="text-muted">Couldn't compare these versions: ${escHtml(e.message)}</p></div>`;
     }
   },
 
+  // Order follows what a cook reads first: metrics (hydration…), ingredient
+  // totals, then the method. Metadata and the raw text diff stay collapsed.
   renderCompareResult(el, cmp) {
-    const renderGroup = (title, rows, renderRow) => {
-      if (!rows.length) return '';
-      return `
-        <div class="diff-group">
-          <div class="diff-subtitle">${escHtml(title)}</div>
-          ${rows.map(renderRow).join('')}
-        </div>`;
-    };
-    const idiff = cmp.ingredient_diff || { changed: [], removed: [], added: [] };
-    const ingHtml = (!idiff.changed?.length && !idiff.removed?.length && !idiff.added?.length)
-      ? '<p class="text-muted" style="font-size:0.88rem">No ingredient changes.</p>'
-      : [
-        renderGroup('Changes', idiff.changed || [], (row) => {
-          const suffix = row.percent_change === null ? '[CHANGED]' : formatPercentChange(row.percent_change);
-          return `<div class="diff-changed">${escHtml(row.name)} ${escHtml(row.from_display)} → ${escHtml(row.to_display)} <span class="diff-row-meta">${escHtml(suffix)}</span></div>`;
-        }),
-        renderGroup('Removals', idiff.removed || [], (row) => `<div class="diff-removed">- ${escHtml(row.from_display)} ${escHtml(row.name)}</div>`),
-        renderGroup('Additions', idiff.added || [], (row) => `<div class="diff-added">+ ${escHtml(row.to_display)} ${escHtml(row.name)}</div>`),
-      ].join('');
+    const metricsHtml = this.renderMetricChanges(cmp.metric_changes || []);
+    const ingHtml = this.renderIngredientChanges(cmp.ingredient_diff || {});
     const stepChanges = Array.isArray(cmp.step_changes) ? cmp.step_changes : [];
     const stepChangesHtml = stepChanges.length === 0
-      ? '<p class="text-muted" style="font-size:0.88rem">No step changes.</p>'
+      ? '<p class="text-muted compare-empty">No method changes.</p>'
       : this.renderStepChanges(stepChanges);
+    const metadata = cmp.metadata_changes || [];
     const patchHtml = this.renderInlineDiffPatch(cmp);
     el.innerHTML = `
+      ${metricsHtml ? `
       <div class="diff-section">
-        <div class="diff-title">Step changes</div>
-        ${stepChangesHtml}
-      </div>
+        <div class="diff-title">Metrics</div>
+        ${metricsHtml}
+      </div>` : ''}
       <div class="diff-section">
         <div class="diff-title">Ingredients (totals)</div>
         ${ingHtml}
       </div>
+      <div class="diff-section">
+        <div class="diff-title">Method</div>
+        ${stepChangesHtml}
+      </div>
+      ${metadata.length ? `
       <details class="diff-section">
-        <summary class="diff-title" style="cursor:pointer">Raw text diff</summary>
+        <summary class="diff-title diff-summary">Metadata (${metadata.length} change${metadata.length === 1 ? '' : 's'})</summary>
+        ${this.renderMetadataChanges(metadata)}
+      </details>` : ''}
+      <details class="diff-section">
+        <summary class="diff-title diff-summary">Raw text diff</summary>
         <div class="diff-patch">${patchHtml}</div>
       </details>`;
+  },
+
+  renderMetricChanges(metrics) {
+    if (!metrics.length) return '';
+    return `<div class="diff-metrics">${metrics.map((metric) => {
+      const name = `<span class="diff-metric-name">${escHtml(metric.name)}</span>`;
+      if (metric.kind === 'added') return `<div class="diff-metric diff-added">${name} <span class="diff-metric-value">${escHtml(metric.to_display || '—')}</span> <span class="diff-row-meta">new</span></div>`;
+      if (metric.kind === 'removed') return `<div class="diff-metric diff-removed">${name} <span class="diff-metric-value">${escHtml(metric.from_display || '—')}</span> <span class="diff-row-meta">removed</span></div>`;
+      if (metric.kind === 'same') return `<div class="diff-metric diff-same">${name} <span class="diff-metric-value">${escHtml(metric.to_display || '—')}</span> <span class="diff-row-meta">unchanged</span></div>`;
+      return `<div class="diff-metric diff-changed">${name} <span class="diff-metric-value">${escHtml(metric.from_display || '—')} → ${escHtml(metric.to_display || '—')}</span>${metric.delta_display ? ` <span class="diff-row-meta">${escHtml(metric.delta_display)}</span>` : ''}</div>`;
+    }).join('')}</div>`;
+  },
+
+  renderIngredientChanges(idiff) {
+    const changed = idiff.changed || [];
+    const renamed = idiff.renamed || [];
+    const removed = idiff.removed || [];
+    const added = idiff.added || [];
+    const approx = idiff.approx || [];
+    if (!changed.length && !renamed.length && !removed.length && !added.length && !approx.length) {
+      return '<p class="text-muted compare-empty">No ingredient changes.</p>';
+    }
+    const pct = (row) => (row.percent_change === null || row.percent_change === undefined ? '' : ` <span class="diff-row-meta">${escHtml(formatPercentChange(row.percent_change))}</span>`);
+    const rows = [
+      ...changed.map((row) => `<div class="diff-changed">${escHtml(row.name)} ${escHtml(row.from_display)} → ${escHtml(row.to_display)}${pct(row)}</div>`),
+      ...renamed.map((row) => `<div class="diff-changed"><span class="diff-tag">swap</span> ${escHtml(row.from_name)} ${escHtml(row.from_display)} → ${escHtml(row.name)} ${escHtml(row.to_display)}${pct(row)}</div>`),
+      ...removed.map((row) => `<div class="diff-removed"><span class="diff-sign" aria-hidden="true">−</span> ${escHtml(row.name)} ${escHtml(row.from_display)} <span class="diff-row-meta">removed</span></div>`),
+      ...added.map((row) => `<div class="diff-added"><span class="diff-sign" aria-hidden="true">+</span> ${escHtml(row.name)} ${escHtml(row.to_display)} <span class="diff-row-meta">added</span></div>`),
+      ...approx.map((row) => `<div class="diff-same" title="Written in different units but within 2% of each other">≈ ${escHtml(row.name)} ${escHtml(row.from_display)} → ${escHtml(row.to_display)} <span class="diff-row-meta">same amount</span></div>`),
+    ];
+    return rows.join('');
+  },
+
+  renderMetadataChanges(changes) {
+    const value = (text) => `<span class="diff-meta-value">${escHtml(text || '')}</span>`;
+    return `<dl class="diff-meta">${changes.map((change) => {
+      let body;
+      if (change.kind === 'added') body = `<span class="diff-token-add">${value(change.to)}</span>`;
+      else if (change.kind === 'removed') body = `<span class="diff-token-del">${value(change.from)}</span>`;
+      else body = `<span class="diff-token-del">${value(change.from)}</span><span class="diff-arrow"> → </span><span class="diff-token-add">${value(change.to)}</span>`;
+      return `<dt>${escHtml(change.key)}</dt><dd>${body}</dd>`;
+    }).join('')}</dl>`;
   },
 
   renderStepChanges(changes) {
@@ -252,9 +319,19 @@ Object.assign(RecipeView, {
     }).join('');
 
     return `<ul class="step-diff-list">${changes.map((change) => {
-      const sectionLabel = change.section_name ? `${change.section_name} · ` : '';
-      const stepLabel = change.block_kind === 'note' ? 'Note' : (change.step_number ? `Step ${change.step_number}` : 'Step');
-      const prefix = `<span class="step-diff-prefix">${escHtml(sectionLabel + stepLabel)}</span>`;
+      if (change.kind === 'section-renamed') {
+        return `<li class="step-diff-row step-diff-section"><span class="step-diff-prefix">Section</span><span class="step-diff-body"><span class="diff-token-del">${escHtml(change.from_section_name || 'Untitled')}</span><span class="diff-arrow"> → </span><span class="diff-token-add">${escHtml(change.section_name || 'Untitled')}</span></span></li>`;
+      }
+      // Step numbers count across the recipe, as on the Overview.
+      let stepLabel = 'Step';
+      if (change.block_kind === 'note') stepLabel = 'Note';
+      else if (change.step_number) {
+        const was = change.kind === 'modified' && change.from_step_number && change.from_step_number !== change.step_number
+          ? ` (was ${change.from_step_number})` : '';
+        stepLabel = `${change.kind === 'removed' ? 'Old step' : 'Step'} ${change.step_number}${was}`;
+      }
+      const section = change.section_name ? `<span class="step-diff-section-name">${escHtml(change.section_name)}</span>` : '';
+      const prefix = `<span class="step-diff-prefix">${escHtml(stepLabel)}${section}</span>`;
       let body, cls;
       if (change.kind === 'modified') {
         cls = 'step-diff-modified';

@@ -70,14 +70,26 @@ Versions are immutable-ish snapshots. They have a non-null `version_string` and 
 
 ### Compare response
 
+Ingredients compare per-name totals after unit conversion. Step text is compared as the reader sees it (ingredients as "name (amount)", temperatures written one way), so syntax-only edits don't show. Frontmatter and `>>` lines are reported in `metadata_changes`, not as steps.
+
 ```json
 {
   "from": { "version": "v1.0", "status": "released" },
   "to":   { "version": "v1.1", "status": "released" },
   "text_diff": "…unified patch…",
   "text_diff_lines": [ /* per-line inline diff with char-level tokens */ ],
-  "ingredient_diff": { "added": [], "removed": [], "changed": [] },
-  "step_changes": [ /* section-grouped step block changes */ ],
+  "metric_changes": [
+    { "name": "hydration", "format_unit": "%", "kind": "changed",
+      "from_display": "71.6%", "to_display": "98.3%", "delta_display": "+26.7 pts" }
+  ],
+  "ingredient_diff": {
+    "changed": [ { "name": "water", "from_display": "265 g", "to_display": "380 g", "percent_change": 43.4 } ],
+    "renamed": [ { "from_name": "AP flour", "name": "Bread flour", "from_display": "360 g", "to_display": "375 g" } ],
+    "approx":  [ /* same amount within 2% across units, e.g. 1 cup → 240 ml */ ],
+    "added": [], "removed": []
+  },
+  "metadata_changes": [ { "key": "source", "kind": "changed", "from": "…", "to": "…" } ],
+  "step_changes": [ /* modified | added | removed | section-renamed; step_number counts across the recipe */ ],
   "step_count_from": 7,
   "step_count_to": 8
 }

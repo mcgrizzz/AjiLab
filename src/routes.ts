@@ -5,8 +5,7 @@ import os from "os";
 import path from "path";
 import { Hono } from "hono";
 import { parseCooklang, annotateCookLogDiff, annotateIngredientSummaryDiff, applyStepDeviation, updateStepQuantity, insertNoteAfterStep, deleteStep as deleteCooklangStep, insertStepAfterStep, insertStepInSection, insertSectionNote, renameSection, insertRecipeNote, resolveDeviationMarkers } from "./cooklang.ts";
-import { buildInlineDiffLines, diffStepBlocks, classifyCookLogVsSource, synthesizePromotedRecipe } from "./compare.ts";
-import { diffIngredients } from "./ingredient-compare.js";
+import { buildInlineDiffLines, diffStepBlocks, diffMetadata, diffMetrics, classifyCookLogVsSource, synthesizePromotedRecipe, diffIngredients } from "./compare.ts";
 import {
   applyBranchSync,
   attachRecipeImage,
@@ -97,7 +96,10 @@ async function compareVersions(recipe: any, branch: string, fromStr: string, toS
     to: { version: toStr, status: toV.status },
     text_diff: textDiff,
     text_diff_lines: buildInlineDiffLines(textDiff),
-    ingredient_diff: diffIngredients(fromParsed.ingredients, toParsed.ingredients),
+    // Per-name totals, so an ingredient used in several steps compares as one.
+    ingredient_diff: diffIngredients(fromParsed.ingredient_summary?.flat || [], toParsed.ingredient_summary?.flat || []),
+    metric_changes: diffMetrics(fromParsed.metrics, toParsed.metrics),
+    metadata_changes: diffMetadata(fromV.cooklang_text || "", toV.cooklang_text || ""),
     step_changes: diffStepBlocks(fromV.cooklang_text || "", toV.cooklang_text || ""),
     step_count_from: fromParsed.steps.length,
     step_count_to: toParsed.steps.length,

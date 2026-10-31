@@ -17,7 +17,8 @@
 > | A5 Duplicate modal note | **Partly fixed.** Duplicate removed. Other items still open. |
 > | U4 False-positive cook-log diffs | **Fixed.** Amounts are compared after unit conversion via the shared `Units.sameAmount` (`public/js/units.js`, used server-side through `src/quantity.ts`): `450°F` vs `^{450%F}`, 1 L vs 1000 ml and min vs minutes no longer flag; same-unit numeric edits (26.5 → 27 °C) still do. U3 should reuse it. |
 > | Unit popover review | **Fixed.** Popover flips/clamps on screen; chosen units step down for small rows (cups → tbsp); US units as fractions within 3%, metric as decimals; larger fraction glyphs; errors name the ingredient ("Spaghetti is measured by weight. Try g, oz or lb."). |
-> | U3, U5, U6, U9, U11, U13, A1, A2, A4 | Open. |
+> | U3 Version compare | **Fixed.** Order is metrics (hydration +26.7 pts) → ingredient totals → method, with metadata and the raw diff collapsed. Ingredients compare per-name totals after unit conversion (water 265 → 380 g); a disappearing + appearing ingredient that share a word and kind of measure show as a swap (AP flour 360 g → Bread flour 375 g); amounts within 2% across units (1 cup vs 240 ml) show as "≈ same amount". Both sides of a step are compared as the reader sees them (`@flour{45%g}` → "flour (45 g)", `^{450%F}` = "450 °F"), steps are numbered as on the Overview, renamed sections pair up, and frontmatter is a Metadata list rather than "Step 1". Defaults to current best → selected version and runs when opened or when either side changes. Cook-log highlighting stays strict (0.5%). |
+> | U5, U6, U9, U11, U13, A1, A2, A4 | Open. |
 
 **Audited:** October 31, 2026, on the live deployment (`aji.bridgewater.epi.land`), commit `a42d4c2`
 **Viewport:** 1444 × 1241 desktop, dark theme, Chrome
@@ -33,7 +34,7 @@ Priority: **P0** can destroy work · **P1** misleads or blocks a core task · **
 |---|---|
 | #1 New log source ≠ displayed version | **Fixed.** Viewing Draft → the form proposes "Current draft". |
 | #3 UTC shown as local time | **Fixed.** Shows `03:54 PM` with "Local time (America/New_York)". |
-| #6 Frontmatter shows up as "STEP 1" in compare | **Still open** (see U3). |
+| #6 Frontmatter shows up as "STEP 1" in compare | **Fixed** with U3. |
 | #8 Dim dark-mode syntax and secondary text | **Still open** (see A1). |
 
 ---

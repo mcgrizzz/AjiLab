@@ -28,12 +28,13 @@ export type DiffLineEntry =
 export type StepBlock = {
   kind: "step" | "note";
   section_name: string | null;
-  step_number: number | null; // 1-indexed within the section, null for notes
+  step_number: number | null; // 1-indexed across the recipe (as in the Overview), null for notes
   text: string;
 };
 
 export type StepChange =
-  | { kind: "modified"; section_name: string | null; step_number: number | null; block_kind: "step" | "note"; inline_tokens: InlineDiffToken[] }
+  | { kind: "modified"; section_name: string | null; step_number: number | null; from_step_number: number | null; block_kind: "step" | "note"; inline_tokens: InlineDiffToken[] }
+  | { kind: "section-renamed"; section_name: string | null; from_section_name: string | null }
   | { kind: "added"; section_name: string | null; step_number: number | null; block_kind: "step" | "note"; text: string }
   | { kind: "removed"; section_name: string | null; step_number: number | null; block_kind: "step" | "note"; text: string };
 

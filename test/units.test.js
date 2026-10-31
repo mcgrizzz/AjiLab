@@ -177,3 +177,31 @@ test('sameAmount treats formatting-only differences as equal', () => {
   assert.ok(same({ quantity: '', units: '' }, { quantity: null, units: undefined }));
   assert.ok(!same({ quantity: 1, units: '' }, { quantity: '', units: '' }));
 });
+
+test('compareAmounts: near-equal across units is "near", not "same"', () => {
+  const { Units } = setup();
+  const cmp = (a, b) => Units.compareAmounts(a, b);
+  assert.equal(cmp({ quantity: 1, units: 'cup' }, { quantity: 240, units: 'ml' }), 'near');
+  assert.equal(cmp({ quantity: 1, units: 'L' }, { quantity: 1000, units: 'ml' }), 'same');
+  assert.equal(cmp({ quantity: 1, units: 'cup' }, { quantity: 250, units: 'ml' }), 'different');
+  // Same unit stays exact: no "near" for 100 g vs 101 g.
+  assert.equal(cmp({ quantity: 100, units: 'g' }, { quantity: 101, units: 'g' }), 'different');
+  assert.equal(Units.sameAmount({ quantity: 1, units: 'cup' }, { quantity: 240, units: 'ml' }), false);
+});
+
+test('percentChange converts units and skips temperatures', () => {
+  const { Units } = setup();
+  assert.equal(Math.round(Units.percentChange({ quantity: 265, units: 'g' }, { quantity: 380, units: 'g' }) * 10) / 10, 43.4);
+  assert.equal(Math.round(Units.percentChange({ quantity: 1, units: 'kg' }, { quantity: 1500, units: 'g' })), 50);
+  assert.equal(Units.percentChange({ quantity: 1, units: 'cup' }, { quantity: 100, units: 'g' }), null);
+  assert.equal(Units.percentChange({ quantity: 450, units: 'F' }, { quantity: 500, units: 'F' }), null);
+  assert.equal(Units.percentChange({ quantity: 2, units: 'cloves' }, { quantity: 3, units: 'cloves' }), 50);
+});
+
+test('a bare lowercase "c" is a cup, not Celsius', () => {
+  const { Units } = setup();
+  assert.equal(Units.temperatureKey('c'), null);
+  assert.equal(Units.temperatureKey('C'), 'C');
+  assert.equal(Units.temperatureKey('°c'), 'C');
+  assert.equal(Units.sameAmount({ quantity: 1, units: 'c' }, { quantity: 1, units: 'cup' }), true);
+});

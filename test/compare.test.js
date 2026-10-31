@@ -124,8 +124,10 @@ test("temperature-range to single-value swap merges the °C bridge into one repl
   assert.ok(c);
   const replaces = c.inline_tokens.filter((t) => t.op === "replace");
   assert.equal(replaces.length, 1, `expected exactly one replace, got: ${JSON.stringify(c.inline_tokens)}`);
-  assert.equal(replaces[0].removed, "28°C-30°C");
-  assert.equal(replaces[0].added, "26.5°C");
+  // Both sides are normalized for reading first ("28°C-30°C" → "28-30°C"),
+  // so the shared °C stays outside the change.
+  assert.equal(replaces[0].removed, "28-30");
+  assert.equal(replaces[0].added, "26.5");
 });
 
 test("pure addition inside a step emits a replace with empty removed side", () => {
@@ -418,4 +420,133 @@ test("classifyCookLogSteps ignores formatting-only amount differences (U4)", () 
   const log = parseCooklang(`Then bake uncovered at ^{450%F} for ~{25%minutes}.`);
   const classes = classifyCookLogSteps(log.steps, src.steps);
   assert.ok(classes.every((c) => !c.token_diffs || c.token_diffs.length === 0), JSON.stringify(classes));
+});
+
+// ── Version compare (U3) ─────────────────────────────────────────────────────
+
+import { diffMetadata, diffMetrics } from "../src/compare.ts";
+
+const u3From = [
+  "---",
+  "title: Loaf",
+  "source: https://example.com/a",
+  "metric.hydration: water.g / (AP_flour.g) * 100 | %",
+  "---",
+  "",
+  "= Day before",
+  "Do a refeed.",
+  "",
+  "= Preferment",
+  "",
+  "Mix @AP flour{45%g} and @water{15%g}.",
+  "",
+  "Ferment at 26.5°C for ~{2%hours}.",
+  "",
+  "= Autolyse",
+  "",
+  "Mix @&AP flour{315%g} and @&water{250%g}.",
+  "",
+  "Keep at 23°C–25°C.",
+  "",
+  "Bake at 450 °F with @milk{1%cup}.",
+].join("\n");
+const u3To = [
+  "---",
+  "title: Loaf",
+  "source: https://example.com/b",
+  "metric.hydration: water.g / (Bread_flour.g) * 100 | %",
+  "---",
+  "",
+  "= 1-3 Days before",
+  "Do a refeed.",
+  "",
+  "= Preferment",
+  "",
+  "Mix @Bread flour{75%g} and @water{30%g}.",
+  "",
+  "Ferment at ^{23%C} for ~{2.5%hours}.",
+  "",
+  "= Autolyse",
+  "",
+  "Mix @&Bread flour{300%g} and @&water{350%g}.",
+  "",
+  "Keep at ^{23-25%C}.",
+  "",
+  "Bake at ^{450%F} with @milk{240%ml}.",
+].join("\n");
+
+test("ingredient diff compares totals, pairs swaps, and marks near-equal amounts", () => {
+  const diff = diffIngredients(
+    parseCooklang(u3From).ingredient_summary.flat,
+    parseCooklang(u3To).ingredient_summary.flat,
+  );
+  const water = diff.changed.find((r) => r.name === "water");
+  assert.ok(water, JSON.stringify(diff));
+  assert.equal(water.from_display, "265 g");
+  assert.equal(water.to_display, "380 g");
+  assert.equal(Math.round(water.percent_change * 10) / 10, 43.4);
+  assert.equal(diff.renamed.length, 1);
+  assert.equal(diff.renamed[0].from_name, "AP flour");
+  assert.equal(diff.renamed[0].name, "Bread flour");
+  assert.equal(diff.renamed[0].from_display, "360 g");
+  assert.equal(diff.renamed[0].to_display, "375 g");
+  assert.equal(diff.added.length, 0);
+  assert.equal(diff.removed.length, 0);
+  // 1 cup → 240 ml is a rewrite, not a change.
+  assert.deepEqual(diff.approx.map((r) => r.name), ["milk"]);
+  assert.ok(!diff.changed.some((r) => r.name === "milk"));
+});
+
+test("swaps need a shared word and the same kind of measure", () => {
+  const diff = diffIngredients(
+    parseCooklang("Mix @salt{10%g} and @butter{1%cup}.").ingredient_summary.flat,
+    parseCooklang("Mix @sugar{10%g} and @butter milk{100%g}.").ingredient_summary.flat,
+  );
+  assert.equal(diff.renamed.length, 0, JSON.stringify(diff.renamed));
+  assert.equal(diff.removed.length, 2);
+  assert.equal(diff.added.length, 2);
+});
+
+test("step diff numbers steps across the recipe and keeps frontmatter out", () => {
+  const changes = diffStepBlocks(u3From, u3To);
+  assert.ok(!changes.some((c) => (c.text || "").includes("title:")), JSON.stringify(changes));
+  assert.ok(!changes.some((c) => (c.inline_tokens || []).some((t) => /title|metric/.test(t.text || t.removed || ""))));
+  const rename = changes.find((c) => c.kind === "section-renamed");
+  assert.equal(rename?.from_section_name, "Day before");
+  assert.equal(rename?.section_name, "1-3 Days before");
+  // "Do a refeed." shares a paragraph with its heading; it's step 1 and unchanged.
+  const ferment = changes.find((c) => c.kind === "modified" && c.section_name === "Preferment" && c.step_number === 3);
+  assert.ok(ferment, JSON.stringify(changes.map((c) => [c.kind, c.section_name, c.step_number])));
+  const replaces = ferment.inline_tokens.filter((t) => t.op === "replace");
+  assert.deepEqual(replaces.map((t) => [t.removed, t.added]), [["26.5", "23"], ["2", "2.5"]]);
+});
+
+test("step diff compares what the reader sees, so syntax-only edits vanish", () => {
+  const changes = diffStepBlocks(u3From, u3To);
+  // "23°C–25°C" vs ^{23-25%C}, "450 °F" vs ^{450%F} read the same.
+  assert.ok(!changes.some((c) => c.step_number === 5), JSON.stringify(changes));
+  const bake = changes.find((c) => c.step_number === 6);
+  assert.ok(bake);
+  const replaced = bake.inline_tokens.filter((t) => t.op === "replace").map((t) => [t.removed, t.added]);
+  assert.deepEqual(replaced, [["1 cup", "240 ml"]]);
+  // Both sides show ingredients as "name (amount)", never raw Cooklang.
+  const mix = changes.find((c) => c.step_number === 2);
+  const text = mix.inline_tokens.map((t) => t.text ?? `${t.removed}|${t.added}`).join("");
+  assert.ok(!/[@{}%]/.test(text), text);
+});
+
+test("metadata diff lists changed frontmatter keys", () => {
+  const changes = diffMetadata(u3From, u3To);
+  assert.deepEqual(changes.map((c) => [c.key, c.kind]), [["source", "changed"], ["metric.hydration", "changed"]]);
+});
+
+test("metric diff reports deltas from the displayed values", () => {
+  const from = parseCooklang(u3From).metrics;
+  const to = parseCooklang(u3To).metrics;
+  const [hydration] = diffMetrics(from, to);
+  assert.equal(hydration.name, "hydration");
+  assert.equal(hydration.kind, "changed");
+  const a = parseFloat(hydration.from_display);
+  const b = parseFloat(hydration.to_display);
+  assert.equal(hydration.delta_display, `${b - a >= 0 ? "+" : "−"}${Math.round(Math.abs(b - a) * 10) / 10} pts`);
 });
