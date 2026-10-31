@@ -10,6 +10,7 @@
 // `source_range` / `source_value` when the values differ from the paired
 // source token. The renderer reads these fields to draw a "was X" chip.
 
+import { sameAmount } from "../quantity.ts";
 import type {
   ParsedStep,
   ParsedIngredient,
@@ -275,10 +276,8 @@ function annotateStepDiff(logStep: ParsedStep[], sourceStep: ParsedStep[]): void
 }
 
 function attachDiffFields(logTok: any, srcTok: any): void {
-  const qChanged = String(logTok.quantity ?? "") !== String(srcTok.quantity ?? "");
-  const uChanged = String(logTok.units ?? "") !== String(srcTok.units ?? "");
-  const rangeChanged = JSON.stringify(logTok.range ?? null) !== JSON.stringify(srcTok.range ?? null);
-  if (!qChanged && !uChanged && !rangeChanged) return;
+  // Only real changes: "450°F" vs ^{450%F} or 1 L vs 1000 ml are the same amount.
+  if (sameAmount(logTok, srcTok)) return;
   logTok.source_quantity = srcTok.quantity ?? null;
   logTok.source_units = srcTok.units ?? "";
   logTok.source_range = srcTok.range ?? null;

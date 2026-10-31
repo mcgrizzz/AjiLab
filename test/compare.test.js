@@ -412,3 +412,10 @@ test("synthesize: prose-temp→sigil edit promotes in a later section with front
   assert.ok(!out.includes("26.5"), `old prose temp should be replaced; got:\n${out}`);
   assert.ok(out.includes("@flour{50%g}"), `flour edit should also land; got:\n${out}`);
 });
+
+test("classifyCookLogSteps ignores formatting-only amount differences (U4)", () => {
+  const src = parseCooklang(`Then bake uncovered at 450°F for ~{25%min}.`);
+  const log = parseCooklang(`Then bake uncovered at ^{450%F} for ~{25%minutes}.`);
+  const classes = classifyCookLogSteps(log.steps, src.steps);
+  assert.ok(classes.every((c) => !c.token_diffs || c.token_diffs.length === 0), JSON.stringify(classes));
+});

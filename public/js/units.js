@@ -1,28 +1,40 @@
-// ── Units: volume/mass conversion for the recipe viewer ─────────────────────
-// Display-only: recipes keep the units they were written in. The reader can
-// pick, per ingredient, another unit to show it in (1 L → 33.8 fl oz). The
-// viewer asks `present()` how to show an amount given the scale and those
-// per-ingredient choices, and gets back null when the amount should render
-// exactly as before. Conversions go through a base unit per category.
+// ── Units: conversion, display and comparison of recipe amounts ─────────────
+// Shared by the browser (classic script → global `Units`) and the server
+// (imported for its side effect, which sets `globalThis.Units`).
+//
+// Display: recipes keep the units they were written in. The reader can pick,
+// per ingredient, another unit to show it in (1 L → 34 fl oz). `present()`
+// says how to show an amount given the scale and those choices, and returns
+// null when the amount should render exactly as before.
+//
+// Comparison: `sameAmount()` decides whether two written amounts are the same
+// after unit conversion (450 °F = ^{450%F} = 232 °C, 1 L = 1000 ml), so diffs
+// don't flag pure formatting changes.
+//
+// Conversions go through a base unit per category (ml, g, seconds).
 const Units = (() => {
-  // factor = size in base units (ml for volume, g for mass).
+  // factor = size in base units (ml for volume, g for mass, s for time).
   const UNITS = {
     ml:      { category: 'volume', factor: 1, label: 'ml' },
     cl:      { category: 'volume', factor: 10, label: 'cl' },
     dl:      { category: 'volume', factor: 100, label: 'dl' },
     l:       { category: 'volume', factor: 1000, label: 'L' },
-    tsp:     { category: 'volume', factor: 4.92892,   label: 'tsp' },
-    tbsp:    { category: 'volume', factor: 14.7868,   label: 'tbsp' },
-    'fl oz': { category: 'volume', factor: 29.5735,     label: 'fl oz' },
-    cup:     { category: 'volume', factor: 236.588,     label: 'cup',    plural: 'cups' },
-    pint:    { category: 'volume', factor: 473.176,     label: 'pint',   plural: 'pints' },
-    quart:   { category: 'volume', factor: 946.353,     label: 'quart',  plural: 'quarts' },
-    gallon:  { category: 'volume', factor: 3785.41,     label: 'gallon', plural: 'gallons' },
-    mg:      { category: 'mass',   factor: 0.001, label: 'mg' },
-    g:       { category: 'mass',   factor: 1, label: 'g' },
-    kg:      { category: 'mass',   factor: 1000, label: 'kg' },
-    oz:      { category: 'mass',   factor: 28.3495,     label: 'oz' },
-    lb:      { category: 'mass',   factor: 453.592,     label: 'lb' },
+    tsp:     { category: 'volume', factor: 4.92892, label: 'tsp' },
+    tbsp:    { category: 'volume', factor: 14.7868, label: 'tbsp' },
+    'fl oz': { category: 'volume', factor: 29.5735, label: 'fl oz' },
+    cup:     { category: 'volume', factor: 236.588, label: 'cup', plural: 'cups' },
+    pint:    { category: 'volume', factor: 473.176, label: 'pint', plural: 'pints' },
+    quart:   { category: 'volume', factor: 946.353, label: 'quart', plural: 'quarts' },
+    gallon:  { category: 'volume', factor: 3785.41, label: 'gallon', plural: 'gallons' },
+    mg:      { category: 'mass', factor: 0.001, label: 'mg' },
+    g:       { category: 'mass', factor: 1, label: 'g' },
+    kg:      { category: 'mass', factor: 1000, label: 'kg' },
+    oz:      { category: 'mass', factor: 28.3495, label: 'oz' },
+    lb:      { category: 'mass', factor: 453.592, label: 'lb' },
+    sec:     { category: 'time', factor: 1, label: 'sec' },
+    min:     { category: 'time', factor: 60, label: 'min' },
+    hour:    { category: 'time', factor: 3600, label: 'hour', plural: 'hours' },
+    day:     { category: 'time', factor: 86400, label: 'day', plural: 'days' },
   };
 
   const ALIASES = {
@@ -42,16 +54,40 @@ const Units = (() => {
     kg: ['kg', 'kilogram', 'kilograms', 'kilo', 'kilos'],
     oz: ['oz', 'ounce', 'ounces'],
     lb: ['lb', 'lbs', 'pound', 'pounds'],
+    sec: ['s', 'sec', 'secs', 'second', 'seconds'],
+    min: ['min', 'mins', 'minute', 'minutes'],
+    hour: ['h', 'hr', 'hrs', 'hour', 'hours'],
+    day: ['day', 'days'],
   };
   const ALIAS_TO_KEY = {};
   for (const [key, names] of Object.entries(ALIASES)) {
     for (const name of names) ALIAS_TO_KEY[name] = key;
   }
 
-  const FRACTION_UNITS = new Set(['tsp', 'tbsp', 'cup', 'pint', 'quart', 'gallon']);
-  const FRACTIONS = [[0, ''], [1 / 8, '⅛'], [1 / 4, '¼'], [1 / 3, '⅓'], [3 / 8, '⅜'], [1 / 2, '½'],
-    [5 / 8, '⅝'], [2 / 3, '⅔'], [3 / 4, '¾'], [7 / 8, '⅞'], [1, '']];
   const VULGAR = { '⅛': 1 / 8, '¼': 1 / 4, '⅓': 1 / 3, '⅜': 3 / 8, '½': 1 / 2, '⅝': 5 / 8, '⅔': 2 / 3, '¾': 3 / 4, '⅞': 7 / 8 };
+  const GLYPH = { 0.125: '⅛', 0.25: '¼', 0.375: '⅜', 0.5: '½', 0.625: '⅝', 0.75: '¾', 0.875: '⅞' };
+  const THIRD = { 1: '⅓', 2: '⅔' };
+
+  // US measures are shown as fractions, metric as decimals. Each US unit lists
+  // fraction sets from coarsest to finest; the first that lands within 3% of
+  // the true amount wins (450 g → "1 lb", 500 g → "1⅛ lb", 8.1 tbsp → "8 tbsp").
+  const WHOLE = [0];
+  const HALVES = [0, 1 / 2];
+  const QUARTERS = [0, 1 / 4, 1 / 2, 3 / 4];
+  const CUP_MARKS = [0, 1 / 4, 1 / 3, 1 / 2, 2 / 3, 3 / 4];
+  const EIGHTHS = [0, 1 / 8, 1 / 4, 3 / 8, 1 / 2, 5 / 8, 3 / 4, 7 / 8];
+  const FRACTION_SETS = {
+    tsp: [WHOLE, QUARTERS, EIGHTHS],
+    tbsp: [WHOLE, HALVES],
+    cup: [WHOLE, CUP_MARKS],
+    pint: [WHOLE, QUARTERS],
+    quart: [WHOLE, QUARTERS],
+    gallon: [WHOLE, QUARTERS],
+    'fl oz': [WHOLE, HALVES, QUARTERS],
+    oz: [WHOLE, HALVES, QUARTERS],
+    lb: [WHOLE, QUARTERS, EIGHTHS],
+  };
+
   // Units offered in the per-ingredient picker, in display order.
   const PICKER_UNITS = {
     volume: ['ml', 'l', 'tsp', 'tbsp', 'fl oz', 'cup', 'pint', 'quart'],
@@ -59,10 +95,17 @@ const Units = (() => {
   };
   // Nobody measures a litre in teaspoons: cap spoons at a cup's worth.
   const PICKER_MAX = { tsp: 12, tbsp: 16 };
+  // A chosen unit steps down for small amounts, the way a cook would measure:
+  // cups below ¼ cup become tablespoons, kg below 1 kg become grams, …
+  const STEP_DOWN = {
+    gallon: ['quart', 1], quart: ['pint', 1], pint: ['cup', 1], cup: ['tbsp', 0.25],
+    'fl oz': ['tbsp', 1], tbsp: ['tsp', 1], l: ['ml', 1], kg: ['g', 1], lb: ['oz', 0.5],
+  };
+  const CATEGORY_WORD = { mass: 'weight', volume: 'volume', time: 'time' };
+  const CATEGORY_HINT = { mass: 'g, oz or lb', volume: 'ml, cups or fl oz', time: 'min or hours' };
 
-  // Canonical key for a unit string, or null when it isn't a volume/mass unit
-  // we know (cloves, pinch, cans…). Case only matters for the T/t spoon
-  // shorthands.
+  // Canonical key for a unit string, or null when it isn't a unit we know
+  // (cloves, pinch, cans…). Case only matters for the T/t spoon shorthands.
   function key(unit) {
     const raw = String(unit ?? '').trim();
     if (!raw) return null;
@@ -114,28 +157,55 @@ const Units = (() => {
     return text.includes('.') ? text.replace(/\.?0+$/, '') : text;
   }
 
+  function roundToSet(value, set) {
+    const whole = Math.floor(value);
+    const frac = value - whole;
+    let best = 0;
+    for (const f of [...set, 1]) {
+      if (Math.abs(frac - f) < Math.abs(frac - best)) best = f;
+    }
+    return whole + best;
+  }
+
+  function fractionText(value) {
+    let whole = Math.floor(value + 1e-9);
+    const frac = value - whole;
+    if (frac < 1e-6) return String(whole);
+    const thirds = Math.round(frac * 3);
+    const glyph = Math.abs(frac - thirds / 3) < 1e-6 ? THIRD[thirds] : GLYPH[Math.round(frac * 8) / 8];
+    if (!glyph) return trimZeros(value.toFixed(2));
+    return whole ? `${whole}${glyph}` : glyph;
+  }
+
   function formatNumber(value, unitKey) {
-    if (FRACTION_UNITS.has(unitKey) && value >= 1 / 16) {
-      let whole = Math.floor(value);
-      const frac = value - whole;
-      let best = FRACTIONS[0];
-      for (const candidate of FRACTIONS) {
-        if (Math.abs(frac - candidate[0]) < Math.abs(frac - best[0])) best = candidate;
+    const sets = FRACTION_SETS[unitKey];
+    if (sets && value > 0) {
+      let chosen = null;
+      for (const set of sets) {
+        const rounded = roundToSet(value, set);
+        if (rounded > 0 && Math.abs(rounded - value) / value <= 0.03) { chosen = rounded; break; }
       }
-      if (best[0] === 1) { whole += 1; best = FRACTIONS[0]; }
-      if (!best[1]) return String(whole);
-      return whole ? `${whole}${best[1]}` : best[1];
+      if (chosen === null) chosen = roundToSet(value, sets[sets.length - 1]);
+      if (chosen > 0) return fractionText(chosen);
+      return trimZeros(value.toFixed(2));
     }
     if (unitKey === 'ml' || unitKey === 'g' || unitKey === 'mg') {
       return value >= 10 ? String(Math.round(value)) : trimZeros(value.toFixed(1));
     }
-    if (unitKey === 'l' || unitKey === 'kg' || unitKey === 'lb') return trimZeros(value.toFixed(2));
+    if (unitKey === 'l' || unitKey === 'kg') return trimZeros(value.toFixed(2));
     if (value >= 100) return String(Math.round(value));
     return trimZeros(value.toFixed(value < 1 ? 2 : 1));
   }
 
   function overrideKey(name) {
     return String(name ?? '').trim().toLowerCase();
+  }
+
+  // The author's unit, with case-only variants shown canonically ("l" → "L";
+  // a lowercase l reads like a 1 next to a number).
+  function displayWritten(writtenUnit, def) {
+    const written = String(writtenUnit).trim();
+    return written.toLowerCase() === def.label.toLowerCase() ? def.label : written;
   }
 
   // Format parsed quantity values (at scale) from `def` into unit `target`.
@@ -152,17 +222,19 @@ const Units = (() => {
     return { qty, unit: label, text: `${qty} ${label}`, unitKey: target, converted };
   }
 
-  // The author's unit, with case-only variants shown canonically ("l" → "L";
-  // a lowercase l reads like a 1 next to a number).
-  function displayWritten(writtenUnit, def) {
-    const written = String(writtenUnit).trim();
-    return written.toLowerCase() === def.label.toLowerCase() ? def.label : written;
+  function stepsDown(unitKey, base) {
+    const step = STEP_DOWN[unitKey];
+    return !!step && base / UNITS[unitKey].factor < step[1];
   }
 
-  // The unit the reader picked for this ingredient, if it fits its category.
-  function chosenUnit(def, view, name) {
+  // The unit to show this row in: the reader's choice for the ingredient (if
+  // it fits the category), stepped down for small amounts. The author's own
+  // unit is never stepped down.
+  function displayUnit(def, view, name, base) {
     const choice = view?.overrides?.[overrideKey(name)];
-    return choice && UNITS[choice]?.category === def.category ? choice : def.key;
+    let target = choice && UNITS[choice]?.category === def.category ? choice : def.key;
+    while (target !== def.key && stepsDown(target, base)) target = STEP_DOWN[target][0];
+    return target;
   }
 
   // How to show `quantity unit` at `scale` given `view` ({ overrides:
@@ -173,54 +245,135 @@ const Units = (() => {
     if (!def) return null;
     const nums = parseQuantity(quantity);
     if (!nums) return null;
-    const target = chosenUnit(def, view, name);
+    const target = displayUnit(def, view, name, Math.max(...nums) * scale * def.factor);
     if (target === def.key && scale === 1 && displayWritten(unit, def) === String(unit).trim()) return null;
     return formatIn(nums, def, unit, scale, target);
   }
 
   // Unit choices for the picker: same-category units whose value reads
-  // sensibly (⅛ to 1000), plus the recipe's own unit and the current choice.
+  // sensibly (⅛ up to a cap, and not small enough to step down), plus the
+  // recipe's own unit and the one currently shown.
   function alternatives(quantity, unit, scale = 1, view = null, name = '') {
     const def = lookup(unit);
-    if (!def) return [];
+    if (!def || !PICKER_UNITS[def.category]) return [];
     const nums = parseQuantity(quantity);
     if (!nums) return [];
-    const current = chosenUnit(def, view, name);
+    const base = Math.max(...nums) * scale * def.factor;
+    const current = displayUnit(def, view, name, base);
     const keys = [...PICKER_UNITS[def.category]];
     if (!keys.includes(def.key)) keys.unshift(def.key);
-    const base = Math.max(...nums) * scale * def.factor;
     return keys
       .filter((k) => {
         if (k === def.key || k === current) return true;
         const v = base / UNITS[k].factor;
-        return v >= 0.125 && v <= (PICKER_MAX[k] ?? 1000);
+        return v >= 0.125 && v <= (PICKER_MAX[k] ?? 1000) && !stepsDown(k, base);
       })
       .map((k) => ({ ...formatIn(nums, def, unit, scale, k), active: k === current, written: k === def.key }));
   }
 
-  // Click-to-scale: the reader typed `typed` (from parseAmount) on an amount
-  // written as `origQty writtenUnit` and currently shown in `shownUnit`.
-  // Returns { scale, unitKey } (unitKey set when they typed an explicit unit)
-  // or { error }.
-  function scaleForTarget(origQty, writtenUnit, shownUnit, typed) {
-    if (!typed || !(typed.value > 0) || !(origQty > 0)) return { error: 'Enter an amount greater than zero' };
+  function capitalize(text) {
+    const s = String(text || '').trim();
+    return s ? s[0].toUpperCase() + s.slice(1) : s;
+  }
+
+  // Scale-to-amount: the reader typed `typed` (from parseAmount) for an
+  // ingredient written as `origQty writtenUnit` and currently shown in
+  // `shownUnit`. Returns { scale, unitKey } (unitKey set when they typed an
+  // explicit unit) or { error } phrased for the cook.
+  function scaleForTarget(origQty, writtenUnit, shownUnit, typed, name = '') {
+    const noun = capitalize(name) || 'This ingredient';
+    if (!typed || !(typed.value > 0) || !(origQty > 0)) return { error: 'Enter an amount greater than zero, e.g. 16 fl oz.' };
     const written = lookup(writtenUnit);
     if (!written) {
-      const same = !typed.unit || typed.unit.trim().toLowerCase() === String(writtenUnit || '').trim().toLowerCase();
-      if (!same) return { error: `Can't convert ${typed.unit} to ${writtenUnit || 'this amount'}` };
+      const unitText = String(writtenUnit || '').trim();
+      const same = !typed.unit || typed.unit.trim().toLowerCase() === unitText.toLowerCase();
+      if (!same) {
+        return { error: unitText
+          ? `${noun} is counted in ${unitText}, so enter a number of ${unitText}.`
+          : `${noun} has no unit, so enter just a number.` };
+      }
       return { scale: typed.value / origQty, unitKey: null };
     }
     let target = lookup(typed.unit || shownUnit || writtenUnit);
-    if (!target) return { error: `Unknown unit "${typed.unit}"` };
+    if (!target) return { error: `"${typed.unit}" isn't a unit AjiLab knows. Try ${CATEGORY_HINT[written.category]}.` };
     // "16 oz" of a liquid means fluid ounces.
     if (target.key === 'oz' && written.category === 'volume') target = lookup('fl oz');
     if (target.category !== written.category) {
-      return { error: `Can't convert ${target.label} (${target.category}) to ${written.label} (${written.category})` };
+      return { error: `${noun} is measured by ${CATEGORY_WORD[written.category]}. Try ${CATEGORY_HINT[written.category]}.` };
     }
     const inWritten = typed.value * target.factor / written.factor;
     return { scale: inWritten / origQty, unitKey: typed.unit ? target.key : null };
   }
 
+  // ── Comparison ──
+  function temperatureKey(unit) {
+    const raw = String(unit ?? '').trim().toLowerCase().replace(/\s+/g, '').replace(/^degrees?/, '').replace(/^°/, '');
+    if (raw === 'f' || raw === 'fahrenheit') return 'F';
+    if (raw === 'c' || raw === 'celsius') return 'C';
+    return null;
+  }
+
+  function toCelsius(value, unitKey) {
+    return unitKey === 'F' ? (value - 32) * 5 / 9 : value;
+  }
+
+  // [min, max] numbers for an amount, from its range or quantity.
+  function amountValues(amount) {
+    const range = amount?.range;
+    if (range && Number.isFinite(range.min) && Number.isFinite(range.max)) return [range.min, range.max];
+    // Plain-text amounts can carry their unit in the quantity ("450 °F").
+    let quantity = amount?.quantity;
+    const units = String(amount?.units ?? '').trim();
+    if (typeof quantity === 'string' && units && quantity.trim().endsWith(units)) {
+      quantity = quantity.trim().slice(0, -units.length).trim();
+    }
+    const nums = parseQuantity(quantity);
+    if (!nums) return null;
+    return nums.length === 1 ? [nums[0], nums[0]] : nums;
+  }
+
+  function close(a, b) {
+    return Math.abs(a - b) <= 1e-9 + 0.005 * Math.max(Math.abs(a), Math.abs(b));
+  }
+
+  function looseText(amount) {
+    return `${amount?.quantity ?? ''}${amount?.units ?? ''}`.toLowerCase().replace(/[°\s]/g, '');
+  }
+
+  function exact(a, b) {
+    return Math.abs(a - b) <= 1e-9;
+  }
+
+  // Are two amounts ({ quantity, units, range? }) the same once units are
+  // converted? In the same unit the numbers must match exactly (26.5 → 27 °C
+  // is an edit). Across units, allow for the rounding conversions involve:
+  // temperatures within 1 °C (450 °F ≈ 232 °C), everything else within 0.5%.
+  // Unknown units must match by name; non-numeric amounts compare as text.
+  function sameAmount(a, b) {
+    const av = amountValues(a);
+    const bv = amountValues(b);
+    if (!av || !bv) return looseText(a) === looseText(b);
+    const at = temperatureKey(a?.units);
+    const bt = temperatureKey(b?.units);
+    if (at || bt) {
+      if (!at || !bt) return false;
+      if (at === bt) return av.every((v, i) => exact(v, bv[i]));
+      return av.every((v, i) => Math.abs(toCelsius(v, at) - toCelsius(bv[i], bt)) < 1);
+    }
+    const ad = lookup(a?.units);
+    const bd = lookup(b?.units);
+    if (ad || bd) {
+      if (!ad || !bd || ad.category !== bd.category) return false;
+      if (ad.key === bd.key) return av.every((v, i) => exact(v, bv[i]));
+      return av.every((v, i) => close(v * ad.factor, bv[i] * bd.factor));
+    }
+    const au = String(a?.units ?? '').trim().toLowerCase();
+    const bu = String(b?.units ?? '').trim().toLowerCase();
+    return au === bu && av.every((v, i) => exact(v, bv[i]));
+  }
+
   return { UNITS, key, lookup, unitLabel, parseAmount, parseQuantity, formatNumber,
-    overrideKey, present, alternatives, scaleForTarget };
+    overrideKey, present, alternatives, scaleForTarget, temperatureKey, sameAmount };
 })();
+
+if (typeof globalThis !== 'undefined') globalThis.Units = Units;

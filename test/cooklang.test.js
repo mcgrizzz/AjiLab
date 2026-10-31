@@ -1010,3 +1010,34 @@ test("section indexing handles YAML frontmatter (--- ... ---) without offset", (
   const updated = updateStepQuantity(text, 1, 1, "ingredient", 0, "540", "g");
   assert.ok(updated.includes("@flour{540%g}"), `frontmatter should not shift indexing; got: ${updated}`);
 });
+
+// ── Formatting-only differences are not changes (audit U4) ───────────────────
+
+function inlineTokens(step) {
+  return (step || []).filter((t) => t && typeof t === "object" && t.type === "inlineQuantity");
+}
+
+test("annotateCookLogDiff ignores 450°F written as text vs ^{450%F}", () => {
+  const src = parseCooklang(`Then bake uncovered at 450°F for ~{25%min}.`);
+  const log = parseCooklang(`Then bake uncovered at ^{450%F} for ~{25%min}.`);
+  annotateCookLogDiff(log.steps, src.steps);
+  for (const tok of inlineTokens(log.steps[0])) {
+    assert.equal(tok.source_quantity, undefined, `unexpected diff on ${JSON.stringify(tok)}`);
+  }
+});
+
+test("annotateCookLogDiff ignores equivalent units but flags real changes", () => {
+  const src = parseCooklang(`Add @milk{1%L} and bake at ^{450%F} for ~{30%minutes}.`);
+  const same = parseCooklang(`Add @milk{1000%ml} and bake at ^{232%C} for ~{30%min}.`);
+  annotateCookLogDiff(same.steps, src.steps);
+  assert.equal(findIngredient(same.steps[0], "milk").source_quantity, undefined);
+  assert.ok(inlineTokens(same.steps[0]).every((t) => t.source_quantity === undefined));
+  const timer = same.steps[0].find((t) => t && t.type === "timer");
+  assert.equal(timer.source_quantity, undefined);
+
+  const changed = parseCooklang(`Add @milk{1.2%L} and bake at ^{475%F} for ~{35%min}.`);
+  annotateCookLogDiff(changed.steps, src.steps);
+  assert.equal(findIngredient(changed.steps[0], "milk").source_quantity, 1);
+  assert.ok(inlineTokens(changed.steps[0]).some((t) => t.source_quantity === 450));
+  assert.equal(changed.steps[0].find((t) => t && t.type === "timer").source_quantity, 30);
+});

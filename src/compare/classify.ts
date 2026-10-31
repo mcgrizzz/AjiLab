@@ -7,6 +7,7 @@
 // plus structural changes (added / skipped / text-only).
 
 import { pairCookLogStepsToSource } from "../cooklang.ts";
+import { sameAmount } from "../quantity.ts";
 import type { ParsedStep, ParsedRecipe, QuantityRange } from "../cooklang.ts";
 import { diffIngredients } from "../ingredient-compare.js";
 import type { TokenDiff, StepClassification } from "./types.ts";
@@ -216,10 +217,9 @@ function tokenDiff(
   srcTok: any,
   sourceTokenIndex: number,
 ): TokenDiff | null {
-  const qChanged = String(logTok.quantity ?? "") !== String(srcTok.quantity ?? "");
-  const uChanged = String(logTok.units ?? "") !== String(srcTok.units ?? "");
-  const rangeChanged = JSON.stringify(logTok.range ?? null) !== JSON.stringify(srcTok.range ?? null);
-  if (!qChanged && !uChanged && !rangeChanged) return null;
+  // Formatting-only differences (°F vs F, min vs minutes, 1 L vs 1000 ml)
+  // are not changes.
+  if (sameAmount(logTok, srcTok)) return null;
   const classification = classifyTokenChange(logTok, srcTok);
   return {
     kind,
