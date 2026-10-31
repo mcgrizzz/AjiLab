@@ -162,3 +162,57 @@ test('editing log notes preserves seconds and the later occurrence of a repeated
     else process.env.TZ = previous;
   }
 });
+
+test('draft replacement: unsaved buffers are visible, settled and discarded', async () => {
+  const { state } = setup();
+  const store = storage();
+  const key = state.draftKey('bread', 'main');
+  assert.equal(key, JSON.stringify(['bread', 'main', 'draft', 'draft']), 'must match the editor draft buffer key');
+  assert.equal(state.unsavedValue(key, store), null);
+
+  // Recovered from storage with no live session (e.g. after a reload).
+  store.setItem(`ajilab:unsaved:${key}`, JSON.stringify({ text: 'local only', tags: [] }));
+  assert.equal(state.unsavedValue(key, store).text, 'local only');
+
+  let release;
+  const session = state.open({ key, initial, storage: store, autosave: true,
+    write: () => new Promise(resolve => { release = resolve; }) });
+  session.update('typed', ['bread']);
+  assert.equal(state.unsavedValue(key, store).text, 'typed');
+  const saving = session.save();
+  let settled = false;
+  const waiting = state.settle(key).then(() => { settled = true; });
+  await Promise.resolve();
+  assert.equal(settled, false, 'settle waits for the in-flight save');
+  release({ ok: true });
+  await saving;
+  await waiting;
+  assert.equal(settled, true);
+
+  session.update('more typing', ['bread']);
+  state.discard(key, store);
+  assert.equal(state.unsavedValue(key, store), null);
+  assert.equal(store.getItem(`ajilab:unsaved:${key}`), null);
+  assert.equal(state.hasUnsaved(), false);
+  const fresh = state.open({ key, initial, storage: store, autosave: true, write: async () => ({}) });
+  assert.notEqual(fresh, session, 'a discarded buffer is not reused by the editor');
+  assert.equal(fresh.value.text, initial.text);
+});
+
+test('line change summary counts lines unique to each side', () => {
+  const { state } = setup();
+  assert.deepEqual({ ...state.lineChangeSummary('a\nb\nc', 'a\nb\nd\ne') }, { removed: 1, added: 2 });
+  assert.deepEqual({ ...state.lineChangeSummary('same\n\nsame', 'same\nsame') }, { removed: 0, added: 0 });
+});
+
+test('unsent cook log fields persist until cleared, and blank forms are not kept', () => {
+  const { state } = setup();
+  const store = storage();
+  state.saveUnsentCookLog(store, 'bread', 'main', { source: 'v1.0', cooked_at: '2026-10-31T10:00', outcome: '' });
+  assert.equal(state.loadUnsentCookLog(store, 'bread', 'main'), null, 'source/time alone are not worth restoring');
+  state.saveUnsentCookLog(store, 'bread', 'main', { source: 'v1.0', outcome: 'Great crumb' });
+  assert.equal(state.loadUnsentCookLog(store, 'bread', 'main').outcome, 'Great crumb');
+  assert.equal(state.loadUnsentCookLog(store, 'bread', 'rye'), null, 'scoped per branch');
+  state.clearUnsentCookLog(store, 'bread', 'main');
+  assert.equal(state.loadUnsentCookLog(store, 'bread', 'main'), null);
+});

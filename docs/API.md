@@ -42,6 +42,7 @@ The draft is the mutable working copy on a branch. Exactly one per branch, enfor
 | `PUT` | `…/draft` | Save. Body: `{ cooklang_text?, tags?, advance_beta? }` |
 | `PUT` | `…/draft/notes` | Update notes in the cooklang frontmatter |
 | `POST` | `…/draft/fork` | Replace draft contents with the branch head (latest released/beta) |
+| `POST` | `…/draft/restore` | Undo a draft replacement. Body: `{ cooklang_text, tags?, parent_version?, current_beta_version? }` (lineage kept only if the version exists) |
 | `POST` | `…/draft/parse` | Parse cooklang text → structured JSON. Stateless. Body: `{ cooklang_text }` |
 
 `advance_beta: true` on a draft save also creates (or updates) an auto-numbered beta snapshot version (`v1.1-beta.1`, `v1.1-beta.2`, …) so you have a stable anchor to share or compare against.

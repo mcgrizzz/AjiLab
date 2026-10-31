@@ -23,6 +23,7 @@ import {
   getCookLog,
   forkBranchHeadToDraft,
   forkVersionToDraft,
+  restoreDraftSnapshot,
   getRecipeBranch,
   getRecipeBySlug,
   getVersionByString,
@@ -189,6 +190,16 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
       return c.json(await forkBranchHeadToDraft(c.req.param("slug"), activeBranch(c)));
     } catch (error: any) {
       return c.json({ error: error?.message || "fork failed" }, 400);
+    }
+  });
+
+  // Undo for draft-replacing actions (fork version / branch head / cook log).
+  api.post(`${prefix}/draft/restore`, async (c) => {
+    if (!(await getRecipeBySlug(c.req.param("slug"), activeBranch(c)))) return c.json({ error: "not found" }, 404);
+    try {
+      return c.json(await restoreDraftSnapshot(c.req.param("slug"), await c.req.json(), activeBranch(c)));
+    } catch (error: any) {
+      return c.json({ error: error?.message || "restore failed" }, 400);
     }
   });
 

@@ -55,8 +55,8 @@ Object.assign(RecipeView, {
         <div class="section-head" id="steps-head">
           <span class="section-head-title">Steps</span>
           <div class="steps-toolbar">
-            <button class="btn btn-sm" id="amounts-btn" onclick="RecipeView.toggleAmounts()">
-              ${this.showAmounts ? '✓ Hide amounts' : '⊕ Show amounts'}
+            <button class="btn btn-sm" id="amounts-btn" onclick="RecipeView.toggleAmounts()" aria-pressed="${this.showAmounts}">
+              Amounts in steps: ${this.showAmounts ? 'On' : 'Off'}
             </button>
             <button class="btn btn-sm" id="temp-btn" onclick="RecipeView.toggleTemperatureUnit()">
               Temps: °${this.temperatureUnit}
@@ -208,7 +208,7 @@ Object.assign(RecipeView, {
       const options = [['asis', 'As written'], ['metric', 'Metric'], ['us', 'US']]
         .map(([value, text]) => `<option value="${value}"${view[category] === value ? ' selected' : ''}>${text}</option>`)
         .join('');
-      return `<label class="unit-select-label">${label}
+      return `<label class="unit-select-label"><span class="unit-select-name">${label}</span>
         <select class="unit-select" onchange="RecipeView.setUnitSystem('${category}', this.value)">${options}</select>
       </label>`;
     };
@@ -265,7 +265,10 @@ Object.assign(RecipeView, {
   toggleAmounts() {
     this.showAmounts = !this.showAmounts;
     const button = document.getElementById('amounts-btn');
-    if (button) button.textContent = this.showAmounts ? '✓ Hide amounts' : '⊕ Show amounts';
+    if (button) {
+      button.textContent = `Amounts in steps: ${this.showAmounts ? 'On' : 'Off'}`;
+      button.setAttribute('aria-pressed', String(this.showAmounts));
+    }
     this.rerenderAmounts();
   },
 
@@ -333,15 +336,99 @@ Object.assign(RecipeView, {
     this.setTab('overview');
   },
 
+  // ── Replacing the draft (fork a version / branch head / cook log) ──
+  // These actions overwrite the one draft. Work is at risk when the draft (or
+  // the editor's unsaved buffer) holds text that isn't saved in any version;
+  // then we ask first. Either way the old draft is kept for an Undo toast.
+
+  versionText(versionString) {
+    return (this.recipe?.versions || []).find((v) => !v.is_draft && v.version_string === versionString)?.cooklang_text ?? null;
+  },
+
+  // Label for buttons that load a version into the draft.
+  draftFromVersionLabel(versionString) {
+    return this.draftAtRisk(this.versionText(versionString))
+      ? `Replace draft with ${versionString}…`
+      : `Start draft from ${versionString}`;
+  },
+
+  draftAtRisk(targetText = null) {
+    let storage = null;
+    try { storage = window.localStorage; } catch {}
+    const local = RecipeEditState.unsavedValue(RecipeEditState.draftKey(this.slug, this.branchSlug), storage);
+    const text = local ? local.text : (this.recipe?.draft?.cooklang_text || '');
+    if (!text.trim() || text === targetText) return false;
+    return !(this.recipe?.versions || []).some((v) => !v.is_draft && v.cooklang_text === text);
+  },
+
+  // Returns the snapshot to offer Undo with (null if there's no draft worth
+  // restoring), or false when the user cancels.
+  async confirmReplaceDraft(sourceLabel, targetText = null) {
+    let storage = null;
+    try { storage = window.localStorage; } catch {}
+    const key = RecipeEditState.draftKey(this.slug, this.branchSlug);
+    await RecipeEditState.settle(key);
+    await this.refreshRecipe();
+    const draft = this.recipe?.draft;
+    const local = RecipeEditState.unsavedValue(key, storage);
+    const text = local ? local.text : (draft?.cooklang_text || '');
+    if (!text.trim() || text === targetText) return null;
+    const snapshot = {
+      cooklang_text: text,
+      tags: local ? local.tags : draft?.tags,
+      parent_version: draft?.parent_version || null,
+      current_beta_version: draft?.current_beta_version || null,
+    };
+    if (this.draftAtRisk(targetText)) {
+      const diff = targetText != null ? RecipeEditState.lineChangeSummary(text, targetText) : null;
+      const basedOn = draft?.parent_version ? ` (based on ${escHtml(draft.parent_version)})` : '';
+      const ok = await confirmModal({
+        title: `Replace the draft with ${sourceLabel}?`,
+        bodyHtml: `<p>The current draft${basedOn} has edits that aren't saved in any version${local ? ', including changes the editor hasn\'t saved yet' : ''}.</p>
+          ${diff ? `<p class="text-muted">${diff.removed} line${diff.removed === 1 ? '' : 's'} of the draft would be replaced; ${escHtml(sourceLabel)} brings ${diff.added} line${diff.added === 1 ? '' : 's'} the draft doesn't have.</p>` : ''}
+          <p class="text-muted">You can undo this from the notice that appears afterwards.</p>`,
+        confirmLabel: 'Replace draft',
+        danger: true,
+      });
+      if (!ok) return false;
+    }
+    RecipeEditState.discard(key, storage);
+    return snapshot;
+  },
+
+  async afterDraftReplaced(snapshot, message) {
+    await this.refreshRecipe();
+    this.activeTab = 'editor';
+    await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
+    if (!snapshot) { showToast(message); return; }
+    showToast(message, { action: { label: 'Undo', onClick: () => this.restoreDraft(snapshot) } });
+  },
+
+  async restoreDraft(snapshot) {
+    try {
+      let storage = null;
+      try { storage = window.localStorage; } catch {}
+      const key = RecipeEditState.draftKey(this.slug, this.branchSlug);
+      await RecipeEditState.settle(key);
+      RecipeEditState.discard(key, storage);
+      await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/draft/restore`, snapshot);
+      await this.refreshRecipe();
+      this.activeTab = 'editor';
+      await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
+      showToast('Previous draft restored');
+    } catch (e) {
+      showToast('Error: ' + e.message);
+    }
+  },
+
   async forkVersionAndEdit(versionString) {
     try {
       const target = versionString || this.activeVersion?.version_string;
       if (!target) { showToast('No version to fork'); return; }
+      const snapshot = await this.confirmReplaceDraft(target, this.versionText(target));
+      if (snapshot === false) return;
       await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(target)}/fork`, {});
-      await this.refreshRecipe();
-      this.activeTab = 'editor';
-      await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
-      showToast('Forked to draft');
+      await this.afterDraftReplaced(snapshot, `Draft now starts from ${target}`);
     } catch (e) {
       showToast('Error: ' + e.message);
     }
@@ -361,11 +448,10 @@ Object.assign(RecipeView, {
         await this.forkVersion();
         return;
       }
+      const snapshot = await this.confirmReplaceDraft('the current best');
+      if (snapshot === false) return;
       await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/draft/fork`, {});
-      await this.refreshRecipe();
-      this.activeTab = 'editor';
-      await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
-      showToast('Forked to draft');
+      await this.afterDraftReplaced(snapshot, 'Draft now starts from the current best');
     } catch (e) {
       showToast('Error: ' + e.message);
     }
@@ -443,8 +529,35 @@ Object.assign(RecipeView, {
     }
   },
 
-  async deleteRecipe() {
-    if (!confirm(`Delete "${this.recipe.title}"? This cannot be undone.`)) return;
+  // Deleting the whole recipe needs the same typed confirmation as deleting
+  // a single version (it removes every version, photo and cook log).
+  deleteRecipe() {
+    const title = this.recipe.title;
+    const counts = this.recipe.counts || {};
+    const versionCount = (counts.releases_count || 0) + (counts.betas_count || 0);
+    showModal(`
+      <div class="modal-title">Delete “${escHtml(title)}”</div>
+      <p class="text-muted" style="font-size:0.88rem">
+        This permanently removes the recipe with its draft, ${versionCount} version${versionCount === 1 ? '' : 's'},
+        ${counts.cook_logs_count || 0} cook log${counts.cook_logs_count === 1 ? '' : 's'} and all photos. It can't be undone.
+        Type the recipe name to confirm.
+      </p>
+      <div class="field-group mt12">
+        <label class="field-label" for="delete-recipe-confirm">Recipe name</label>
+        <input id="delete-recipe-confirm" class="field-input" placeholder="${escHtml(title)}" autocomplete="off"
+          oninput="document.getElementById('delete-recipe-btn').disabled = this.value.trim() !== ${escHtml(JSON.stringify(title.trim()))}" />
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button id="delete-recipe-btn" class="btn btn-danger" onclick="RecipeView.confirmDeleteRecipe()" disabled>Delete recipe</button>
+      </div>`);
+    setTimeout(() => document.getElementById('delete-recipe-confirm')?.focus(), 80);
+  },
+
+  async confirmDeleteRecipe() {
+    const typed = document.getElementById('delete-recipe-confirm')?.value.trim();
+    if (typed !== this.recipe.title.trim()) return;
+    closeModal();
     try {
       await API.delete(`/recipes/${this.slug}`);
       showToast('Recipe deleted');

@@ -47,7 +47,7 @@ Object.assign(RecipeView, {
     } else if (primary.version_string) {
       primaryLabel = `Viewing · ${escHtml(primary.version_string)} (${escHtml(primary.status)})`;
     } else {
-      primaryLabel = 'Viewing';
+      primaryLabel = primary.is_draft ? 'Viewing · Draft (unreleased)' : 'Viewing';
     }
     const primaryBanner = this.overviewPrimaryBannerHtml(primary, primaryLabel, isExperimentPrimary, best);
     const sidebarHtml = this.overviewSidebarHtml();
@@ -77,6 +77,8 @@ Object.assign(RecipeView, {
       if (best) {
         actions.push(`<button class="btn btn-sm" onclick="RecipeView.setTab('editor')">Open Editor</button>`);
       }
+    } else if (primary.is_draft) {
+      actions.push(`<button class="btn btn-sm" onclick="RecipeView.setTab('editor')">Open Editor</button>`);
     }
     return `<div class="overview-primary-banner">
       <span class="badge badge-${badgeClass}">${primaryLabel}</span>
@@ -140,7 +142,7 @@ Object.assign(RecipeView, {
       ${changelogSnippet ? `<p class="overview-best-changelog">${escHtml(changelogSnippet)}${(best.changelog || '').length > 140 ? '…' : ''}</p>` : ''}
       <div class="overview-sidebar-card-actions">
         ${showOpen ? `<button class="btn btn-sm" onclick="RecipeView.focusVersion('${escJs(best.version_string)}')">Open in Versions →</button>` : ''}
-        <button class="btn btn-sm" onclick="RecipeView.startNextBetaFrom('${escJs(best.version_string)}')">Start next beta</button>
+        <button class="btn btn-sm" onclick="RecipeView.startNextBetaFrom('${escJs(best.version_string)}')" title="Load ${escHtml(best.version_string)} into the draft to keep working on it">${escHtml(this.draftFromVersionLabel(best.version_string))}</button>
       </div>
     </div>`;
   },

@@ -134,7 +134,83 @@ const RecipeEditState = (() => {
     return local ? new Date(local).toISOString() : undefined;
   }
 
+  // ── Replacing a draft on purpose (fork / undo) ──
+  // Must match the key views-recipe-editor uses for the draft buffer.
+  function draftKey(slug, branch) {
+    return JSON.stringify([slug, branch, 'draft', 'draft']);
+  }
+
+  // Wait for an in-flight save so it can't land after a replacement.
+  async function settle(key) {
+    const session = sessions.get(key);
+    if (session?.pending) await session.pending;
+  }
+
+  // Local edits not on the server yet (in memory or recovered from storage).
+  function unsavedValue(key, storage) {
+    const session = sessions.get(key);
+    if (session) return session.dirty ? session.value : null;
+    try {
+      const stored = JSON.parse(storage?.getItem(`ajilab:unsaved:${key}`) || 'null');
+      if (stored && typeof stored.text === 'string' && Array.isArray(stored.tags)) return stored;
+    } catch {}
+    return null;
+  }
+
+  // Forget a buffer whose server copy was deliberately replaced, so the editor
+  // doesn't resurrect (or autosave) the old text.
+  function discard(key, storage) {
+    const session = sessions.get(key);
+    if (session) {
+      session.detach();
+      session.requestSave = null;
+      session.dirty = false;
+      sessions.delete(key);
+    }
+    try { storage?.removeItem(`ajilab:unsaved:${key}`); } catch {}
+  }
+
+  // Rough size of a replacement: lines only in `from` / only in `to`.
+  function lineChangeSummary(from, to) {
+    const count = (text) => {
+      const counts = new Map();
+      for (const line of String(text || '').split(/\r?\n/)) {
+        if (line.trim()) counts.set(line, (counts.get(line) || 0) + 1);
+      }
+      return counts;
+    };
+    const a = count(from);
+    const b = count(to);
+    let removed = 0;
+    let added = 0;
+    for (const [line, n] of a) removed += Math.max(0, n - (b.get(line) || 0));
+    for (const [line, n] of b) added += Math.max(0, n - (a.get(line) || 0));
+    return { removed, added };
+  }
+
+  // Unsent new-cook-log form fields, kept per tab until the log is created.
+  const UNSENT_LOG_PREFIX = 'ajilab:unsent-cook-log:';
+  function loadUnsentCookLog(storage, slug, branch) {
+    try {
+      const value = JSON.parse(storage?.getItem(UNSENT_LOG_PREFIX + JSON.stringify([slug, branch])) || 'null');
+      return value && typeof value === 'object' ? value : null;
+    } catch { return null; }
+  }
+  function saveUnsentCookLog(storage, slug, branch, fields) {
+    try {
+      const key = UNSENT_LOG_PREFIX + JSON.stringify([slug, branch]);
+      const hasText = Object.entries(fields).some(([name, value]) => name !== 'source' && name !== 'cooked_at' && String(value || '').trim());
+      if (hasText) storage?.setItem(key, JSON.stringify(fields));
+      else storage?.removeItem(key);
+    } catch {}
+  }
+  function clearUnsentCookLog(storage, slug, branch) {
+    try { storage?.removeItem(UNSENT_LOG_PREFIX + JSON.stringify([slug, branch])); } catch {}
+  }
+
   return { Session, open, localDateTimeInput, cookLogSourceKey, cookLogTimestamp,
+    draftKey, settle, unsavedValue, discard, lineChangeSummary,
+    loadUnsentCookLog, saveUnsentCookLog, clearUnsentCookLog,
     hasUnsaved: () => [...sessions.values()].some(session => session.dirty || session.pending) };
 })();
 

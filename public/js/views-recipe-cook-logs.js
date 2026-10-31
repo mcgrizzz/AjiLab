@@ -184,18 +184,13 @@ Object.assign(RecipeView, {
   async iterateFromCookLog(logId) {
     const log = (this.cookLogs || []).find((entry) => entry.id === logId);
     if (!log) return;
-    const draftText = this.recipe?.draft?.cooklang_text || '';
-    if (draftText.trim() && this.recipe?.has_unreleased_changes) {
-      const sourceLabel = log.source_version_string || 'draft';
-      if (!confirm(`The current draft has unreleased changes. Overwrite it with this cook log's recipe (forked from ${sourceLabel})?`)) return;
-    }
     try {
+      const sourceLabel = `the ${fmtDate(log.cooked_at)} cook log`;
+      const snapshot = await this.confirmReplaceDraft(sourceLabel, log.cooklang_text || null);
+      if (snapshot === false) return;
       await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/fork-to-draft`, {});
-      await this.refreshRecipe();
       this.cookLogEditingId = null;
-      this.activeVersion = this.recipe.draft || null;
-      this.setTab('editor');
-      showToast('Draft replaced with this cook log — Save advances the next beta');
+      await this.afterDraftReplaced(snapshot, 'Draft replaced with this cook log. Save advances the next beta');
     } catch (e) {
       showToast('Error: ' + e.message);
     }
@@ -244,7 +239,7 @@ Object.assign(RecipeView, {
         <div class="field-group mt8" style="flex:1">
           <label class="field-label" for="cl-source">Source</label>
           <select id="cl-source" class="field-input" ${existing ? 'disabled' : ''}>${sourceOptions}</select>
-          ${existing ? '' : '<small style="color:var(--ink2);font-size:0.78rem">A copy of this version is saved with the log. Use Mark differences afterwards to record what you changed.</small>'}
+          ${existing ? '' : '<small style="color:var(--ink2);font-size:0.78rem">A copy of this version is saved with the log.</small>'}
         </div>
         <div class="field-group mt8" style="flex:1">
           <label class="field-label" for="cl-cooked-at">Cooked at</label>
@@ -280,7 +275,46 @@ Object.assign(RecipeView, {
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
         <button class="btn btn-primary" onclick="RecipeView.saveCookLog('${escJs(existingId || '')}')">${existing ? 'Save notes' : 'Create cook log'}</button>
       </div>`);
+    if (!existing) this.trackUnsentCookLog();
     setTimeout(() => document.getElementById('cl-outcome')?.focus(), 80);
+  },
+
+  // New-log form fields survive an accidental close or reload (per tab) until
+  // the log is created.
+  unsentCookLogStorage() {
+    try { return window.sessionStorage; } catch { return null; }
+  },
+
+  trackUnsentCookLog() {
+    const storage = this.unsentCookLogStorage();
+    const fields = { source: 'cl-source', cooked_at: 'cl-cooked-at', outcome: 'cl-outcome', what_worked: 'cl-worked',
+      problems_found: 'cl-problems', changes_to_try_next: 'cl-changes', freeform_notes: 'cl-notes' };
+    const saved = RecipeEditState.loadUnsentCookLog(storage, this.slug, this.branchSlug);
+    if (saved) {
+      for (const [name, id] of Object.entries(fields)) {
+        const el = document.getElementById(id);
+        if (el && typeof saved[name] === 'string' && saved[name] !== '') el.value = saved[name];
+      }
+      document.querySelector('#modal-content .modal-title')?.insertAdjacentHTML('afterend',
+        `<div class="unsent-log-note">Restored notes you hadn't submitted. <button class="link-btn" onclick="RecipeView.discardUnsentCookLog()">Start over</button></div>`);
+    }
+    const save = () => {
+      const values = {};
+      for (const [name, id] of Object.entries(fields)) values[name] = document.getElementById(id)?.value || '';
+      RecipeEditState.saveUnsentCookLog(storage, this.slug, this.branchSlug, values);
+    };
+    // Listen on the fields themselves: #modal-content outlives this modal.
+    for (const id of Object.values(fields)) {
+      const el = document.getElementById(id);
+      el?.addEventListener('input', save);
+      el?.addEventListener('change', save);
+    }
+  },
+
+  discardUnsentCookLog() {
+    RecipeEditState.clearUnsentCookLog(this.unsentCookLogStorage(), this.slug, this.branchSlug);
+    closeModal();
+    this.openCookLogModal();
   },
 
   async saveCookLog(existingId) {
@@ -306,6 +340,7 @@ Object.assign(RecipeView, {
       } else {
         const source = sourceKey === '__draft__' ? { kind: 'draft' } : { kind: 'version', version_string: sourceKey };
         created = await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs`, { ...body, source });
+        RecipeEditState.clearUnsentCookLog(this.unsentCookLogStorage(), this.slug, this.branchSlug);
       }
       closeModal();
       await this.refreshRecipe();
@@ -720,7 +755,7 @@ Object.assign(RecipeView, {
     const menu = document.createElement('div');
     menu.className = 'step-action-menu';
     menu.innerHTML = `
-      <button class="step-action-item" data-act="iterate">↗ Iterate as next draft</button>
+      <button class="step-action-item" data-act="iterate" title="Replace the draft with this log's recipe as cooked">↗ Load into draft…</button>
       <button class="step-action-item" data-act="notes">✎ Edit notes</button>
       <button class="step-action-item" data-act="compare">≡ Compare to source</button>
       <div class="step-action-sep"></div>

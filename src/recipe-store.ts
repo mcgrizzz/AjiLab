@@ -396,6 +396,38 @@ export async function forkBranchHeadToDraft(slug: string, branchSlug = MAIN_BRAN
   return { ok: true };
 }
 
+export interface DraftSnapshot {
+  cooklang_text?: unknown;
+  tags?: unknown;
+  parent_version?: unknown;
+  current_beta_version?: unknown;
+}
+
+// Undo for the fork-to-draft actions: the client captures the draft before
+// overwriting it and can put it back here. Lineage pointers are restored only
+// when they still name a version on this branch.
+export async function restoreDraftSnapshot(slug: string, snapshot: DraftSnapshot, branchSlug = MAIN_BRANCH_SLUG) {
+  const recipe = await requireRecipe(slug, branchSlug);
+  if (!recipe.draft) throw new Error("no draft to restore into");
+  if (typeof snapshot.cooklang_text !== "string") throw new Error("cooklang_text is required");
+  const text = snapshot.cooklang_text;
+  let tags: string[] = [];
+  try {
+    const raw = typeof snapshot.tags === "string" ? JSON.parse(snapshot.tags) : snapshot.tags;
+    if (Array.isArray(raw)) tags = raw.filter((t): t is string => typeof t === "string");
+  } catch {}
+  const known = new Set(recipe.versions.map((v) => v.version_string).filter(Boolean));
+  const lineage = (value: unknown) => (typeof value === "string" && known.has(value) ? value : null);
+  await sql`
+    UPDATE entries SET cooklang_text = ${text}, tags = ${tags},
+                        parent_version = ${lineage(snapshot.parent_version)},
+                        current_beta_version = ${lineage(snapshot.current_beta_version)}
+    WHERE id = ${recipe.draft.id}
+  `;
+  await syncReferencesForEntry(recipe.draft.id, text);
+  return { ok: true };
+}
+
 // ── Images ───────────────────────────────────────────────────────────────────
 
 export async function listRecipeImages(slug: string, versionString?: string | null, branchSlug = MAIN_BRANCH_SLUG) {

@@ -61,10 +61,33 @@ Object.assign(RecipeView, {
         </div>
         <div class="version-actions">
           <button class="btn btn-sm" onclick="RecipeView.viewVersion('${escJs(version.version_string)}')">View</button>
-          <button class="btn btn-sm" onclick="RecipeView.startNextBetaFrom('${escJs(version.version_string)}')" title="Start next beta from this release">Iterate</button>
-          <button class="btn btn-sm btn-danger" onclick="RecipeView.openDeleteVersionModal('${escJs(version.version_string)}')">Delete</button>
+          <button class="btn btn-sm" onclick="RecipeView.startNextBetaFrom('${escJs(version.version_string)}')" title="Load ${escHtml(version.version_string)} into the draft to keep working on it">${this.draftAtRisk(version.cooklang_text) ? 'Replace draft…' : 'Start draft'}</button>
+          <button class="btn btn-sm version-more-btn" data-version="${escHtml(version.version_string)}" onclick="RecipeView.openVersionMoreMenu(event, this)" aria-label="More actions for ${escHtml(version.version_string)}" title="More actions">⋯</button>
         </div>
       </div>`).join('')}</div>`;
+  },
+
+  // Overflow menu per version row; keeps the destructive Delete away from
+  // everyday buttons.
+  openVersionMoreMenu(event, btn) {
+    event.stopPropagation();
+    const versionString = btn.dataset.version;
+    if (!versionString) return;
+    closeStepActionMenu();
+    const menu = document.createElement('div');
+    menu.className = 'step-action-menu';
+    menu.innerHTML = `<button class="step-action-item step-action-danger" data-act="delete">✕ Delete ${escHtml(versionString)}…</button>`;
+    document.body.appendChild(menu);
+    const r = btn.getBoundingClientRect();
+    menu.style.top = `${r.bottom + window.scrollY + 4}px`;
+    menu.style.left = `${Math.max(8, r.right + window.scrollX - menu.offsetWidth)}px`;
+    menu.addEventListener('click', (e) => {
+      const item = e.target.closest('.step-action-item');
+      if (!item) return;
+      closeStepActionMenu();
+      if (item.dataset.act === 'delete') this.openDeleteVersionModal(versionString);
+    });
+    setTimeout(() => document.addEventListener('click', closeStepActionMenu, { once: true }), 0);
   },
 
   openDeleteVersionModal(versionString) {

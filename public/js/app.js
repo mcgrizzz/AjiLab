@@ -76,22 +76,74 @@ const Router = {
 };
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
+// Once the user types into a modal, a stray backdrop click or Esc no longer
+// closes it — only the modal's own Cancel/Close buttons do.
+let modalDirty = false;
+let pendingConfirm = null;
+
 function showModal(html) {
+  settleConfirm(false);
+  modalDirty = false;
   document.getElementById('modal-content').innerHTML = html;
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
 function closeModal() {
+  settleConfirm(false);
+  modalDirty = false;
   document.getElementById('modal-overlay').classList.add('hidden');
 }
 
+function isModalOpen() {
+  return !document.getElementById('modal-overlay').classList.contains('hidden');
+}
+
+// Backdrop click / Esc: close unless that would throw away typed input.
+function requestCloseModal() {
+  if (!isModalOpen()) return;
+  if (modalDirty) {
+    showToast('You have unsaved input. Use Cancel to discard it.');
+    return;
+  }
+  closeModal();
+}
+
+document.getElementById('modal-content').addEventListener('input', () => { modalDirty = true; });
+
 document.getElementById('modal-overlay').addEventListener('click', e => {
-  if (e.target === document.getElementById('modal-overlay')) closeModal();
+  if (e.target === document.getElementById('modal-overlay')) requestCloseModal();
 });
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Escape' && !e.defaultPrevented) requestCloseModal();
 });
+
+function settleConfirm(value) {
+  const resolve = pendingConfirm;
+  pendingConfirm = null;
+  if (resolve) resolve(value);
+}
+
+// Promise-based replacement for window.confirm(). bodyHtml must be escaped by
+// the caller. Resolves true on confirm, false on cancel/close.
+function confirmModal({ title, bodyHtml = '', confirmLabel = 'Confirm', danger = false }) {
+  showModal(`
+    <div class="modal-title">${escHtml(title)}</div>
+    <div class="confirm-modal-body">${bodyHtml}</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button id="confirm-modal-ok" class="btn ${danger ? 'btn-danger' : 'btn-primary'}">${escHtml(confirmLabel)}</button>
+    </div>`);
+  return new Promise((resolve) => {
+    pendingConfirm = resolve;
+    const ok = document.getElementById('confirm-modal-ok');
+    ok.addEventListener('click', () => {
+      settleConfirm(true);
+      document.getElementById('modal-overlay').classList.add('hidden');
+    });
+    setTimeout(() => ok.focus(), 50);
+  });
+}
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'p' && e.key !== 'P') return;
@@ -106,12 +158,26 @@ document.addEventListener('keydown', e => {
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 let toastTimer;
-function showToast(msg) {
+// options.action = { label, onClick } adds a button (e.g. Undo) and keeps the
+// toast up longer so there's time to use it.
+function showToast(msg, options = {}) {
   const el = document.getElementById('toast');
   el.textContent = msg;
+  el.classList.toggle('toast-has-action', !!options.action);
+  if (options.action) {
+    const button = document.createElement('button');
+    button.className = 'toast-action';
+    button.textContent = options.action.label;
+    button.addEventListener('click', () => {
+      clearTimeout(toastTimer);
+      el.classList.add('hidden');
+      options.action.onClick();
+    });
+    el.append(' ', button);
+  }
   el.classList.remove('hidden');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.add('hidden'), 2600);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), options.duration || (options.action ? 10000 : 2600));
 }
 
 // ── New Recipe ────────────────────────────────────────────────────────────────
