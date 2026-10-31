@@ -43,8 +43,8 @@ const CL = {
         ? `<span class="ing-qty ing-qty-modified"><span class="s-amt-was">${escHtml(wasLabel)}</span> <span class="s-amt-arrow">→</span> <span class="s-amt-modified">${escHtml(qtyStr)}</span></span>`
         : (canScale && !isSelectable
           // A real button so the amount popover is reachable by keyboard.
-          ? `<button type="button" class="ing-qty ing-qty-editable"${actionAttr}>${escHtml(qtyStr)}</button>`
-          : `<span class="ing-qty${isSelectable ? ' ing-qty-selectable' : ''}"${actionAttr}>${escHtml(qtyStr)}</span>`);
+          ? `<button type="button" class="ing-qty ing-qty-editable"${actionAttr}>${amountHtml(qtyStr)}</button>`
+          : `<span class="ing-qty${isSelectable ? ' ing-qty-selectable' : ''}"${actionAttr}>${amountHtml(qtyStr)}</span>`);
       return `<li class="${itemCls}">
         ${qtyHtml}
         ${nameHtml}${noteHtml}${optionalHtml}
@@ -314,6 +314,12 @@ function buildPrepReferenceAttrs(token) {
 }
 
 // ── Utilities ──────────────────────────────────────────────────────────────────
+// Escape an amount for HTML and wrap vulgar fractions (⅛, ⅜, ⅔…) so CSS can
+// draw them larger — at mono/small sizes they're hard to tell apart.
+function amountHtml(text) {
+  return escHtml(text).replace(/[⅛¼⅓⅜½⅝⅔¾⅞]/g, (glyph) => `<span class="qty-frac">${glyph}</span>`);
+}
+
 function escHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;')
@@ -510,7 +516,7 @@ function ingredientAmountHtml(token, scale, showAmounts, editAttrs = '', unitVie
   const now = ingredientLogAmount(token, scale, hasSourceDiff(token) ? null : unitView);
   const editCls = editAttrs ? ' s-cl-editable' : '';
   if (!hasSourceDiff(token)) {
-    return now ? ` <span class="s-ing-amt${editCls}"${editAttrs}> (${escHtml(now)})</span>` : '';
+    return now ? ` <span class="s-ing-amt${editCls}"${editAttrs}> (${amountHtml(now)})</span>` : '';
   }
   const was = ingredientSourceAmount(token);
   if (!was && !now) return '';

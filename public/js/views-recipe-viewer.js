@@ -276,7 +276,7 @@ Object.assign(RecipeView, {
       <div class="qty-popover-label">Show ${escHtml(name)} in</div>
       <div class="qty-popover-units">${options.map((o) => `
         <button type="button" class="unit-chip${o.active ? ' active' : ''}" data-unit="${escHtml(o.unitKey)}" aria-pressed="${o.active}">
-          ${escHtml(o.text)}${o.written ? '<span class="unit-chip-note">recipe</span>' : ''}
+          ${amountHtml(o.text)}${o.written ? '<span class="unit-chip-note">recipe</span>' : ''}
         </button>`).join('')}
       </div>` : ''}
       <form class="qty-popover-scale">
@@ -288,10 +288,22 @@ Object.assign(RecipeView, {
         <div class="qty-popover-hint" role="alert">Any unit works, e.g. 16 fl oz.</div>
       </form>`;
     document.body.appendChild(pop);
-    const r = el.getBoundingClientRect();
-    pop.style.top = `${r.bottom + window.scrollY + 6}px`;
-    const maxLeft = window.scrollX + document.documentElement.clientWidth - pop.offsetWidth - 8;
-    pop.style.left = `${Math.max(window.scrollX + 8, Math.min(r.left + window.scrollX, maxLeft))}px`;
+    // Open below the amount, or above it when there's more room there; then
+    // clamp so the whole popover (including any error text) stays on screen.
+    const place = () => {
+      const r = el.getBoundingClientRect();
+      const viewH = document.documentElement.clientHeight;
+      const viewW = document.documentElement.clientWidth;
+      const h = pop.offsetHeight;
+      const below = viewH - r.bottom - 6;
+      const above = r.top - 6;
+      let top = (h <= below || below >= above) ? r.bottom + 6 : r.top - 6 - h;
+      top = Math.max(8, Math.min(top, viewH - h - 8));
+      const left = Math.max(8, Math.min(r.left, viewW - pop.offsetWidth - 8));
+      pop.style.top = `${top + window.scrollY}px`;
+      pop.style.left = `${left + window.scrollX}px`;
+    };
+    place();
 
     const refocus = () => {
       const selector = `.ing-qty-editable[data-name="${cssEscape(name)}"]`;
@@ -308,11 +320,12 @@ Object.assign(RecipeView, {
     const input = pop.querySelector('#qty-popover-input');
     pop.querySelector('form').addEventListener('submit', (e) => {
       e.preventDefault();
-      const result = Units.scaleForTarget(orig, writtenUnit, el.dataset.shownUnit, Units.parseAmount(input.value));
+      const result = Units.scaleForTarget(orig, writtenUnit, el.dataset.shownUnit, Units.parseAmount(input.value), name);
       if (result.error) {
         const hint = pop.querySelector('.qty-popover-hint');
         hint.textContent = result.error;
         hint.classList.add('qty-popover-error');
+        place();
         input.focus();
         return;
       }

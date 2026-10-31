@@ -56,14 +56,14 @@ test('without a choice, amounts render as written at 1x and reformat sensibly wh
 test('a per-ingredient unit choice converts only that ingredient, within its category', () => {
   const { Units } = setup();
   const view = pick('heavy cream', 'fl oz');
-  assert.equal(Units.present(1, 'L', 1, view, 'Heavy Cream').text, '33.8 fl oz');
+  assert.equal(Units.present(1, 'L', 1, view, 'Heavy Cream').text, '34 fl oz');
   assert.equal(Units.present(1, 'L', 0.473176, view, 'heavy cream').text, '16 fl oz');
   assert.equal(Units.present(1, 'L', 1, view, 'milk'), null, 'other ingredients are untouched');
   assert.equal(Units.present(2, 'cups', 1, pick('milk', 'ml'), 'milk').text, '473 ml');
   assert.equal(Units.present(1, 'L', 1, pick('cream', 'cup'), 'cream').text, '4¼ cups');
   assert.equal(Units.present(500, 'g', 1, pick('flour', 'fl oz'), 'flour'), null, 'volume choice ignored for a mass ingredient');
-  assert.equal(Units.present(500, 'g', 1, pick('flour', 'lb'), 'flour').text, '1.1 lb');
-  assert.equal(Units.present('200-300', 'ml', 1, pick('stock', 'cup'), 'stock').text, '⅞-1¼ cups');
+  assert.equal(Units.present(500, 'g', 1, pick('flour', 'lb'), 'flour').text, '1⅛ lb');
+  assert.equal(Units.present('200-300', 'ml', 1, pick('stock', 'cup'), 'stock').text, '¾-1¼ cups');
 });
 
 test('picker alternatives show sensible units with converted values and mark the current one', () => {
@@ -75,7 +75,7 @@ test('picker alternatives show sensible units with converted values and mark the
   assert.equal(byKey.l.text, '1 L');
   assert.equal(byKey.l.written, true);
   assert.equal(byKey.l.active, true);
-  assert.equal(byKey['fl oz'].text, '33.8 fl oz');
+  assert.equal(byKey['fl oz'].text, '34 fl oz');
   assert.equal(byKey.ml.text, '1000 ml');
 
   const chosen = Units.alternatives(1, 'L', 1, pick('cream', 'fl oz'), 'cream');
@@ -86,7 +86,7 @@ test('picker alternatives show sensible units with converted values and mark the
   assert.ok(!small.includes('l') && !small.includes('cup'), 'units that would read < ⅛ are hidden');
 
   assert.equal(Units.alternatives(2, 'cloves', 1, none, 'garlic').length, 0, 'no picker for unknown units');
-  assert.deepEqual(Array.from(Units.alternatives(250, 'g', 1, none, 'flour'), a => a.unitKey), ['g', 'kg', 'oz', 'lb']);
+  assert.deepEqual(Array.from(Units.alternatives(250, 'g', 1, none, 'flour'), a => a.unitKey), ['g', 'oz', 'lb'], 'kg would step down to g');
 });
 
 test('scale-to-amount converts the typed unit into a recipe scale', () => {
@@ -103,8 +103,9 @@ test('scale-to-amount converts the typed unit into a recipe scale', () => {
   assert.equal(bare.unitKey, null);
 
   assert.equal(Units.scaleForTarget(2, 'cloves', 'cloves', Units.parseAmount('3')).scale, 1.5);
-  assert.match(Units.scaleForTarget(500, 'g', 'g', Units.parseAmount('2 cups')).error, /Can't convert/);
-  assert.match(Units.scaleForTarget(500, 'g', 'g', Units.parseAmount('2 handfuls')).error, /Unknown unit/);
+  assert.equal(Units.scaleForTarget(500, 'g', 'g', Units.parseAmount('2 cups'), 'spaghetti').error, 'Spaghetti is measured by weight. Try g, oz or lb.');
+  assert.equal(Units.scaleForTarget(500, 'g', 'g', Units.parseAmount('2 handfuls'), 'flour').error, '"handfuls" isn\'t a unit AjiLab knows. Try g, oz or lb.');
+  assert.equal(Units.scaleForTarget(2, 'cloves', 'cloves', Units.parseAmount('1 cup'), 'garlic').error, 'Garlic is counted in cloves, so enter a number of cloves.');
   assert.ok(Units.scaleForTarget(500, 'g', 'g', Units.parseAmount('0')).error);
 });
 
@@ -126,6 +127,53 @@ test('renderer applies unit choices to the ingredient list and step amounts', ()
   assert.match(plain, />1 L</, 'no unit options → unchanged output');
 
   const steps = [[{ type: 'text', value: 'Whisk ' }, { type: 'ingredient', name: 'heavy cream', quantity: 1, units: 'L' }]];
-  assert.match(CL.renderSteps(steps, 1, {}, true, { units: pick('heavy cream', 'cup') }), /\(4¼ cups\)/);
+  const text = (html) => html.replace(/<[^>]+>/g, '');
+  assert.match(text(CL.renderSteps(steps, 1, {}, true, { units: pick('heavy cream', 'cup') })), /\(4¼ cups\)/);
+  assert.match(CL.renderSteps(steps, 1, {}, true, { units: pick('heavy cream', 'cup') }), /<span class="qty-frac">¼<\/span>/, 'fractions are wrapped for styling');
   assert.match(CL.renderSteps(steps, 1, {}, true, { units: none }), /\(1 L\)/);
+});
+
+test('US amounts use fractions within 3%, metric uses decimals', () => {
+  const { Units } = setup();
+  assert.equal(Units.present(450, 'g', 1, pick('pasta', 'lb'), 'pasta').text, '1 lb', 'no false precision (0.99 lb)');
+  assert.equal(Units.present(450, 'g', 1, pick('pasta', 'oz'), 'pasta').text, '16 oz');
+  assert.equal(Units.present(100, 'g', 1, pick('butter', 'oz'), 'butter').text, '3½ oz');
+  assert.equal(Units.present(120, 'ml', 1, pick('oil', 'fl oz'), 'oil').text, '4 fl oz');
+  assert.equal(Units.present(120, 'ml', 1, pick('oil', 'tbsp'), 'oil').text, '8 tbsp');
+  assert.equal(Units.present(120, 'ml', 1, pick('oil', 'cup'), 'oil').text, '½ cup');
+  assert.equal(Units.present(1, 'kg', 0.333, none, 'flour').text, '0.33 kg');
+});
+
+test('a chosen unit steps down for small rows of the same ingredient', () => {
+  const { Units } = setup();
+  const cups = pick('olive oil', 'cup');
+  assert.equal(Units.present(120, 'ml', 1, cups, 'olive oil').text, '½ cup');
+  assert.equal(Units.present(30, 'ml', 1, cups, 'olive oil').text, '2 tbsp');
+  assert.equal(Units.present(5, 'ml', 1, cups, 'olive oil').text, '1 tsp');
+  assert.equal(Units.present(300, 'g', 1, pick('flour', 'kg'), 'flour'), null, '300 g steps back down to the recipe unit (rendered as written)');
+  assert.equal(Units.present(200, 'g', 1, pick('flour', 'lb'), 'flour').text, '7 oz');
+  const alts = Units.alternatives(30, 'ml', 1, cups, 'olive oil');
+  assert.equal(alts.find(a => a.active).unitKey, 'tbsp', 'the picker marks what is actually shown');
+  assert.ok(!alts.some(a => a.unitKey === 'cup'), 'cups are not offered for 2 tbsp');
+  assert.equal(Units.present(30, 'ml', 1, none, 'olive oil'), null, "the author's own unit never steps down");
+});
+
+test('sameAmount treats formatting-only differences as equal', () => {
+  const { Units } = setup();
+  const same = (a, b) => Units.sameAmount(a, b);
+  assert.ok(same({ quantity: 450, units: '°F' }, { quantity: 450, units: 'F' }));
+  assert.ok(same({ quantity: 450, units: '°F' }, { quantity: 232, units: 'C' }), '450 °F ≈ 232 °C');
+  assert.ok(!same({ quantity: 450, units: 'F' }, { quantity: 475, units: 'F' }));
+  assert.ok(!same({ quantity: 450, units: 'F' }, { quantity: 230, units: 'C' }), 'beyond 1 °C is a change');
+  assert.ok(!same({ quantity: 26.5, units: 'C' }, { quantity: 27, units: '°C' }), 'same unit: any numeric change counts');
+  assert.ok(!same({ quantity: 500, units: 'g' }, { quantity: 501, units: 'g' }));
+  assert.ok(same({ quantity: 1, units: 'L' }, { quantity: 1000, units: 'ml' }));
+  assert.ok(same({ quantity: 25, units: 'min' }, { quantity: 25, units: 'minutes' }));
+  assert.ok(same({ quantity: 1.5, units: 'hours' }, { quantity: 90, units: 'min' }));
+  assert.ok(!same({ quantity: 1, units: 'cup' }, { quantity: 236, units: 'g' }), 'volume vs mass never matches');
+  assert.ok(same({ quantity: 2, units: 'cloves' }, { quantity: '2', units: 'Cloves' }));
+  assert.ok(!same({ quantity: 2, units: 'cloves' }, { quantity: 2, units: 'heads' }));
+  assert.ok(same({ quantity: '23-25', units: 'C', range: { min: 23, max: 25 } }, { quantity: '23-25', units: '°C' }));
+  assert.ok(same({ quantity: '', units: '' }, { quantity: null, units: undefined }));
+  assert.ok(!same({ quantity: 1, units: '' }, { quantity: '', units: '' }));
 });

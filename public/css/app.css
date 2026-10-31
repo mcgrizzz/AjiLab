@@ -451,6 +451,14 @@ button.ing-qty {
 }
 .unit-chip:hover { background: var(--bg3); }
 .unit-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* Vulgar fractions are tiny in the mono amount font; draw them in the body
+   face at a larger size. */
+.qty-frac {
+  font-family: var(--font-sans);
+  font-size: 1.2em;
+  line-height: 1;
+  font-weight: 600;
+}
 .unit-chip-note {
   font-family: var(--font-sans);
   font-size: 0.68rem;

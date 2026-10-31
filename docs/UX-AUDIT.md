@@ -15,7 +15,9 @@
 > | U14 Scrollbar layout shift | **Partly fixed.** `scrollbar-gutter: stable`. Nested sidebar scroll still open. |
 > | A3 Native controls / focus | **Partly fixed.** Accent `:focus-visible` ring. Select styling still open. |
 > | A5 Duplicate modal note | **Partly fixed.** Duplicate removed. Other items still open. |
-> | U3, U4, U5, U6, U9, U11, U13, A1, A2, A4 | Open. |
+> | U4 False-positive cook-log diffs | **Fixed.** Amounts are compared after unit conversion via the shared `Units.sameAmount` (`public/js/units.js`, used server-side through `src/quantity.ts`): `450°F` vs `^{450%F}`, 1 L vs 1000 ml and min vs minutes no longer flag; same-unit numeric edits (26.5 → 27 °C) still do. U3 should reuse it. |
+> | Unit popover review | **Fixed.** Popover flips/clamps on screen; chosen units step down for small rows (cups → tbsp); US units as fractions within 3%, metric as decimals; larger fraction glyphs; errors name the ingredient ("Spaghetti is measured by weight. Try g, oz or lb."). |
+> | U3, U5, U6, U9, U11, U13, A1, A2, A4 | Open. |
 
 **Audited:** October 31, 2026, on the live deployment (`aji.bridgewater.epi.land`), commit `a42d4c2`
 **Viewport:** 1444 × 1241 desktop, dark theme, Chrome
