@@ -45,7 +45,13 @@ fi
 
 echo "[deploy] deploying origin/$BRANCH to $HOST:~/$STACK_DIR ($SERVICE)"
 
-ssh "$HOST" bash -s -- "$STACK_DIR" "$SERVICE" "$BRANCH" "$LOCAL" "$TIMEOUT" "$FORCE_BUILD" <<'REMOTE'
+# Keep a copy of the remote output: an interrupted connection (e.g. a Tailscale
+# re-auth reset) can end without an error code, so success is the server
+# saying so, not ssh exiting 0.
+OUT="$(mktemp)"
+trap 'rm -f "$OUT"' EXIT
+
+ssh "$HOST" bash -s -- "$STACK_DIR" "$SERVICE" "$BRANCH" "$LOCAL" "$TIMEOUT" "$FORCE_BUILD" <<'REMOTE' | tee "$OUT"
 set -euo pipefail
 STACK_DIR=$1 SERVICE=$2 BRANCH=$3 LOCAL=$4 TIMEOUT=$5 FORCE_BUILD=$6
 cd "$STACK_DIR"
@@ -118,3 +124,8 @@ fi
 wait_for_start "$since"
 echo "[remote] deployed ${OLD:0:7} -> ${NEW:0:7}"
 REMOTE
+
+if ! grep -qE '^\[remote\] (deployed|already up to date)' "$OUT"; then
+  echo "[deploy] failed: the server never confirmed the deploy" >&2
+  exit 1
+fi
