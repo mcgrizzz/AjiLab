@@ -56,27 +56,35 @@ Object.assign(RecipeView, {
     // draft/beta editing, which is the normal iterative flow.
     const isEditingReleased = !isEditingCookLog
       && (editable?.status === 'released' || editable?.status === 'archived');
+    const canRelease = !isEditingCookLog && (isEditingDraft || editable?.status === 'beta');
+    const releaseButton = canRelease
+      ? `<button class="btn btn-sm btn-outline" onclick="RecipeView.openReleaseModal()" title="${escHtml(isEditingDraft ? 'Release the draft as a new version' : `Promote ${editable.version_string || 'this beta'} to a release`)}">${isEditingDraft ? 'Release…' : 'Promote…'}</button>`
+      : '';
+    // Autosave keeps the draft saved; this button takes a beta snapshot.
+    const actions = isEditingCookLog
+      ? `<button class="btn btn-sm" onclick="RecipeView.exitCookLogEdit()">← Back to cook logs</button>
+         <button class="btn btn-sm btn-outline" onclick="RecipeView.openPromoteLogModal('${escJs(editable._cookLogId)}')">Promote…</button>`
+      : isEditingReleased
+        ? `<button class="btn btn-sm btn-primary" onclick="RecipeView.saveDraft({ advanceBeta: false })">Save changes</button>`
+        : `${isEditingDraft ? '<button class="btn btn-sm" onclick="RecipeView.saveDraft({ advanceBeta: true })" title="Snapshot the draft as a new beta you can cook and log against. The draft itself saves automatically.">Save as new beta</button>' : ''}${releaseButton}`;
+    const targetTitle = isEditingCookLog
+      ? 'Edits save to this cook log only — not the draft or any release.'
+      : '';
     body.innerHTML = `
       <div class="editor-wrap">
         <div class="editor-toolbar">
-          <span class="editor-hint">@ingredient{qty%unit} &nbsp;#cookware &nbsp;~{time%min}</span>
-          <span class="text-muted" style="font-size:0.82rem">${escHtml(this.editTargetLabel())}</span>
-          <span class="editor-save-state">
-            <span id="editor-save-status" class="editor-save-status" role="status" aria-live="polite"></span>
-            <button id="editor-save-retry" class="btn btn-sm editor-save-retry" hidden onclick="RecipeView.saveDraft({ advanceBeta: false })">Save now</button>
-          </span>
-          ${isEditingCookLog
-            ? `<button class="btn btn-sm" onclick="RecipeView.exitCookLogEdit()">← Back to cook logs</button>
-               <button class="btn btn-sm btn-primary" onclick="RecipeView.saveDraft({ advanceBeta: false })">Save</button>`
-            : isEditingReleased
-              ? `<button class="btn btn-sm btn-primary" onclick="RecipeView.saveDraft({ advanceBeta: false })">Save changes</button>`
-              : `<button class="btn btn-sm" onclick="RecipeView.saveDraft({ advanceBeta: true })">Save</button>`}
+          <span class="editor-target"${targetTitle ? ` title="${escHtml(targetTitle)}"` : ''}>${escHtml(this.editTargetLabel())}</span>
+          <span id="editor-save-pill" class="save-pill" data-state="saved" role="status" aria-live="polite"></span>
+          <span class="editor-toolbar-spacer"></span>
+          <span class="editor-toolbar-actions">${actions}</span>
         </div>
         ${isEditingReleased ? `
         <div class="editor-release-warning">
           <span>⚠ You're editing <strong>${escHtml(editable.version_string || 'this release')}</strong> (${escHtml(editable.status)}) in place — saving overwrites the published version. Good for a quick typo or note fix; for real changes, start a new beta so the release history stays intact.</span>
           <button class="btn btn-sm" onclick="RecipeView.startNextBetaFrom('${escJs(editable.version_string || '')}')">Start a new beta from ${escHtml(editable.version_string || 'this release')}</button>
         </div>` : ''}
+        ${isEditingCookLog ? '' : '<div id="editor-title-notice" class="editor-notice" hidden></div>'}
+        ${this.editorHelpHtml()}
         <div class="editor-split">
           <div class="editor-code">
             <div id="draft-editor" class="editor-surface" aria-label="Cooklang recipe editor"></div>
@@ -87,13 +95,6 @@ Object.assign(RecipeView, {
 Cream the @butter{} until soft. Add @flour{} gradually.
 
 Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
-            <div class="editor-meta-hint">
-              <span class="meta-hint-title">Metadata</span>
-              <code>&gt;&gt; servings: 4</code>
-              <code>&gt;&gt; notes: Your notes</code>
-              <code>&gt;&gt; source: URL or book</code>
-              <code>&gt;&gt; metric.hydration: water.g / flour.g * 100 | %</code>
-            </div>
           </div>
           <div class="editor-preview-pane">
             <div class="editor-preview" id="draft-preview">
@@ -112,21 +113,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
             </div>
           </div>
         </div>
-        ${isEditingCookLog ? `
-        <div style="padding:16px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">
-          <div class="text-muted" style="font-size:0.84rem;line-height:1.5">Edits save to this cook log only — not the draft or any release.</div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-sm" onclick="RecipeView.openPromoteLogModal('${escJs(editable._cookLogId)}')">Promote to release…</button>
-            <button class="btn btn-sm" onclick="RecipeView.exitCookLogEdit()">Done</button>
-          </div>
-        </div>` : (isEditingDraft || editable?.status === 'beta') ? `
-        <div style="padding:16px;border-top:1px solid var(--border);background:var(--surface)">
-          <button class="btn btn-primary" onclick="RecipeView.openReleaseModal()" style="width:100%">${editable?.status === 'beta' ? `Promote ${escHtml(editable.version_string || 'beta')}…` : 'Release version…'}</button>
-        </div>` : `
-        <div style="padding:16px;border-top:1px solid var(--border);background:var(--surface)">
-          <div class="text-muted" style="font-size:0.84rem;line-height:1.5">Editing a released version saves over it directly. Use “Start a new beta” above to iterate without touching the published release.</div>
-        </div>`}
-        </div>`;
+      </div>`;
     const textarea = document.getElementById('draft-text');
     const editorHost = document.getElementById('draft-editor');
     if (textarea && editorHost && window.CooklangEditor?.createCooklangEditor) {
@@ -134,6 +121,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
         value: text,
         placeholder: textarea.getAttribute('placeholder') || '',
         textarea,
+        onSelection: (offset) => this.followEditorCursor(offset),
       });
     } else {
       textarea?.classList.remove('editor-textarea-shadow');
@@ -145,9 +133,23 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
           value: textarea.value,
           placeholder: textarea.getAttribute('placeholder') || '',
           textarea,
+          onSelection: (offset) => this.followEditorCursor(offset),
         });
       }, { once: true });
     }
+    // The panes fill the screen below the sticky toolbar, whatever its height.
+    const toolbar = body.querySelector('.editor-toolbar');
+    const wrap = body.querySelector('.editor-wrap');
+    this.editorToolbarObserver?.disconnect();
+    if (toolbar && wrap && typeof ResizeObserver !== 'undefined') {
+      this.editorToolbarObserver = new ResizeObserver(() => wrap.style.setProperty('--editor-toolbar-h', `${toolbar.offsetHeight}px`));
+      this.editorToolbarObserver.observe(toolbar);
+    }
+    // Plain-textarea fallback: follow its cursor too.
+    for (const type of ['keyup', 'click']) {
+      textarea?.addEventListener(type, () => { if (!this.draftEditor) this.followEditorCursor(textarea.selectionStart); });
+    }
+    this.editorCursorOffset = null;
     document.getElementById('tag-input')?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); this.addTag(); }
     });
@@ -199,18 +201,130 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     session.update(textarea.value, tags);
   },
 
+  // One status pill: Saved / Saving… / Unsaved, with Retry when a save failed.
   renderEditorSaveStatus(session) {
     if (session !== this.editorSaveSession) return;
-    const status = document.getElementById('editor-save-status');
-    const retry = document.getElementById('editor-save-retry');
-    if (status) {
-      status.textContent = session.status + (session.dirty && session.storageFailed
-        ? ' — browser recovery unavailable; keep this page open' : '');
-      status.dataset.dirty = String(session.dirty);
+    const pill = document.getElementById('editor-save-pill');
+    if (!pill) return;
+    const view = editorSaveView(session);
+    pill.dataset.state = view.state;
+    const warn = session.dirty && session.storageFailed;
+    pill.title = view.title + (warn ? ' Browser recovery is unavailable, so keep this page open until it saves.' : '');
+    pill.innerHTML = `<span class="save-pill-dot" aria-hidden="true"></span><span class="save-pill-text">${escHtml(view.text)}${warn ? ' ⚠' : ''}</span>${view.action
+      ? `<button type="button" class="save-pill-action" onclick="RecipeView.saveDraft({ advanceBeta: false })">${escHtml(view.action)}</button>`
+      : ''}`;
+  },
+
+  // Syntax and metadata help, together above the editor. Collapsible; the
+  // choice is remembered per browser.
+  editorHelpHtml() {
+    let open = true;
+    try { open = window.localStorage.getItem('ajilab:editor-help') !== 'closed'; } catch {}
+    return `<details class="editor-help"${open ? ' open' : ''} ontoggle="RecipeView.rememberEditorHelp(this.open)">
+      <summary>Syntax</summary>
+      <div class="editor-help-body">
+        <span class="editor-help-group">
+          <code>@ingredient{qty%unit}</code><code>#cookware{}</code><code>~{25%min}</code><code>^{450%F}</code><code>= Section</code><code>&gt; note</code><code>@salt{=1%tsp}</code>
+        </span>
+        <span class="editor-help-group">
+          <span class="editor-help-label">Metadata</span>
+          <code>servings: 4</code><code>source: URL or book</code><code>notes: Your notes</code><code>metric.hydration: water.g / flour.g * 100 | %</code>
+        </span>
+        <span class="editor-help-note">Metadata goes between <code>---</code> lines at the top. <code>{=…}</code> keeps an amount fixed when scaling.</span>
+      </div>
+    </details>`;
+  },
+
+  rememberEditorHelp(open) {
+    try { window.localStorage.setItem('ajilab:editor-help', open ? 'open' : 'closed'); } catch {}
+  },
+
+  // ── Preview follows the cursor ───────────────────────────────────────────────
+  // Bring the step being edited into view in the preview, when the preview
+  // scrolls on its own (side-by-side layout), and mark it.
+
+  followEditorCursor(offset) {
+    this.editorCursorOffset = offset;
+    cancelAnimationFrame(this.followFrame);
+    this.followFrame = requestAnimationFrame(() => this.applyPreviewFollow(true));
+  },
+
+  applyPreviewFollow(scroll) {
+    const box = document.getElementById('draft-preview');
+    const text = document.getElementById('draft-text')?.value;
+    if (!box || text == null || this.editorCursorOffset == null) return;
+    const spot = cooklangCursorSpot(text, this.editorCursorOffset);
+    box.querySelectorAll('.preview-cursor').forEach((el) => el.classList.remove('preview-cursor'));
+    const target = findPreviewTarget(box, spot);
+    if (!target) return;
+    if (target.classList.contains('step-item')) target.classList.add('preview-cursor');
+    if (!scroll || box.scrollHeight <= box.clientHeight + 4 || getComputedStyle(box).overflowY === 'visible') return;
+    const boxRect = box.getBoundingClientRect();
+    const rect = target.getBoundingClientRect();
+    if (spot.kind === 'frontmatter') {
+      if (box.scrollTop > 0) box.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
     }
-    if (retry) {
-      retry.hidden = !session.dirty || session.status === 'Saving…';
-      retry.textContent = session.status.startsWith('Could not save') ? 'Retry save' : 'Save now';
+    if (rect.top >= boxRect.top + 8 && rect.bottom <= boxRect.bottom - 8) return; // already in view
+    const top = box.scrollTop + (rect.top - boxRect.top) - box.clientHeight / 3;
+    box.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+  },
+
+  // ── Title check ──────────────────────────────────────────────────────────────
+  // The text's `title:` and the recipe's name in AjiLab should agree; offer a
+  // one-click fix either way.
+
+  renderTitleNotice(preview) {
+    const notice = document.getElementById('editor-title-notice');
+    if (!notice) return;
+    const written = String(preview?.metadata?.title ?? '').replace(/\s+/g, ' ').trim();
+    const name = String(this.recipe?.title || '').replace(/\s+/g, ' ').trim();
+    if (!written || !name || written === name) {
+      notice.hidden = true;
+      notice.innerHTML = '';
+      return;
+    }
+    notice.hidden = false;
+    notice.innerHTML = `<span>The <code>title:</code> line says <strong>${escHtml(written)}</strong>, but this recipe is called <strong>${escHtml(name)}</strong> in AjiLab.</span>
+      <span class="editor-notice-actions">
+        <button class="btn btn-sm" onclick="RecipeView.useRecipeNameInText()">Use “${escHtml(name)}” in the text</button>
+        <button class="btn btn-sm" onclick="RecipeView.renameRecipeToText()" title="Its link changes to match the new name">Rename recipe to “${escHtml(written)}”</button>
+      </span>`;
+  },
+
+  useRecipeNameInText() {
+    const textarea = document.getElementById('draft-text');
+    if (!textarea) return;
+    const next = replaceTitleLine(textarea.value, this.recipe.title);
+    if (next === textarea.value) return;
+    textarea.value = next;
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    clearTimeout(this.titlePreviewTimer);
+    this.titlePreviewTimer = setTimeout(() => this.updatePreview(), 50);
+  },
+
+  async renameRecipeToText() {
+    const title = String(this.draftPreviewState?.metadata?.title || '').replace(/\s+/g, ' ').trim();
+    if (!title) return;
+    // Save first: the edit session is tied to the recipe's current link.
+    if (this.editorSaveSession?.dirty && !(await this.saveDraft({ silent: true, advanceBeta: false }))) {
+      showToast('Save your changes before renaming');
+      return;
+    }
+    try {
+      const res = await API.put(`/recipes/${this.slug}`, { title });
+      showToast(`Renamed to ${title}`);
+      if (res.slug && res.slug !== this.slug) {
+        this.slug = res.slug;
+        Router.go(this.recipePathFor(), true);
+        return;
+      }
+      await this.refreshRecipe();
+      this.renderScaffold(document.getElementById('view-container'));
+      this.renderHeaderThumbnail();
+      this.renderTab();
+    } catch (e) {
+      showToast('Error: ' + e.message);
     }
   },
 
@@ -379,7 +493,8 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       }
       if (preview.cookwares?.length) html += `<div class="section-head mt16">Equipment</div>${CL.renderCookware(preview.cookwares)}`;
       if (preview.steps?.length) {
-        html += `<div class="section-head mt16">Steps</div>${CL.renderSteps(preview.steps, 1, preview.metadata, false, {
+        // Amounts in steps follow the Overview's "Amounts in steps" setting.
+        html += `<div class="section-head mt16">Steps</div>${CL.renderSteps(preview.steps, 1, preview.metadata, this.showAmounts !== false, {
           temperatureUnit: this.temperatureUnit,
           resolveTimerToken: timerResolver,
           resolveInlineQuantityToken: inlineResolver,
@@ -388,6 +503,8 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       box.innerHTML = html || '<p class="text-muted" style="font-size:0.88rem">Nothing to preview yet.</p>';
       box.insertAdjacentHTML('beforeend', '<div class="draft-quantity-popover" id="draft-quantity-panel" hidden></div>');
       this.renderDraftQuantityPanel();
+      this.renderTitleNotice(preview);
+      this.applyPreviewFollow(false);
     } catch (e) {
       this.draftQuantityTokens = [];
       this.draftPreviewState = null;

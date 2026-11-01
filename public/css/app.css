@@ -1230,16 +1230,126 @@ button.ing-qty {
 
 /* ── Editor ──────────────────────────────────────────────────── */
 .editor-wrap { display: flex; flex-direction: column; gap: 0; }
+/* Stays in view while the page scrolls. */
 .editor-toolbar {
+  position: sticky;
+  top: var(--nav-h);
+  z-index: 60;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg2);
   flex-wrap: wrap;
 }
-.editor-hint { font-size: 0.78rem; color: var(--ink3); flex: 1; }
+.editor-target {
+  font-size: 0.82rem;
+  color: var(--ink2);
+  font-weight: 600;
+  min-width: 0;
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-toolbar-spacer { flex: 1; }
+.editor-toolbar-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Save status: one pill, with Retry/Save inside it when needed. */
+.save-pill {
+  --pill-dot: #4f8a4a;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.78rem;
+  color: var(--ink3);
+  white-space: nowrap;
+}
+.save-pill-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pill-dot); flex: none; }
+.save-pill[data-state="saving"] { --pill-dot: var(--ink3); }
+.save-pill[data-state="saving"] .save-pill-dot { animation: save-pill-pulse 1s ease-in-out infinite; }
+.save-pill[data-state="unsaved"] { --pill-dot: #c2791d; color: var(--ink2); }
+.save-pill[data-state="recovered"] { --pill-dot: #c2791d; color: var(--ink2); border-color: color-mix(in srgb, #c2791d 45%, var(--border)); }
+.save-pill[data-state="error"] { --pill-dot: #c03030; color: #a52a2a; border-color: color-mix(in srgb, #c03030 45%, var(--border)); }
+.save-pill-action {
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: none;
+  padding: 0 0 0 8px;
+  margin-left: 2px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+.save-pill-action:hover { text-decoration: underline; }
+@keyframes save-pill-pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) {
+  .save-pill[data-state="saving"] .save-pill-dot { animation: none; }
+}
+@media (prefers-color-scheme: dark) {
+  .save-pill[data-state="error"] { color: #f08080; }
+}
+
+/* Syntax + metadata help, together above the editor. */
+.editor-help {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  font-size: 0.78rem;
+  color: var(--ink3);
+}
+.editor-help > summary {
+  padding: 5px 16px;
+  cursor: pointer;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  user-select: none;
+}
+.editor-help-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 0 16px 8px;
+}
+.editor-help-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.editor-help-label { font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.7rem; }
+.editor-help code {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  background: var(--bg3);
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--ink2);
+}
+.editor-help-note { flex-basis: 100%; }
+
+/* Title line vs recipe name. */
+.editor-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: var(--ink2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid #c2791d;
+}
+.editor-notice[hidden] { display: none; }
+.editor-notice > span:first-child { flex: 1; min-width: 220px; }
+.editor-notice code { font-family: var(--font-mono); font-size: 0.8rem; }
+.editor-notice-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .editor-release-warning {
   display: flex;
   align-items: center;
@@ -1366,31 +1476,6 @@ button.ing-qty {
   font-weight: 600;
 }
 .editor-code .cm-cook-punctuation {
-  color: var(--ink2);
-}
-.editor-meta-hint {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 16px;
-  background: var(--bg2);
-  border-top: 1px solid var(--border);
-  font-size: 0.78rem;
-  color: var(--ink3);
-  flex-wrap: wrap;
-}
-.editor-meta-hint .meta-hint-title {
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-size: 0.72rem;
-}
-.editor-meta-hint code {
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  background: var(--bg3);
-  padding: 1px 6px;
-  border-radius: 4px;
   color: var(--ink2);
 }
 .editor-preview {
@@ -1580,15 +1665,34 @@ button.ing-qty {
 @media (prefers-color-scheme: dark) {
   .editor-preview .parse-error { background: #3d1010; color: #f08080; }
 }
+/* The step being edited, marked in the preview. */
+.editor-preview .step-item.preview-cursor {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
 @media (min-width: 768px) {
+  /* Source and preview each scroll on their own, filling the screen below
+     the sticky toolbar. */
   .editor-split {
     flex-direction: row;
-    min-height: 450px;
+    height: calc(100dvh - var(--nav-h) - var(--editor-toolbar-h, 44px));
+    min-height: 420px;
   }
   .editor-code {
     flex: 1;
     min-width: 0;
+    min-height: 0;
     border-right: 1px solid var(--border);
+  }
+  .editor-code .editor-surface {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .editor-code .cm-editor {
+    flex: 1;
+    height: 100%;
   }
   .editor-code .editor-textarea {
     flex: 1;
@@ -1603,9 +1707,11 @@ button.ing-qty {
   .editor-preview {
     flex: 1;
     min-width: 0;
+    min-height: 0;
   }
   .editor-preview {
     max-height: none;
+    overflow-y: auto;
   }
 }
 

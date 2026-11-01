@@ -86,6 +86,116 @@ function formatEditableQuantity(value) {
   return rounded.toFixed(2).replace(/\.?0+$/, '');
 }
 
+// The editor's save pill for a RecipeEditState session.
+function editorSaveView(session) {
+  const status = String(session?.status || 'Saved');
+  if (status === 'Saving…') return { state: 'saving', text: 'Saving…', title: 'Saving your changes.' };
+  if (status.startsWith('Could not save')) {
+    return { state: 'error', text: 'Not saved', action: 'Retry', title: 'The last save failed. Your changes are kept in this browser.' };
+  }
+  if (session?.dirty && session?.recovered) {
+    return { state: 'recovered', text: 'Recovered changes', action: 'Save', title: 'Unsaved changes from an earlier visit were restored. Review them, then save.' };
+  }
+  if (session?.dirty) {
+    return session.autosave
+      ? { state: 'unsaved', text: 'Unsaved', title: 'Saves automatically in a moment.' }
+      : { state: 'unsaved', text: 'Unsaved changes', title: 'Use Save changes to save.' };
+  }
+  return { state: 'saved', text: 'Saved', title: 'All changes saved.' };
+}
+
+// Where a text offset sits in a recipe: in the frontmatter, or in the body as
+// (section name, its occurrence, step k of that section; 0 = the heading).
+// Mirrors how the parser groups steps: paragraphs split by blank lines,
+// `>` notes and `>>` metadata don't count.
+function cooklangCursorSpot(text, offset) {
+  const lines = String(text || '').split('\n');
+  const cursorLine = String(text || '').slice(0, Math.max(0, offset)).split('\n').length - 1;
+  let bodyStart = 0;
+  let first = 0;
+  while (first < lines.length && !lines[first].trim()) first++;
+  if (lines[first]?.trim() === '---') {
+    const close = lines.findIndex((line, i) => i > first && line.trim() === '---');
+    if (close > 0) {
+      if (cursorLine <= close) return { kind: 'frontmatter' };
+      bodyStart = close + 1;
+    }
+  }
+  let section = null;
+  const seen = new Map();
+  let occurrence = 0;
+  let step = 0;
+  let inParagraph = false;
+  for (let i = bodyStart; i <= cursorLine && i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) { inParagraph = false; continue; }
+    if (/^=/.test(line)) {
+      section = line.replace(/^=+\s*/, '').replace(/\s*=+$/, '').trim() || null;
+      const key = section || '';
+      occurrence = seen.get(key) || 0;
+      seen.set(key, occurrence + 1);
+      step = 0;
+      inParagraph = false;
+      continue;
+    }
+    if (line.startsWith('>>')) { inParagraph = false; continue; }
+    if (!inParagraph) {
+      inParagraph = true;
+      if (!line.startsWith('>') && !line.startsWith('--')) step += 1;
+    }
+  }
+  return { kind: 'body', section, occurrence, step };
+}
+
+// The preview element for a cursor spot: the section heading, or step k under it.
+function findPreviewTarget(box, spot) {
+  if (!box || !spot) return null;
+  if (spot.kind === 'frontmatter') return box.firstElementChild;
+  const items = [...(box.querySelector('.step-list')?.children || [])];
+  if (!items.length) return null;
+  let start = 0;
+  let heading = null;
+  if (spot.section) {
+    let seen = 0;
+    const idx = items.findIndex((li) => {
+      if (!li.classList.contains('step-section')) return false;
+      const name = (li.querySelector('.step-section-name')?.textContent || '').trim();
+      if (name !== spot.section) return false;
+      return seen++ === spot.occurrence;
+    });
+    if (idx < 0) return null;
+    heading = items[idx];
+    start = idx + 1;
+  }
+  if (spot.step <= 0) return heading || items[0];
+  let count = 0;
+  let last = heading;
+  for (let i = start; i < items.length; i++) {
+    const li = items[i];
+    if (li.classList.contains('step-section')) break;
+    if (!li.classList.contains('step-item')) continue;
+    count += 1;
+    last = li;
+    if (count === spot.step) return li;
+  }
+  return last;
+}
+
+// Set the recipe's `title:` (frontmatter, or a `>> title:` line).
+function replaceTitleLine(text, title) {
+  const value = /[:#]|^[\s'"&*!|>%@`{[]/.test(title) ? JSON.stringify(title) : title;
+  const source = String(text || '');
+  const fm = source.match(/^(\s*---\r?\n)([\s\S]*?)(\r?\n---[ \t]*(?:\r?\n|$))/);
+  if (fm && /^title\s*:/m.test(fm[2])) {
+    const body = fm[2].replace(/^(title\s*:[ \t]*).*$/m, (m, key) => `${key}${value}`);
+    return fm[1] + body + fm[3] + source.slice(fm[0].length);
+  }
+  if (/^\s*>>\s*title\s*:/m.test(source)) {
+    return source.replace(/^(\s*>>\s*title\s*:[ \t]*).*$/m, (m, key) => `${key}${title}`);
+  }
+  return source;
+}
+
 // "2×" badge for a cook log made at another scale; '' at 1×.
 function cookLogScaleBadge(log) {
   const scale = Number(log?.scale) || 1;

@@ -150,6 +150,8 @@ function replaceEditorText(view, nextValue) {
 function createCooklangEditor(container, options = {}) {
   const {
     onChange,
+    // Called with the cursor offset when it moves or the text changes.
+    onSelection,
     placeholder: placeholderText = '',
     textarea = null,
     value = '',
@@ -175,6 +177,7 @@ function createCooklangEditor(container, options = {}) {
         ]),
         placeholder(placeholderText),
         EditorView.updateListener.of((update) => {
+          if (update.selectionSet || update.docChanged) onSelection?.(update.state.selection.main.head);
           if (!update.docChanged) return;
           const nextValue = update.state.doc.toString();
           if (textarea && textarea.value !== nextValue) {
