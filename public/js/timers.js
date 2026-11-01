@@ -260,9 +260,14 @@ const Timers = (() => {
     const number = li ? steps.indexOf(li) + 1 : 0;
     // First few words of the step, without a dangling "and"/"for": "Fold dough 5x".
     const filler = /^(and|or|the|a|an|for|to|of|with|in|at|on|until|then)$/i;
-    const words = (li?.querySelector('.step-text')?.textContent || '')
-      .replace(/⏱/g, '').replace(/\s+/g, ' ').trim().split(' ').slice(0, 3)
-      .map((w) => w.replace(/[,.;:]+$/, ''));
+    // Leave the timers themselves out ("Rest for ~{1%min}" → "Rest").
+    const text = li?.querySelector('.step-text')?.cloneNode(true);
+    text?.querySelectorAll('.s-timer').forEach((el) => el.remove());
+    const words = (text?.textContent || '')
+      .replace(/\s+/g, ' ').trim().split(' ')
+      .map((w) => w.replace(/[,.;:]+$/, ''))
+      .filter((w) => /[\p{L}\p{N}]/u.test(w))
+      .slice(0, 3);
     while (words.length > 1 && filler.test(words[words.length - 1])) words.pop();
     const lead = words.join(' ');
     const chips = li ? [...li.querySelectorAll('.s-timer-start')] : [];
