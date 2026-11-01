@@ -160,6 +160,18 @@ body {
 }
 
 .recipe-list { padding: 0; }
+/* Home: one readable column instead of rows stretched across the window. */
+@media (min-width: 960px) {
+  .recipe-list, .search-wrap { max-width: 880px; margin-left: auto; margin-right: auto; }
+}
+.recipe-activity {
+  font-size: 0.78rem;
+  color: var(--ink3);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .recipe-card {
   display: flex;
   align-items: center;

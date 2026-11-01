@@ -286,6 +286,11 @@ Object.assign(RecipeView, {
         <label class="field-label" for="cl-outcome">Outcome (one line)</label>
         <input id="cl-outcome" class="field-input" placeholder="e.g. crust burnt, crumb good" value="${escHtml(existing?.outcome || '')}" />
       </div>
+      <!-- Right after the outcome: it's what the card and the next cook use. -->
+      <div class="field-group mt12">
+        <label class="field-label" for="cl-changes">Changes to try next</label>
+        <textarea id="cl-changes" class="field-input" rows="2" placeholder="e.g. bake 5 min longer uncovered">${escHtml(existing?.changes_to_try_next || '')}</textarea>
+      </div>
       <div class="field-group mt12">
         <label class="field-label" for="cl-worked">What worked</label>
         <textarea id="cl-worked" class="field-input" rows="2">${escHtml(existing?.what_worked || '')}</textarea>
@@ -293,10 +298,6 @@ Object.assign(RecipeView, {
       <div class="field-group mt12">
         <label class="field-label" for="cl-problems">Problems found</label>
         <textarea id="cl-problems" class="field-input" rows="2">${escHtml(existing?.problems_found || '')}</textarea>
-      </div>
-      <div class="field-group mt12">
-        <label class="field-label" for="cl-changes">Changes to try next</label>
-        <textarea id="cl-changes" class="field-input" rows="2">${escHtml(existing?.changes_to_try_next || '')}</textarea>
       </div>
       <div class="field-group mt12">
         <label class="field-label" for="cl-notes">Freeform notes (optional)</label>

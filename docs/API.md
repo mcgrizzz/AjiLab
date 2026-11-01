@@ -12,7 +12,7 @@ Content type: `application/json` for everything except image uploads (multipart)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/recipes` | List recipes. Supports `?q=<search>` (substring match across title, slug, draft, version text, tags) |
+| `GET` | `/recipes` | List recipes, most recent activity first. Supports `?q=<search>` (substring match across title, slug, draft, version text, tags). Each item carries `last_activity_at` / `last_activity_kind` (`cooked`, `version`, `edited` or `created`: the latest of last cooked, last version taken, last draft edit, across all branches), plus `last_cooked_at`, `last_version`, `last_version_at`, `last_edited_at` and `cook_logs_total` |
 | `POST` | `/recipes` | Create. Body: `{ title }`. Returns `{ id, slug, title }` |
 | `GET` | `/recipes/:slug` | Full recipe with all branches, versions, draft, and counts |
 | `PUT` | `/recipes/:slug` | Update title. Body: `{ title }`. Slug regenerates if needed |

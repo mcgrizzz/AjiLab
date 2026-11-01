@@ -48,6 +48,42 @@ export async function deleteRecipe(slug: string): Promise<void> {
   await sql`DELETE FROM recipes WHERE id = ${recipe.id}`;
 }
 
+// Latest of: last cooked, last version taken, last draft edit — across all
+// branches. Falls back to when the recipe was created.
+export function recipeActivity(recipe: RecipeRecord) {
+  const branches = recipe.branches?.length ? recipe.branches : [recipe];
+  let lastCooked: string | null = null;
+  let lastVersion: { at: string; version: string } | null = null;
+  let lastEdit: string | null = null;
+  let cookLogs = 0;
+  const later = (a: string | null, b: string | null | undefined) => (b && (!a || b > a) ? b : a);
+  for (const branch of branches) {
+    cookLogs += branch.counts?.cook_logs_count || 0;
+    lastCooked = later(lastCooked, branch.latest_cook_log?.cooked_at);
+    for (const v of branch.versions || []) {
+      if (v.is_draft || !v.version_string) continue;
+      if (!lastVersion || v.created_at > lastVersion.at) lastVersion = { at: v.created_at, version: v.version_string };
+    }
+    if (branch.draft?.cooklang_text?.trim()) lastEdit = later(lastEdit, branch.draft.updated_at);
+  }
+  const candidates: Array<{ kind: "cooked" | "version" | "edited" | "created"; at: string }> = [
+    { kind: "created", at: recipe.created_at },
+  ];
+  if (lastEdit) candidates.push({ kind: "edited", at: lastEdit });
+  if (lastVersion) candidates.push({ kind: "version", at: lastVersion.at });
+  if (lastCooked) candidates.push({ kind: "cooked", at: lastCooked });
+  const latest = candidates.reduce((a, b) => (b.at > a.at ? b : a));
+  return {
+    last_activity_at: latest.at,
+    last_activity_kind: latest.kind,
+    last_cooked_at: lastCooked,
+    last_version: lastVersion?.version || null,
+    last_version_at: lastVersion?.at || null,
+    last_edited_at: lastEdit,
+    cook_logs_total: cookLogs,
+  };
+}
+
 export async function listRecipes(search?: string) {
   const needle = search?.trim().toLowerCase();
   const recipes = await sql<{ slug: string }[]>`SELECT slug FROM recipes ORDER BY updated_at DESC`;
@@ -65,8 +101,12 @@ export async function listRecipes(search?: string) {
       ].join("\n").toLowerCase();
       return haystack.includes(needle);
     })
-    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
-    .map((recipe) => ({
+    .map((recipe) => ({ recipe, activity: recipeActivity(recipe) }))
+    // Most recent activity first: a recipe you're iterating on rises before
+    // you've cooked it.
+    .sort((a, b) => b.activity.last_activity_at.localeCompare(a.activity.last_activity_at))
+    .map(({ recipe, activity }) => ({
+      ...activity,
       id: recipe.id,
       slug: recipe.slug,
       title: recipe.title,

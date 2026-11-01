@@ -86,6 +86,20 @@ function formatEditableQuantity(value) {
   return rounded.toFixed(2).replace(/\.?0+$/, '');
 }
 
+// "today", "yesterday", "May 24", or "May 24, 2025" for another year.
+function shortDate(iso) {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return '';
+  const now = new Date();
+  const day = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diff = Math.round((day(now) - day(date)) / 86400000);
+  if (diff === 0) return 'today';
+  if (diff === 1) return 'yesterday';
+  const opts = { month: 'short', day: 'numeric' };
+  if (date.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
+  return date.toLocaleDateString(undefined, opts);
+}
+
 // Sidebars stick while you scroll only if they fit on screen; a taller one
 // scrolls with the page, so it never needs a scrollbar of its own.
 const StickyFit = (() => {

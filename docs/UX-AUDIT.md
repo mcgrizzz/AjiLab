@@ -28,7 +28,9 @@
 > | U14 Nested scrolling | **Fixed.** The Overview's ingredient sidebar (and the right-hand cards) stick only when they fit on screen; a taller one, like TEST's 2,035px list, scrolls with the page instead of inside it. Re-checked when the window or the content resizes. |
 > | A1 follow-up | Linked-recipe chips (“→ unstrained sakadane”) were 4.29:1 in light mode: accent text on bg3. My sweep missed them because the linked recipe didn't exist locally, so only the broken-link style was measured. New `--link-ink` (#93411a / dark #ef8c70): 5.53:1 / 5.62:1. Re-swept with the starter present: 0 failures in 3,414 runs. |
 > | U11 Cook-log feed | **Fixed.** "Changes to try next" shows on each card (and as "Try next:" on Overview's Latest Cook Log); What worked / Problems stay under Details. The expanded recipe uses the full card: ingredients beside steps on wide screens, steps capped at a readable 720px. Step rows highlight on hover/focus and their ⋮ gets an outline (always outlined on touch screens). |
-> | U10, U12, U13, A2 | Open. |
+> | U12 Home page | **Fixed.** Sorted by most recent activity: the latest of last cooked, last version taken and last draft edit, across branches, so a recipe you're iterating on rises before you cook it. Each row says what happened ("Last cooked May 24 · 4 logs", "Edited today · not cooked yet", "v1.1-beta.2 saved Oct 30 · last cooked May 24"). One readable 880px column on wide screens. A search with no results offers "Create 'zzqx'" with the name filled in. The draft badge was already neutral and the button already labelled; never-released recipes now show one draft badge, not two. |
+> | U11 follow-up | "Changes to try next" moved up to right after Outcome in the cook-log form. |
+> | U10, U13, A2 | Open. |
 
 **Audited:** October 31, 2026, on the live deployment (`aji.bridgewater.epi.land`), commit `a42d4c2`
 **Viewport:** 1444 × 1241 desktop, dark theme, Chrome

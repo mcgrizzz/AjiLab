@@ -9,6 +9,30 @@ const IndexView = {
     return false;
   },
 
+  // "Edited today · last cooked May 24 · 4 logs"
+  activityLine(r) {
+    const parts = [];
+    const kind = r.last_activity_kind;
+    if (kind === 'cooked') parts.push(`Last cooked ${shortDate(r.last_cooked_at)}`);
+    else if (kind === 'version') parts.push(`${r.last_version} saved ${shortDate(r.last_version_at)}`);
+    else if (kind === 'edited') parts.push(`Edited ${shortDate(r.last_edited_at)}`);
+    else parts.push(`Created ${shortDate(r.created_at)}`);
+    if (kind !== 'cooked') parts.push(r.last_cooked_at ? `last cooked ${shortDate(r.last_cooked_at)}` : 'not cooked yet');
+    const logs = r.cook_logs_total || 0;
+    if (logs) parts.push(`${logs} log${logs === 1 ? '' : 's'}`);
+    return parts.join(' · ');
+  },
+
+  // No match: start a recipe with the search text as its name.
+  createFromSearch() {
+    const q = document.getElementById('search-input')?.value.trim() || '';
+    document.getElementById('nav-add')?.click();
+    setTimeout(() => {
+      const input = document.getElementById('new-recipe-title');
+      if (input && q) { input.value = q; input.select(); }
+    }, 20);
+  },
+
   async render(container) {
     container.innerHTML = `
       <div class="search-bar">
@@ -74,10 +98,11 @@ const IndexView = {
       const recipes = await API.get(`/recipes${q ? '?q=' + encodeURIComponent(q) : ''}`);
       if (recipes.length === 0) {
         list.innerHTML = q
-          ? `<div class="empty-state"><h2>No results</h2><p>Try a different search.</p></div>`
+          ? `<div class="empty-state"><h2>No recipes match “${escHtml(q)}”</h2><p>Try a different search, or start it as a new recipe.</p>
+              <button class="btn btn-primary mt12" onclick="IndexView.createFromSearch()">Create “${escHtml(q)}”</button></div>`
           : `<div class="empty-state">
               <h2>No recipes yet</h2>
-              <p>Tap + to add your first recipe, or import from a backup.</p>
+              <p>Use “New recipe” to add your first one, or import from a backup.</p>
               <label for="backup-file-input" class="btn btn-sm mt12" style="cursor:pointer;display:inline-block">
                 Import from backup
               </label>
@@ -92,7 +117,8 @@ const IndexView = {
         const badges = [];
         if (r.latest_released) badges.push(`<span class="badge badge-released">${escHtml(r.latest_released)}</span>`);
         if (r.latest_beta) badges.push(`<span class="badge badge-beta">${escHtml(r.latest_beta)} beta</span>`);
-        if (!r.latest_released && !r.latest_beta) badges.push(`<span class="badge badge-draft">Draft</span>`);
+        // Never released: one draft badge, not "Draft" + "Draft in progress".
+        if (!r.latest_released && !r.latest_beta && !r.draft_change_label) badges.push(`<span class="badge badge-draft">Draft</span>`);
         if (r.draft_change_label) badges.push(`<span class="badge badge-in-progress">${escHtml(r.draft_change_label)}</span>`);
         const thumb = r.thumbnail_image_id
           ? `<img src="/api/images/${r.thumbnail_image_id}" alt="${escHtml(r.title)}" loading="lazy" />`
@@ -103,6 +129,7 @@ const IndexView = {
           <div class="recipe-info">
             <div class="recipe-title">${escHtml(r.title)}</div>
             <div class="recipe-meta">${badges.join('')}</div>
+            <div class="recipe-activity">${escHtml(IndexView.activityLine(r))}</div>
           </div>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="color:var(--ink3);flex-shrink:0">
             <path d="M6 4L10 8L6 12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
