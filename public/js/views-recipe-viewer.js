@@ -186,7 +186,7 @@ Object.assign(RecipeView, {
   },
 
   stepRenderOptions() {
-    return { temperatureUnit: this.temperatureUnit, units: this.unitView() };
+    return { temperatureUnit: this.temperatureUnit, units: this.unitView(), timers: true };
   },
 
   // ── Per-ingredient display units ──

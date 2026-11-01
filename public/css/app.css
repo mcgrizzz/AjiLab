@@ -1736,7 +1736,7 @@ button.ing-qty {
      the sticky toolbar. */
   .editor-split {
     flex-direction: row;
-    height: calc(100dvh - var(--nav-h) - var(--editor-toolbar-h, 44px));
+    height: calc(100dvh - var(--nav-h) - var(--editor-toolbar-h, 44px) - var(--timer-tray-h, 0px));
     min-height: 420px;
   }
   .editor-code {
@@ -2027,7 +2027,7 @@ details[open] > .diff-summary { margin-bottom: 10px; }
 /* ── Toast ───────────────────────────────────────────────────── */
 .toast {
   position: fixed;
-  bottom: max(20px, env(safe-area-inset-bottom));
+  bottom: calc(max(20px, env(safe-area-inset-bottom)) + var(--timer-tray-h, 0px));
   left: 50%;
   transform: translateX(-50%);
   background: var(--ink);
@@ -2043,29 +2043,84 @@ details[open] > .diff-summary { margin-bottom: 10px; }
 }
 .toast.hidden { opacity: 0; }
 
-.timer-display {
+/* ── Timers ──────────────────────────────────────────────────── */
+/* Step timer chips on the Overview are buttons that start a timer. */
+button.s-timer-start {
+  border: 0;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  cursor: pointer;
+  line-height: inherit;
+}
+button.s-timer-start:hover { text-decoration: underline; text-underline-offset: 2px; }
+/* The tray takes its own space at the bottom (the page pads for it), so it
+   never covers content, sticky sidebars or the editor. */
+body { padding-bottom: var(--timer-tray-h, 0px); }
+.timer-tray {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
+  background: var(--surface);
+  border-top: 1px solid var(--border2);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.06);
+  padding: 8px 16px calc(8px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+}
+.timer-tray[hidden] { display: none; }
+.timer-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; flex: 1; min-width: 0; }
+.timer-item {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  background: var(--bg3);
-  padding: 4px 10px;
-  border-radius: var(--r);
-  font-family: var(--font-mono);
-  font-size: 0.85em;
-  cursor: pointer;
-  color: var(--ink2);
-  border: 1px solid var(--border);
+  gap: 8px;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 3px 4px 3px 12px;
+  background: var(--bg);
+  font-size: 0.84rem;
+  max-width: 100%;
 }
-.timer-display.running { background: #fff0e0; border-color: var(--gold); color: #7a5000; }
-.timer-display.done { background: #e6f4ea; border-color: var(--green); color: #1a5030; }
+.timer-label {
+  border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--ink);
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.timer-label:hover { text-decoration: underline; }
+.timer-time { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink2); white-space: nowrap; }
+.timer-stop {
+  border: 0; background: none; color: var(--ink3); cursor: pointer;
+  width: 26px; height: 26px; border-radius: 50%; font-size: 0.8rem;
+}
+.timer-stop:hover { background: var(--bg3); color: var(--ink); }
+.timer-window { border-color: color-mix(in srgb, var(--gold) 70%, transparent); background: color-mix(in srgb, var(--gold) 10%, var(--bg)); }
+.timer-window .timer-time { color: var(--gold-ink); }
+.timer-done { border-color: color-mix(in srgb, var(--green) 70%, transparent); background: color-mix(in srgb, var(--green) 12%, var(--bg)); animation: timer-done-pulse 1.2s ease-in-out 3; }
+.timer-done .timer-time { color: var(--ink); font-weight: 600; }
+.timer-flash { animation: timer-done-pulse 0.6s ease-in-out 2; }
+@keyframes timer-done-pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .timer-done, .timer-flash { animation: none; } }
+.timer-note { margin: 0; font-size: 0.75rem; color: var(--ink3); }
+.timer-label { flex: 1 1 auto; }
+@media (max-width: 600px) {
+  /* Each timer gets the full row so its name isn't squeezed out. */
+  .timer-tray { gap: 4px; padding-top: 6px; }
+  .timer-list { flex-basis: 100%; flex-direction: column; gap: 6px; }
+  .timer-item { width: 100%; }
+  .timer-note { flex-basis: 100%; }
+}
+@media print { .timer-tray { display: none !important; } body { padding-bottom: 0; } }
+
 @media (prefers-color-scheme: dark) {
-  .timer-display.running { background: #3d2800; color: #e0a840; }
-  .timer-display.done { background: #1a3d22; color: #70d080; }
-  .step-text .s-ingredient { background: #1a3522; color: #70d088; }
-  .step-text .s-cookware   { background: #252d38; color: #a0b8d0; }
-  .step-text .s-timer      { background: #352800; color: #e0a840; }
-  .step-text .s-temp       { background: #3d1a10; color: #f09060; }
-  .step-text .s-quantity   { background: var(--bg3); color: var(--ink2); }
+  /* Not inside the print sheet: it's paper, so it keeps the light chips. */
+  .step-text:not(.print-sheet *) .s-ingredient { background: #1a3522; color: #70d088; }
+  .step-text:not(.print-sheet *) .s-cookware   { background: #252d38; color: #a0b8d0; }
+  .step-text:not(.print-sheet *) .s-timer      { background: #352800; color: #e0a840; }
+  .step-text:not(.print-sheet *) .s-temp       { background: #3d1a10; color: #f09060; }
+  .step-text:not(.print-sheet *) .s-quantity   { background: var(--bg3); color: var(--ink2); }
 }
 
 /* ── Upload area ─────────────────────────────────────────────── */

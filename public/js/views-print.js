@@ -72,7 +72,9 @@ const PrintView = {
         version?.is_draft ? null : version.status,
         scale !== 1 ? `${roundScale(scale)}×` : null,
         branch !== 'main' ? `branch ${branch}` : null,
-        fmtDate(version?.updated_at || version?.created_at),
+        // A version's date is when it was made, as in the Versions list; a
+        // draft has no such date, so it shows its last edit.
+        version?.is_draft ? `edited ${fmtDate(version.updated_at)}` : fmtDate(version?.created_at),
       ].filter(Boolean);
       const classes = ['print-view'];
       if (this.options.photo) classes.push('print-with-photo');

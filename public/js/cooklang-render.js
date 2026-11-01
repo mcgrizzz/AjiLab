@@ -156,6 +156,12 @@ const CL = {
               ? ` data-draft-token-id="${escHtml(matchedToken.id)}" onclick="RecipeView.selectDraftQuantity('${escHtml(matchedToken.id)}', this)"`
               : editAttrs;
             const editableCls = editAttrs ? ' s-cl-editable' : '';
+            // options.timers (Overview): the chip is a button that starts a timer.
+            if (options.timers && hasQty && !matchedToken && !editAttrs) {
+              const range = token.range || {};
+              const data = ` data-qty="${escHtml(String(token.quantity))}" data-units="${escHtml(token.units || '')}" data-min="${escHtml(String(range.min ?? ''))}" data-max="${escHtml(String(range.max ?? ''))}" data-value="${escHtml(token.value)}"`;
+              return `<button type="button" class="s-timer s-timer-start"${data} onclick="Timers.startFromChip(this)" title="Start a ${escHtml(token.value)} timer">⏱ ${escHtml(token.value)}</button>`;
+            }
             const timerHtml = `<span class="s-timer${matchedToken ? ' draft-token-selectable' : ''}${hasSourceDiff(token) ? ' s-amt-modified' : ''}${editableCls}"${attr}>⏱ ${escHtml(token.value)}</span>`;
             return valueWithSource(token, timerHtml);
           }

@@ -108,9 +108,11 @@ const StickyFit = (() => {
   const check = (el) => {
     if (!el.isConnected) return;
     const nav = document.getElementById('topnav')?.offsetHeight || 0;
-    el.classList.toggle('sticky-fits', el.offsetHeight <= window.innerHeight - nav - 32);
+    const tray = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--timer-tray-h')) || 0;
+    el.classList.toggle('sticky-fits', el.offsetHeight <= window.innerHeight - nav - tray - 32);
   };
   window.addEventListener('resize', () => watched.forEach(check));
+  window.addEventListener('timer-tray-resize', () => watched.forEach(check));
   return {
     watch(elements) {
       observer?.disconnect();
