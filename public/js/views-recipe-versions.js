@@ -349,13 +349,16 @@ Object.assign(RecipeView, {
         return `<li class="step-diff-row step-diff-section"><span class="step-diff-prefix">Section</span><span class="step-diff-body"><span class="diff-token-del">${escHtml(change.from_section_name || 'Untitled')}</span><span class="diff-arrow"> → </span><span class="diff-token-add">${escHtml(change.section_name || 'Untitled')}</span></span></li>`;
       }
       // Step numbers count across the recipe, as on the Overview.
-      let stepLabel = 'Step';
-      if (change.block_kind === 'note') stepLabel = 'Note';
+      // "New"/"Old" say added/removed in words, not just by colour.
+      const age = change.kind === 'added' ? 'New ' : change.kind === 'removed' ? 'Old ' : '';
+      let stepLabel = `${age}step`;
+      if (change.block_kind === 'note') stepLabel = `${age}note`;
       else if (change.step_number) {
         const was = change.kind === 'modified' && change.from_step_number && change.from_step_number !== change.step_number
           ? ` (was ${change.from_step_number})` : '';
-        stepLabel = `${change.kind === 'removed' ? 'Old step' : 'Step'} ${change.step_number}${was}`;
+        stepLabel = `${age}step ${change.step_number}${was}`;
       }
+      stepLabel = stepLabel.charAt(0).toUpperCase() + stepLabel.slice(1);
       const section = change.section_name ? `<span class="step-diff-section-name">${escHtml(change.section_name)}</span>` : '';
       const prefix = `<span class="step-diff-prefix">${escHtml(stepLabel)}${section}</span>`;
       let body, cls;

@@ -8,10 +8,16 @@
   --surface:   #ffffff;
   --ink:       #1a1a18;
   --ink2:      #4a4a44;
-  --ink3:      #8a8a80;
-  --accent:    #c45c2a;
+  /* Text colours are picked for at least 4.5:1 on every surface they sit on
+     (bg, bg2, bg3, surface and the tinted chips/rows). */
+  --ink3:      #67675e;
+  --accent:    #ad4e1d;
   --accent2:   #e8795a;
-  --gold:      #b89040;
+  --accent-hover: #93411a;
+  --on-accent: #ffffff;
+  --gold:      #b89040;   /* decorative: rules, dots, tints */
+  --gold-ink:  #7e6118;   /* gold as text */
+  --del-ink:   #b23636;
   --green:     #3a7a4a;
   --border:    rgba(26,26,24,0.10);
   --border2:   rgba(26,26,24,0.18);
@@ -32,10 +38,14 @@
     --surface: #262622;
     --ink:     #f0ede4;
     --ink2:    #c0bdb0;
-    --ink3:    #787870;
+    --ink3:    #a29f94;
     --accent:  #e8795a;
     --accent2: #f0a080;
+    --accent-hover: #f0a080;
+    --on-accent: #1a1a18;
     --gold:    #d4aa50;
+    --gold-ink: #dfba68;
+    --del-ink: #f08a8a;
     --green:   #5aaa6a;
     --border:  rgba(240,237,228,0.10);
     --border2: rgba(240,237,228,0.20);
@@ -452,7 +462,7 @@ button.ing-qty {
   cursor: pointer;
 }
 .unit-chip:hover { background: var(--bg3); }
-.unit-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.unit-chip.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 /* Vulgar fractions are tiny in the mono amount font; draw them in the body
    face at a larger size. */
 .qty-frac {
@@ -512,7 +522,7 @@ button.ing-qty {
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 .scale-btn:hover { background: var(--bg3); color: var(--ink); }
-.scale-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.scale-btn.active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .scale-custom-input {
   width: 70px;
   height: 32px;
@@ -535,8 +545,8 @@ button.ing-qty {
 }
 .scale-custom-input::placeholder { color: var(--ink3); font-weight: 600; }
 .scale-custom-input:focus { outline: none; border-color: var(--accent); }
-.scale-custom-input.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-.scale-custom-input.active::placeholder { color: rgba(255, 255, 255, 0.7); }
+.scale-custom-input.active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.scale-custom-input.active::placeholder { color: var(--on-accent); }
 .unit-reset-line {
   margin: -4px 0 10px;
   font-size: 0.84rem;
@@ -623,7 +633,7 @@ button.ing-qty {
   border-radius: 6px;
 }
 .s-amt-modified {
-  color: var(--gold);
+  color: var(--gold-ink);
 }
 .s-amt-arrow {
   color: var(--ink3);
@@ -746,7 +756,7 @@ button.ing-qty {
   white-space: nowrap;
   margin-top: 1px;
 }
-.cp-tag-deviation { background: color-mix(in srgb, var(--gold) 22%, transparent); color: var(--gold); }
+.cp-tag-deviation { background: color-mix(in srgb, var(--gold) 16%, transparent); color: var(--gold-ink); }
 .cp-tag-within-spec { background: color-mix(in srgb, var(--ink3) 15%, transparent); color: var(--ink3); }
 .cp-tag-addition { background: color-mix(in srgb, var(--green) 22%, transparent); color: var(--green); }
 .cp-tag-removal { background: color-mix(in srgb, var(--ink3) 15%, transparent); color: var(--ink3); border: 1px solid var(--ink3); }
@@ -777,7 +787,7 @@ button.ing-qty {
   color: var(--ink3);
 }
 .cp-to {
-  color: var(--gold);
+  color: var(--gold-ink);
   font-weight: 500;
 }
 /* Step group — modified steps render their snippet once as a header with
@@ -1005,7 +1015,7 @@ button.ing-qty {
   align-self: center;
   margin-top: 0;
 }
-.s-ing-amt { font-weight: 400; opacity: 0.7; font-size: 0.88em; }
+.s-ing-amt { font-weight: 400; font-size: 0.88em; }
 /* `> ` note lines hang under their preceding context. A step-note hugs its
    parent step as a single visual unit: the step's bottom divider is moved
    onto the note so the line lands *after* the pair, not between them.
@@ -1098,10 +1108,10 @@ button.ing-qty {
 .btn:hover { background: var(--bg3); color: var(--ink); }
 .btn-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: transparent;
 }
-.btn-primary:hover { background: var(--accent2); color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); color: var(--on-accent); }
 /* Important but not the main action (Promote on Overview). */
 .btn-outline {
   background: none;
@@ -1504,6 +1514,17 @@ button.ing-qty {
 .editor-code .cm-cook-punctuation {
   color: var(--ink2);
 }
+@media (prefers-color-scheme: dark) {
+  /* The light-mode syntax colours are too dark to read on the dark editor. */
+  .editor-code .cm-cook-ingredient { color: #86c27a; }
+  .editor-code .cm-cook-cookware { color: #d4a95c; }
+  .editor-code .cm-cook-timer { color: #f08a78; }
+  .editor-code .cm-cook-temperature { color: #f0a060; }
+  .editor-code .cm-cook-section-header { color: #d4aa50; }
+  .editor-code .cm-cook-section-line { border-left-color: #d4aa50; }
+}
+/* Placeholders are read as hints, so they need the same contrast as text. */
+::placeholder { color: var(--ink3); opacity: 1; }
 .editor-preview {
   padding: 16px;
   background: var(--bg);
@@ -1838,7 +1859,7 @@ textarea.field-input { min-height: 80px; resize: vertical; }
 .diff-row-meta { font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink3); margin-left: 4px; }
 .diff-from { color: var(--ink3); }
 .diff-removed .diff-from { text-decoration: line-through; text-decoration-color: color-mix(in srgb, #c04040 55%, transparent); }
-.diff-changed .diff-to { color: color-mix(in srgb, var(--gold) 80%, var(--ink)); font-weight: 600; }
+.diff-changed .diff-to { color: var(--gold-ink); font-weight: 600; }
 .diff-swap .diff-to    { color: color-mix(in srgb, var(--accent) 80%, var(--ink)); font-weight: 600; }
 .diff-added .diff-to   { color: var(--green); font-weight: 600; }
 .diff-name { font-weight: 600; }
@@ -1880,7 +1901,7 @@ details[open] > .diff-summary { margin-bottom: 10px; }
   overflow-x: auto;
 }
 .diff-line-add { color: var(--green); white-space: pre; }
-.diff-line-del { color: #c04040; white-space: pre; }
+.diff-line-del { color: var(--del-ink); white-space: pre; }
 .diff-line-ctx { color: var(--ink3); white-space: pre; }
 .diff-line-hdr { color: var(--ink3); font-weight: 600; white-space: pre; }
 /* Word-level highlight inside a paired removed/added line. Lights up just the
@@ -2124,7 +2145,7 @@ details[open] > .diff-summary { margin-bottom: 10px; }
 .ingredient-summary-toggle-btn {
   border: none;
   background: transparent;
-  color: var(--ink3);
+  color: var(--ink2);
   font-size: 0.76rem;
   font-weight: 600;
   padding: 5px 10px;
@@ -2638,7 +2659,7 @@ body.print-route header {
 .cook-log-chip.active {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .cook-log-modal-row {
   display: flex;
@@ -2825,7 +2846,7 @@ body.print-route header {
   margin-left: 4px;
   font-weight: 400;
 }
-.tab.active .tab-count { color: inherit; opacity: 0.7; }
+.tab.active .tab-count { color: inherit; }
 
 .recipe-main .section-head {
   display: flex;
