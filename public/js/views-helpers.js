@@ -86,6 +86,30 @@ function formatEditableQuantity(value) {
   return rounded.toFixed(2).replace(/\.?0+$/, '');
 }
 
+// Sidebars stick while you scroll only if they fit on screen; a taller one
+// scrolls with the page, so it never needs a scrollbar of its own.
+const StickyFit = (() => {
+  let observer = null;
+  let watched = [];
+  const check = (el) => {
+    if (!el.isConnected) return;
+    const nav = document.getElementById('topnav')?.offsetHeight || 0;
+    el.classList.toggle('sticky-fits', el.offsetHeight <= window.innerHeight - nav - 32);
+  };
+  window.addEventListener('resize', () => watched.forEach(check));
+  return {
+    watch(elements) {
+      observer?.disconnect();
+      watched = elements.filter(Boolean);
+      if (typeof ResizeObserver !== 'undefined') {
+        observer = new ResizeObserver((entries) => entries.forEach((entry) => check(entry.target)));
+        watched.forEach((el) => observer.observe(el));
+      }
+      watched.forEach(check);
+    },
+  };
+})();
+
 // The editor's save pill for a RecipeEditState session.
 function editorSaveView(session) {
   const status = String(session?.status || 'Saved');

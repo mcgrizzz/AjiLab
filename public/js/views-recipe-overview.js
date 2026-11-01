@@ -63,6 +63,7 @@ Object.assign(RecipeView, {
           </aside>
         </div>
       </div>`;
+    StickyFit.watch([body.querySelector('.recipe-sidebar'), body.querySelector('.overview-sidebar')]);
     this.renderImageManager();
   },
 

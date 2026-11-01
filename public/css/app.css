@@ -2443,14 +2443,12 @@ body.print-route header {
     align-items: start;
   }
   .recipe-grid.no-sidebar { display: block; }
-  .recipe-sidebar {
+  /* Sticks only when it fits on screen (StickyFit adds .sticky-fits);
+     a long ingredient list scrolls with the page, never inside it. */
+  .recipe-sidebar.sticky-fits {
     position: sticky;
     top: calc(var(--nav-h) + 16px);
-    max-height: calc(100dvh - var(--nav-h) - 32px);
-    overflow-y: auto;
   }
-  .recipe-sidebar::-webkit-scrollbar { width: 4px; }
-  .recipe-sidebar::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
   .recipe-main { min-width: 0; }
   .recipe-main .section-head { padding-top: 0; }
 }
@@ -2585,8 +2583,8 @@ body.print-route header {
     gap: 24px;
     align-items: start;
   }
-  .overview-sidebar {
-    margin-top: 0;
+  .overview-sidebar { margin-top: 0; }
+  .overview-sidebar.sticky-fits {
     position: sticky;
     top: calc(var(--nav-h) + 16px);
   }
@@ -2964,6 +2962,8 @@ body.print-route header {
   padding: 2px 4px;
   border-radius: 6px;
 }
+/* The accent ring is too faint on the inverted toast; use its text colour. */
+.toast-action:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
 .unsent-log-note {
   margin: 4px 0 6px;
   padding: 8px 10px;
