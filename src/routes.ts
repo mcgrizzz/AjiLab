@@ -25,6 +25,7 @@ import {
   forkBranchHeadToDraft,
   forkVersionToDraft,
   restoreDraftSnapshot,
+  undoDraftBeta,
   getRecipeBranch,
   getRecipeBySlug,
   getVersionByString,
@@ -195,6 +196,19 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
       return c.json(await forkBranchHeadToDraft(c.req.param("slug"), activeBranch(c)));
     } catch (error: any) {
       return c.json({ error: error?.message || "fork failed" }, 400);
+    }
+  });
+
+  // Undo "Save as new beta". Body: { version_string, previous_beta_version }.
+  api.post(`${prefix}/draft/undo-beta`, async (c) => {
+    if (!(await getRecipeBySlug(c.req.param("slug"), activeBranch(c)))) return c.json({ error: "not found" }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    const versionString = String(body?.version_string || "").trim();
+    if (!versionString) return c.json({ error: "version_string required" }, 400);
+    try {
+      return c.json(await undoDraftBeta(c.req.param("slug"), versionString, body?.previous_beta_version ? String(body.previous_beta_version) : null, activeBranch(c)));
+    } catch (error: any) {
+      return c.json({ error: error?.message || "undo failed" }, 400);
     }
   });
 

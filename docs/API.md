@@ -45,7 +45,9 @@ The draft is the mutable working copy on a branch. Exactly one per branch, enfor
 | `POST` | `…/draft/restore` | Undo a draft replacement. Body: `{ cooklang_text, tags?, parent_version?, current_beta_version? }` (lineage kept only if the version exists) |
 | `POST` | `…/draft/parse` | Parse cooklang text → structured JSON. Stateless. Body: `{ cooklang_text }`. Optional `source_cooklang_text` (+ `source_scale`) annotates "was X" diffs against that source, scaled first |
 
-`advance_beta: true` on a draft save also creates (or updates) an auto-numbered beta snapshot version (`v1.1-beta.1`, `v1.1-beta.2`, …) so you have a stable anchor to share or compare against.
+`advance_beta: true` on a draft save also creates the next auto-numbered beta snapshot (`v1.1-beta.1`, `v1.1-beta.2`, …) so you have a stable anchor to share or compare against. The response's `created_beta` names it; it's `null` when the draft still matches the current beta (`snapshot_version`), in which case nothing is created. Ordinary saves change only the draft: a beta snapshot never changes after it's taken. The recipe record's `next_beta_version` is the number the next snapshot will get.
+
+`POST …/draft/undo-beta` with `{ version_string, previous_beta_version }` undoes a snapshot: it deletes that beta and points the draft back at `previous_beta_version`. Refused unless it's the draft's current beta, has no cook logs, and no later version builds on it.
 
 ---
 

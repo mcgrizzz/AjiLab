@@ -32,3 +32,29 @@ export function latestComparableVersion(versions: VersionRecord[]): VersionRecor
     .filter((version) => version.status === "released" || version.status === "beta")
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0] || null;
 }
+
+// The beta a draft's next snapshot would get (`v1.1-beta.2`).
+export function nextAutoBetaBase(versions: VersionRecord[], draft: VersionRecord, latestReleased: string | null, latestBeta: string | null): string {
+  const seed = draft.parent_version
+    ? (draft.parent_version.includes("-beta") ? stripBetaSuffix(draft.parent_version) : incrementVersionString(draft.parent_version))
+    : (latestReleased ? incrementVersionString(latestReleased) : (latestBeta ? stripBetaSuffix(latestBeta) : "v1.0"));
+  let candidate = seed;
+  while (versions.some((v) => v.version_string === candidate)) candidate = incrementVersionString(candidate);
+  return candidate;
+}
+
+export function nextAutoBetaVersion(versions: VersionRecord[], base: string): string {
+  const prefix = `${base}-beta.`;
+  const max = versions
+    .map((v) => v.version_string || "")
+    .filter((s) => s.startsWith(prefix))
+    .map((s) => Number(s.slice(prefix.length)))
+    .filter((n) => Number.isFinite(n))
+    .reduce((m, n) => Math.max(m, n), 0);
+  return `${prefix}${max + 1}`;
+}
+
+export function nextBetaForDraft(versions: VersionRecord[], draft: VersionRecord | null, latestReleased: string | null, latestBeta: string | null): string | null {
+  if (!draft) return null;
+  return nextAutoBetaVersion(versions, nextAutoBetaBase(versions, draft, latestReleased, latestBeta));
+}

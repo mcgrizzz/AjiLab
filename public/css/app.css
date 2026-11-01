@@ -1230,11 +1230,14 @@ button.ing-qty {
 
 /* ── Editor ──────────────────────────────────────────────────── */
 .editor-wrap { display: flex; flex-direction: column; gap: 0; }
-/* Stays in view while the page scrolls. */
-.editor-toolbar {
+/* Toolbar + syntax strip stay in view while the page scrolls; the panes
+   start right below them. */
+.editor-head {
   position: sticky;
   top: var(--nav-h);
   z-index: 60;
+}
+.editor-toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1332,24 +1335,47 @@ button.ing-qty {
 }
 .editor-help-note { flex-basis: 100%; }
 
-/* Title line vs recipe name. */
-.editor-notice {
-  display: flex;
-  align-items: center;
-  gap: 8px 12px;
-  flex-wrap: wrap;
-  padding: 8px 16px;
+/* Title line vs recipe name: a chip in the toolbar with the fixes in a popover. */
+.title-check { position: relative; }
+.title-check[hidden] { display: none; }
+.title-check-chip {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, #c2791d 45%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, #c2791d 10%, var(--surface));
+  color: var(--ink2);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.title-check-chip:hover { background: color-mix(in srgb, #c2791d 18%, var(--surface)); }
+.title-check-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 70;
+  width: min(420px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
   font-size: 0.84rem;
   line-height: 1.5;
   color: var(--ink2);
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  border-left: 3px solid #c2791d;
 }
-.editor-notice[hidden] { display: none; }
-.editor-notice > span:first-child { flex: 1; min-width: 220px; }
-.editor-notice code { font-family: var(--font-mono); font-size: 0.8rem; }
-.editor-notice-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.title-check-pop[hidden] { display: none; }
+.title-check-pop p { margin: 0 0 10px; }
+.title-check-pop code { font-family: var(--font-mono); font-size: 0.8rem; }
+.title-check-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+@media (max-width: 600px) {
+  /* Anchor the popover to the whole head so it can't run off-screen. */
+  .title-check { position: static; }
+  .title-check-pop { left: 12px; right: 12px; width: auto; }
+}
 .editor-release-warning {
   display: flex;
   align-items: center;

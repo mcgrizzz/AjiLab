@@ -8,6 +8,8 @@ import {
   sortVersions,
   latestVersionByStatus,
   latestComparableVersion,
+  nextAutoBetaBase,
+  nextAutoBetaVersion,
 } from "./store/version-string.ts";
 import { mergeCooklangText } from "./store/merge.ts";
 import {
@@ -188,26 +190,6 @@ async function ensureDraft(recipe: RecipeRecord): Promise<VersionRecord> {
   });
 }
 
-function nextAutoBetaBase(versions: VersionRecord[], draft: VersionRecord, latestReleased: string | null, latestBeta: string | null): string {
-  const seed = draft.parent_version
-    ? (draft.parent_version.includes("-beta") ? stripBetaSuffix(draft.parent_version) : incrementVersionString(draft.parent_version))
-    : (latestReleased ? incrementVersionString(latestReleased) : (latestBeta ? stripBetaSuffix(latestBeta) : "v1.0"));
-  let candidate = seed;
-  while (versions.some((v) => v.version_string === candidate)) candidate = incrementVersionString(candidate);
-  return candidate;
-}
-
-function nextAutoBetaVersion(versions: VersionRecord[], base: string): string {
-  const prefix = `${base}-beta.`;
-  const max = versions
-    .map((v) => v.version_string || "")
-    .filter((s) => s.startsWith(prefix))
-    .map((s) => Number(s.slice(prefix.length)))
-    .filter((n) => Number.isFinite(n))
-    .reduce((m, n) => Math.max(m, n), 0);
-  return `${prefix}${max + 1}`;
-}
-
 export async function updateDraft(
   slug: string,
   updates: { cooklang_text?: string; tags?: string[] },
@@ -222,32 +204,26 @@ export async function updateDraft(
   const advanceBeta = options.advance_beta === true;
 
   let snapshotVersion: string | null = draft.current_beta_version || null;
+  let createdBeta: string | null = null;
 
-  if (nextText.trim()) {
-    const sameState = sameDraftState(draft, nextText, nextTags);
-    if (!sameState || (advanceBeta && !snapshotVersion)) {
-      if (!advanceBeta && snapshotVersion) {
-        // Update the existing auto-beta in place + resync its refs in one round trip via RETURNING.
-        const updated = await sql<{ id: string }[]>`
-          UPDATE entries
-          SET cooklang_text = ${nextText}, tags = ${nextTags}
-          WHERE branch_id = ${branchId} AND version_string = ${snapshotVersion}
-          RETURNING id
-        `;
-        if (updated[0]) await syncReferencesForEntry(updated[0].id, nextText);
-      } else if (advanceBeta) {
-        const base = nextAutoBetaBase(recipe.versions, draft, recipe.latest_released, recipe.latest_beta);
-        const previousBeta = recipe.versions.find((v) => v.version_string?.startsWith(`${base}-beta.`));
-        const newVersion = nextAutoBetaVersion(recipe.versions, base);
-        const betaId = generateId();
-        await sql`
-          INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, parent_version, tags)
-          VALUES (${betaId}, ${branchId}, ${newVersion}, 'beta', ${nextText},
-                  ${previousBeta?.version_string || draft.parent_version || null}, ${nextTags})
-        `;
-        await syncReferencesForEntry(betaId, nextText);
-        snapshotVersion = newVersion;
-      }
+  // A beta is a fixed snapshot: ordinary (auto)saves change only the draft.
+  // advance_beta takes a new snapshot, unless the draft still matches the
+  // last one.
+  if (advanceBeta && nextText.trim()) {
+    const currentBeta = snapshotVersion ? recipe.versions.find((v) => v.version_string === snapshotVersion) : null;
+    if (!sameDraftState(currentBeta, nextText, nextTags)) {
+      const base = nextAutoBetaBase(recipe.versions, draft, recipe.latest_released, recipe.latest_beta);
+      const previousBeta = recipe.versions.find((v) => v.version_string?.startsWith(`${base}-beta.`));
+      const newVersion = nextAutoBetaVersion(recipe.versions, base);
+      const betaId = generateId();
+      await sql`
+        INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, parent_version, tags)
+        VALUES (${betaId}, ${branchId}, ${newVersion}, 'beta', ${nextText},
+                ${previousBeta?.version_string || draft.parent_version || null}, ${nextTags})
+      `;
+      await syncReferencesForEntry(betaId, nextText);
+      snapshotVersion = newVersion;
+      createdBeta = newVersion;
     }
   }
 
@@ -257,7 +233,37 @@ export async function updateDraft(
     WHERE id = ${draft.id}
   `;
   await syncReferencesForEntry(draft.id, nextText);
-  return { ok: true, snapshot_version: snapshotVersion };
+  return { ok: true, snapshot_version: snapshotVersion, created_beta: createdBeta };
+}
+
+// Undo "Save as new beta": remove that beta and point the draft back at the
+// previous one. Only while nothing depends on it yet.
+export async function undoDraftBeta(
+  slug: string,
+  versionString: string,
+  previousBeta: string | null,
+  branchSlug = MAIN_BRANCH_SLUG,
+) {
+  const recipe = await requireRecipe(slug, branchSlug);
+  const draft = recipe.draft;
+  const beta = recipe.versions.find((v) => v.version_string === versionString);
+  if (!draft || !beta) throw new Error("version not found");
+  if (beta.status !== "beta" || draft.current_beta_version !== versionString) {
+    throw new Error("only the draft's latest beta snapshot can be undone");
+  }
+  if (recipe.versions.some((v) => v.parent_version === versionString)) {
+    throw new Error(`a later version builds on ${versionString}`);
+  }
+  const [{ n }] = await sql<{ n: number }[]>`
+    SELECT COUNT(*)::int AS n FROM cook_logs WHERE source_entry_id = ${beta.id}
+  `;
+  if (n > 0) throw new Error(`${versionString} has cook logs`);
+  const previous = previousBeta && recipe.versions.some((v) => v.version_string === previousBeta) ? previousBeta : null;
+  await sql.begin(async (tx) => {
+    await tx`DELETE FROM entries WHERE id = ${beta.id}`;
+    await tx`UPDATE entries SET current_beta_version = ${previous} WHERE id = ${draft.id}`;
+  });
+  return { ok: true, current_beta_version: previous };
 }
 
 export async function updateDraftNotes(slug: string, notes: string, branchSlug = MAIN_BRANCH_SLUG) {

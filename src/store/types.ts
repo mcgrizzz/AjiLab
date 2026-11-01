@@ -92,6 +92,8 @@ export interface RecipeBranchRecord extends RecipeBranchMeta {
   latest_beta: string | null;
   has_unreleased_changes: boolean;
   draft_change_label: string | null;
+  // The beta "Save as new beta" would create from the draft (`v1.1-beta.2`).
+  next_beta_version: string | null;
   current_best_release: VersionRecord | null;
   active_experiment: VersionRecord | null;
   latest_cook_log: CookLogRecord | null;
@@ -115,6 +117,8 @@ export interface RecipeRecord {
   latest_beta: string | null;
   has_unreleased_changes: boolean;
   draft_change_label: string | null;
+  // The beta "Save as new beta" would create from the draft (`v1.1-beta.2`).
+  next_beta_version: string | null;
   current_best_release: VersionRecord | null;
   active_experiment: VersionRecord | null;
   latest_cook_log: CookLogRecord | null;

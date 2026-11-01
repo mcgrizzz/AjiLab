@@ -66,25 +66,27 @@ Object.assign(RecipeView, {
          <button class="btn btn-sm btn-outline" onclick="RecipeView.openPromoteLogModal('${escJs(editable._cookLogId)}')">Promote…</button>`
       : isEditingReleased
         ? `<button class="btn btn-sm btn-primary" onclick="RecipeView.saveDraft({ advanceBeta: false })">Save changes</button>`
-        : `${isEditingDraft ? '<button class="btn btn-sm" onclick="RecipeView.saveDraft({ advanceBeta: true })" title="Snapshot the draft as a new beta you can cook and log against. The draft itself saves automatically.">Save as new beta</button>' : ''}${releaseButton}`;
+        : `${isEditingDraft ? `<button id="editor-beta-btn" class="btn btn-sm" onclick="RecipeView.saveDraftAsBeta()">${escHtml(this.recipe.next_beta_version ? `Save as ${this.recipe.next_beta_version}` : 'Save as new beta')}</button>` : ''}${releaseButton}`;
     const targetTitle = isEditingCookLog
       ? 'Edits save to this cook log only — not the draft or any release.'
       : '';
     body.innerHTML = `
       <div class="editor-wrap">
-        <div class="editor-toolbar">
-          <span class="editor-target"${targetTitle ? ` title="${escHtml(targetTitle)}"` : ''}>${escHtml(this.editTargetLabel())}</span>
-          <span id="editor-save-pill" class="save-pill" data-state="saved" role="status" aria-live="polite"></span>
-          <span class="editor-toolbar-spacer"></span>
-          <span class="editor-toolbar-actions">${actions}</span>
-        </div>
         ${isEditingReleased ? `
         <div class="editor-release-warning">
           <span>⚠ You're editing <strong>${escHtml(editable.version_string || 'this release')}</strong> (${escHtml(editable.status)}) in place — saving overwrites the published version. Good for a quick typo or note fix; for real changes, start a new beta so the release history stays intact.</span>
           <button class="btn btn-sm" onclick="RecipeView.startNextBetaFrom('${escJs(editable.version_string || '')}')">Start a new beta from ${escHtml(editable.version_string || 'this release')}</button>
         </div>` : ''}
-        ${isEditingCookLog ? '' : '<div id="editor-title-notice" class="editor-notice" hidden></div>'}
-        ${this.editorHelpHtml()}
+        <div class="editor-head">
+          <div class="editor-toolbar">
+            <span class="editor-target"${targetTitle ? ` title="${escHtml(targetTitle)}"` : ''}>${escHtml(this.editTargetLabel())}</span>
+            <span id="editor-save-pill" class="save-pill" data-state="saved" role="status" aria-live="polite"></span>
+            ${isEditingCookLog ? '' : '<span id="editor-title-notice" class="title-check" hidden></span>'}
+            <span class="editor-toolbar-spacer"></span>
+            <span class="editor-toolbar-actions">${actions}</span>
+          </div>
+          ${this.editorHelpHtml()}
+        </div>
         <div class="editor-split">
           <div class="editor-code">
             <div id="draft-editor" class="editor-surface" aria-label="Cooklang recipe editor"></div>
@@ -137,8 +139,8 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
         });
       }, { once: true });
     }
-    // The panes fill the screen below the sticky toolbar, whatever its height.
-    const toolbar = body.querySelector('.editor-toolbar');
+    // The panes fill the screen below the sticky head, whatever its height.
+    const toolbar = body.querySelector('.editor-head');
     const wrap = body.querySelector('.editor-wrap');
     this.editorToolbarObserver?.disconnect();
     if (toolbar && wrap && typeof ResizeObserver !== 'undefined') {
@@ -213,15 +215,70 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     pill.innerHTML = `<span class="save-pill-dot" aria-hidden="true"></span><span class="save-pill-text">${escHtml(view.text)}${warn ? ' ⚠' : ''}</span>${view.action
       ? `<button type="button" class="save-pill-action" onclick="RecipeView.saveDraft({ advanceBeta: false })">${escHtml(view.action)}</button>`
       : ''}`;
+    this.renderBetaButton(session);
+  },
+
+  // "Save as v1.1-beta.2": names the snapshot it takes, and is off while the
+  // draft still matches the last one.
+  renderBetaButton(session = this.editorSaveSession) {
+    const button = document.getElementById('editor-beta-btn');
+    if (!button || !session) return;
+    const draft = this.recipe?.draft;
+    const current = draft?.current_beta_version
+      ? (this.recipe.versions || []).find((v) => v.version_string === draft.current_beta_version)
+      : null;
+    const unchanged = !!current && current.cooklang_text === session.value.text
+      && JSON.stringify(JSON.parse(current.tags || '[]')) === JSON.stringify(session.value.tags);
+    const empty = !session.value.text.trim();
+    button.disabled = unchanged || empty;
+    const next = this.recipe?.next_beta_version;
+    button.title = empty ? 'Write something first.'
+      : unchanged ? `No changes since ${current.version_string}.`
+        : `Save the draft as ${next || 'a new beta'}: a fixed version you can cook and log against. You keep editing the draft; it saves automatically.`;
+  },
+
+  // One click takes the next beta snapshot; offer Undo, since it's a version.
+  async saveDraftAsBeta() {
+    const previous = this.recipe?.draft?.current_beta_version || null;
+    const button = document.getElementById('editor-beta-btn');
+    if (button) button.disabled = true;
+    this.lastCreatedBeta = null;
+    await this.saveDraft({ advanceBeta: true });
+    const version = this.lastCreatedBeta;
+    this.lastCreatedBeta = null;
+    if (!version) {
+      this.renderBetaButton();
+      return;
+    }
+    showToast(`Saved ${version}`, { action: { label: 'Undo', onClick: () => this.undoDraftBeta(version, previous) } });
+  },
+
+  async undoDraftBeta(version, previous) {
+    try {
+      await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/draft/undo-beta`, {
+        version_string: version, previous_beta_version: previous,
+      });
+      await this.refreshRecipe();
+      await this.renderDetail(document.getElementById('view-container'), this.activeVersion?.is_draft ? 'draft' : (this.activeVersion?.version_string || 'draft'), { syncUrl: true, replaceUrl: true });
+      showToast(`Removed ${version}`);
+    } catch (e) {
+      showToast(`Couldn't undo: ${e.message}`);
+    }
   },
 
   // Syntax and metadata help, together above the editor. Collapsible; the
   // choice is remembered per browser.
+  // Open on the first visit, collapsed after that unless you leave it open.
   editorHelpHtml() {
     let open = true;
-    try { open = window.localStorage.getItem('ajilab:editor-help') !== 'closed'; } catch {}
-    return `<details class="editor-help"${open ? ' open' : ''} ontoggle="RecipeView.rememberEditorHelp(this.open)">
-      <summary>Syntax</summary>
+    try {
+      const stored = window.localStorage.getItem('ajilab:editor-help');
+      open = stored === null || stored === 'open';
+      if (stored === null) window.localStorage.setItem('ajilab:editor-help', 'closed');
+    } catch {}
+    // Remember only your clicks (the initial open state also fires 'toggle').
+    return `<details class="editor-help"${open ? ' open' : ''}>
+      <summary onclick="RecipeView.rememberEditorHelp(!this.parentElement.open)">Syntax</summary>
       <div class="editor-help-body">
         <span class="editor-help-group">
           <code>@ingredient{qty%unit}</code><code>#cookware{}</code><code>~{25%min}</code><code>^{450%F}</code><code>= Section</code><code>&gt; note</code><code>@salt{=1%tsp}</code>
@@ -284,12 +341,34 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       notice.innerHTML = '';
       return;
     }
+    const wasOpen = notice.querySelector('.title-check-pop') && !notice.querySelector('.title-check-pop').hidden;
     notice.hidden = false;
-    notice.innerHTML = `<span>The <code>title:</code> line says <strong>${escHtml(written)}</strong>, but this recipe is called <strong>${escHtml(name)}</strong> in AjiLab.</span>
-      <span class="editor-notice-actions">
-        <button class="btn btn-sm" onclick="RecipeView.useRecipeNameInText()">Use “${escHtml(name)}” in the text</button>
-        <button class="btn btn-sm" onclick="RecipeView.renameRecipeToText()" title="Its link changes to match the new name">Rename recipe to “${escHtml(written)}”</button>
-      </span>`;
+    notice.innerHTML = `<button type="button" class="title-check-chip" aria-expanded="${wasOpen ? 'true' : 'false'}" onclick="RecipeView.toggleTitleCheck()">⚠ Title differs</button>
+      <div class="title-check-pop" role="dialog" aria-label="Title differs"${wasOpen ? '' : ' hidden'}>
+        <p>The <code>title:</code> line says <strong>${escHtml(written)}</strong>, but this recipe is called <strong>${escHtml(name)}</strong> in AjiLab.</p>
+        <div class="title-check-actions">
+          <button class="btn btn-sm" onclick="RecipeView.useRecipeNameInText()">Use “${escHtml(name)}” in the text</button>
+          <button class="btn btn-sm" onclick="RecipeView.renameRecipeToText()" title="Its link changes to match the new name">Rename recipe to “${escHtml(written)}”</button>
+        </div>
+      </div>`;
+  },
+
+  toggleTitleCheck(force) {
+    const chip = document.querySelector('#editor-title-notice .title-check-chip');
+    const pop = document.querySelector('#editor-title-notice .title-check-pop');
+    if (!chip || !pop) return;
+    const open = typeof force === 'boolean' ? force : pop.hidden;
+    pop.hidden = !open;
+    chip.setAttribute('aria-expanded', String(open));
+    document.removeEventListener('pointerdown', this.titleCheckOutside);
+    document.removeEventListener('keydown', this.titleCheckOutside);
+    if (!open) return;
+    this.titleCheckOutside = (event) => {
+      const inside = event.target?.closest?.('#editor-title-notice');
+      if ((event.type === 'keydown' && event.key === 'Escape') || (event.type === 'pointerdown' && !inside)) this.toggleTitleCheck(false);
+    };
+    document.addEventListener('pointerdown', this.titleCheckOutside);
+    document.addEventListener('keydown', this.titleCheckOutside);
   },
 
   useRecipeNameInText() {
@@ -531,6 +610,8 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     // A delayed response belongs to the captured target, not the current screen.
     if (session.target.slug !== this.slug || session.target.branch !== this.branchSlug || session.dirty) return true;
     const { response, value } = result;
+    // Read by saveDraftAsBeta even if the screen moved on meanwhile.
+    if (advanceBeta) this.lastCreatedBeta = response?.created_beta || null;
     const text = value.text;
     const tags = value.tags;
     const target = session.target;
@@ -567,17 +648,18 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       if (silent) { this.maybeShowUnresolvedWarning(response, true); return true; }
       await this.refreshRecipe();
       if (session !== this.editorSaveSession || session.dirty) return true;
-      // A draft Save that advanced a beta switches the selector to that new beta
-      // so you can see the snapshot you just took. Re-select Draft to keep
-      // iterating. Other saves stay on what you edited.
-      const advancedBeta = target.kind === 'draft' && advanceBeta && response?.snapshot_version;
-      const versionKey = advancedBeta
-        ? response.snapshot_version
-        : target.key;
-      if (versionKey) {
-        await this.renderDetail(document.getElementById('view-container'), versionKey, { syncUrl: true, replaceUrl: true });
+      // Stay on what you edited: after a beta snapshot you keep editing the
+      // draft (the caller offers Undo).
+      const createdBeta = target.kind === 'draft' && advanceBeta ? (response?.created_beta || null) : null;
+      if (target.key) {
+        await this.renderDetail(document.getElementById('view-container'), target.key, { syncUrl: true, replaceUrl: true });
       }
-      if (!silent) showToast(advancedBeta ? `Saved ${response.snapshot_version}` : (target.kind === 'draft' ? 'Draft saved' : 'Version saved'));
+      if (advanceBeta && target.kind === 'draft') {
+        if (!createdBeta) showToast(response?.snapshot_version ? `No changes since ${response.snapshot_version}` : 'Nothing to save yet');
+        this.maybeShowUnresolvedWarning(response, false);
+        return true;
+      }
+      if (!silent) showToast(target.kind === 'draft' ? 'Draft saved' : 'Version saved');
       this.maybeShowUnresolvedWarning(response, false);
       return true;
     } catch (e) {

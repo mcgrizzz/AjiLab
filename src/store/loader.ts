@@ -29,6 +29,7 @@ import {
   sortVersions,
   latestVersionByStatus,
   latestComparableVersion,
+  nextBetaForDraft,
 } from "./version-string.ts";
 
 export function sameDraftState(version: VersionRecord | null | undefined, nextText: string, nextTags: string[]): boolean {
@@ -152,6 +153,7 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
       latest_beta: latestBeta?.version_string || null,
       has_unreleased_changes: hasDraftChanges(draft, versions),
       draft_change_label: draftChangeLabel(draft, versions),
+      next_beta_version: nextBetaForDraft(versions, draft, latestReleased?.version_string || null, latestBeta?.version_string || null),
       current_best_release: latestReleased,
       active_experiment: selectActiveExperiment(draft, versions, latestReleased, latestBeta),
       latest_cook_log: logRow ? cookLogRowToRecord(logRow) : null,
@@ -183,6 +185,7 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
     latest_beta: branch.latest_beta,
     has_unreleased_changes: branch.has_unreleased_changes,
     draft_change_label: branch.draft_change_label,
+    next_beta_version: branch.next_beta_version,
     current_best_release: branch.current_best_release,
     active_experiment: branch.active_experiment,
     latest_cook_log: branch.latest_cook_log,
