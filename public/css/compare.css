@@ -1,0 +1,536 @@
+/* ── Versions and compare: version list, compare panel, release dialog, cherry-pick ──
+   Colours come from tokens.css (var(--…)); no literal colours here. */
+
+/* Cherry-pick promote panel: list of classified changes with checkboxes that
+   default based on classification. `within-spec` is the spec-preservation
+   case — unchecked by default so the source range survives. */
+.cp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 4px 0 8px;
+}
+
+.cp-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.cp-legend {
+  font-size: 0.78rem;
+}
+
+.cp-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.cp-row {
+  border-bottom: 1px solid var(--border);
+}
+
+.cp-row:last-child {
+  border-bottom: none;
+}
+
+.cp-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.cp-label:hover {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.cp-checkbox {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  cursor: pointer;
+}
+
+/* Tag pill — intrinsic width so WITHIN-SPEC doesn't stretch the column. */
+.cp-tag {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+.cp-tag-deviation { background: color-mix(in srgb, var(--gold) 16%, transparent); color: var(--gold-ink); }
+
+.cp-tag-within-spec { background: color-mix(in srgb, var(--ink3) 15%, transparent); color: var(--ink3); }
+
+.cp-tag-addition { background: color-mix(in srgb, var(--green) 22%, transparent); color: var(--green); }
+
+.cp-tag-removal { background: color-mix(in srgb, var(--ink3) 15%, transparent); color: var(--ink3); border: 1px solid var(--ink3); }
+
+.cp-row-within-spec .cp-label { opacity: 0.78; }
+
+/* Stack the label snippet and from→to chip so narrow modals never wrap a
+   "23 g" across two lines mid-token. */
+.cp-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cp-label-line {
+  word-break: break-word;
+}
+
+.cp-sub {
+  color: var(--ink3);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.cp-from {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--ink3) 60%, transparent);
+}
+
+.cp-arrow {
+  color: var(--ink3);
+}
+
+.cp-to {
+  color: var(--gold-ink);
+  font-weight: 500;
+}
+
+/* Step group — modified steps render their snippet once as a header with
+   token-diff rows nested underneath so the snippet doesn't repeat per token. */
+.cp-step-group {
+  border-bottom: 1px solid var(--border);
+}
+
+.cp-step-group:last-child {
+  border-bottom: none;
+}
+
+.cp-step-header {
+  padding: 8px 12px 4px;
+  font-family: var(--font-serif);
+  font-size: 0.86rem;
+  color: var(--ink2);
+  font-style: italic;
+  font-weight: 500;
+}
+
+.cp-step-children {
+  list-style: none;
+  padding: 0 0 6px;
+  margin: 0;
+}
+
+.cp-step-children > .cp-row {
+  border-bottom: none;
+}
+
+.cp-step-children > .cp-row > .cp-label {
+  padding: 4px 12px 4px 24px;
+}
+
+/* Inside a step group, the token label leads (short, scannable) and the
+   from→to chip sits inline rather than stacked, since both are short. */
+.cp-step-children > .cp-row .cp-text {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cp-step-children > .cp-row .cp-label-line {
+  font-weight: 500;
+}
+
+.cp-within-spec {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.cp-within-spec > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  color: var(--ink2);
+  background: color-mix(in srgb, var(--ink3) 5%, transparent);
+  user-select: none;
+}
+
+.cp-within-spec > summary::-webkit-details-marker { display: none; }
+
+.cp-within-spec > summary::before {
+  content: "▸ ";
+  display: inline-block;
+  font-family: var(--font-mono);
+  color: var(--ink3);
+  transition: transform 0.12s ease;
+}
+
+.cp-within-spec[open] > summary::before {
+  content: "▾ ";
+}
+
+.cp-list-nested {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-top: 1px solid var(--border);
+}
+
+.version-item {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.version-item:last-child { border-bottom: none; }
+
+.version-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex-shrink: 0;
+  background: var(--ink3);
+}
+
+.version-dot.released { background: var(--green); }
+
+.version-dot.beta { background: var(--gold); }
+
+.version-dot.archived { background: var(--border2); }
+
+.version-label {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.version-date { font-size: 0.78rem; color: var(--ink3); margin-top: 2px; }
+
+.version-changelog { font-size: 0.85rem; color: var(--ink2); margin-top: 4px; font-style: italic; }
+
+.version-actions { margin-left: auto; display: flex; gap: 6px; flex-shrink: 0; }
+
+.compare-selectors {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.compare-selectors select {
+  flex: 1;
+  min-width: 120px;
+  padding: 8px 10px;
+  border: 1px solid var(--border2);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 0.88rem;
+  outline: none;
+  flex: 1 1 140px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.compare-selectors .vs { color: var(--ink3); font-size: 0.85rem; flex-shrink: 0; color: var(--ink3); }
+
+.diff-section { padding: 16px; border-bottom: 1px solid var(--border); }
+
+.diff-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink3);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.diff-group + .diff-group { margin-top: 14px; }
+
+.diff-subtitle {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--ink2);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+/* Diff rows: a thin tinted rule on the left and colour on the values only,
+   so the compare reads in the same quiet register as the cook-log diff (A4). */
+.diff-added, .diff-removed, .diff-changed, .diff-swap, .diff-same {
+  --diff-rule: var(--border);
+  border-left: 2px solid var(--diff-rule);
+  padding: 4px 0 4px 12px;
+  margin: 2px 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.diff-added   { --diff-rule: color-mix(in srgb, var(--green) 65%, transparent); }
+
+.diff-removed { --diff-rule: color-mix(in srgb, var(--diff-old) 60%, transparent); }
+
+.diff-changed { --diff-rule: color-mix(in srgb, var(--gold) 70%, transparent); }
+
+.diff-swap    { --diff-rule: color-mix(in srgb, var(--accent) 60%, transparent); border-left-style: dashed; }
+
+/* Near-equal amounts (1 cup vs 240 ml): rewritten, not changed. */
+.diff-same    { color: var(--ink2); }
+
+.diff-row-meta { font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink3); margin-left: 4px; }
+
+.diff-from { color: var(--ink3); }
+
+.diff-removed .diff-from { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--diff-old) 55%, transparent); }
+
+.diff-changed .diff-to { color: var(--gold-ink); font-weight: 600; }
+
+.diff-swap .diff-to    { color: color-mix(in srgb, var(--accent) 80%, var(--ink)); font-weight: 600; }
+
+.diff-added .diff-to   { color: var(--green); font-weight: 600; }
+
+.diff-name { font-weight: 600; }
+
+.diff-swap .diff-name-from { color: var(--ink3); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--ink3) 60%, transparent); }
+
+.diff-sign { font-family: var(--font-mono); font-weight: 700; }
+
+.diff-tag {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--accent) 75%, var(--ink));
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-right: 2px;
+  vertical-align: 1px;
+}
+
+.diff-metric { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+
+.diff-metric-name { font-weight: 600; text-transform: capitalize; }
+
+.diff-metric .diff-from, .diff-metric .diff-to { font-family: var(--font-mono); font-size: 0.95rem; }
+
+.diff-summary { cursor: pointer; margin-bottom: 0; }
+
+details[open] > .diff-summary { margin-bottom: 10px; }
+
+.diff-meta {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) 1fr;
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.diff-meta dt { color: var(--ink2); font-family: var(--font-mono); font-size: 0.8rem; word-break: break-word; }
+
+.diff-meta dd { margin: 0; word-break: break-word; white-space: pre-wrap; }
+
+.compare-empty { font-size: 0.88rem; margin: 0; }
+
+.diff-patch {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.7;
+  overflow-x: auto;
+}
+
+.diff-line-add { color: var(--green); white-space: pre; }
+
+.diff-line-del { color: var(--del-ink); white-space: pre; }
+
+.diff-line-ctx { color: var(--ink3); white-space: pre; }
+
+.diff-line-hdr { color: var(--ink3); font-weight: 600; white-space: pre; }
+
+/* Word-level highlight inside a paired removed/added line. Lights up just the
+   substring that changed so the unchanged context stays in the line color. */
+.diff-token-add {
+  background: color-mix(in srgb, var(--green) 32%, transparent);
+  color: var(--ink);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.diff-token-del {
+  background: color-mix(in srgb, var(--diff-old) 30%, transparent);
+  color: var(--ink);
+  border-radius: 3px;
+  padding: 0 4px;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--diff-old) 50%, transparent);
+}
+
+.diff-arrow {
+  color: var(--ink3);
+  font-weight: 600;
+  padding: 0 2px;
+}
+
+/* Compact step-change list: one row per modified/removed/added step. The
+   section + step number lives in a small dim prefix; the changed sentence
+   reads inline with strike-through removed text and highlighted added text,
+   so the eye lands on the actual change without scanning two stacked lines. */
+.step-diff-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.step-diff-row {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) 1fr;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+.step-diff-row:last-child { border-bottom: 0; }
+
+.step-diff-prefix {
+  color: var(--ink3);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.step-diff-section-name {
+  display: block;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.step-diff-body {
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 600px) {
+  .step-diff-row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .step-diff-section-name { display: inline; }
+  .step-diff-section-name::before { content: ' · '; }
+  .diff-meta { grid-template-columns: 1fr; gap: 2px; }
+  .diff-meta dd { margin-bottom: 8px; }
+}
+
+/* Promote dialog: how much cooking backs the version. */
+.release-evidence {
+  margin-top: 10px;
+  font-size: 0.84rem;
+  color: var(--ink2);
+  padding: 8px 10px;
+  border-left: 2px solid var(--border2);
+}
+
+.release-evidence:empty { display: none; }
+
+.release-evidence-warn { border-left-color: color-mix(in srgb, var(--gold) 70%, transparent); }
+
+.release-evidence .link-btn { margin-left: 4px; }
+
+/* Versions tab */
+.versions-section { margin-bottom: 28px; }
+
+.versions-section + .versions-section { border-top: 1px solid var(--border); padding-top: 20px; }
+
+.versions-section-title {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.versions-variant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.versions-variant-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.versions-compare-section summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--ink2);
+  padding: 8px 0;
+}
+
+.versions-compare-section[open] summary { color: var(--ink); }
+
+.versions-compare-body { padding-top: 12px; }
+
+.version-item-focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+  transition: outline-color 0.6s ease;
+}
+
+/* Compare selectors layout (moved from removed tab; keep working) */
+.version-more-btn { min-width: 32px; }

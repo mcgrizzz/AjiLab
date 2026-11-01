@@ -1,9 +1,0 @@
-.editor-save-state { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
-.editor-save-status { font-size: 0.82rem; color: var(--ink2); }
-.editor-save-status[data-dirty="true"] { color: var(--accent); }
-.editor-save-retry { min-height: 36px; }
-.editor-save-retry[hidden] { display: none; }
-@media (max-width: 600px) {
-  .editor-toolbar { flex-wrap: wrap; }
-  .editor-save-state { width: 100%; margin-left: 0; }
-}

@@ -1,0 +1,413 @@
+/* ── Components: inline step chips, badges, tags, sidebar cards, uploads, recipe-link chips, timers ──
+   Colours come from tokens.css (var(--…)); no literal colours here. */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 20px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.badge-released  { background: var(--badge-released-bg); color: var(--badge-released-fg); }
+
+.badge-beta      { background: var(--badge-beta-bg); color: var(--badge-beta-fg); }
+
+.badge-draft     { background: var(--bg3); color: var(--ink3); }
+
+.badge-archived  { background: var(--bg3); color: var(--ink3); }
+
+.badge-in-progress { background: var(--bg3); color: var(--ink2); }
+
+/* A cook log made at another scale: its amounts are that many times the source. */
+.badge-scale { background: none; border: 1px solid var(--border2); color: var(--ink2); margin-left: 4px; font-variant-numeric: tabular-nums; }
+
+.step-text .s-component-note {
+  color: var(--ink2);
+  font-style: italic;
+  font-size: 0.92em;
+  margin-left: 2px;
+}
+
+.step-text .s-component-optional {
+  color: var(--ink3);
+  font-size: 0.78em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.step-text .s-ingredient-optional {
+  opacity: 0.75;
+}
+
+.step-text .s-ingredient-prep-ref {
+  cursor: pointer;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  padding: 0 6px 0 4px;
+}
+
+.step-text .s-ingredient-prep-ref:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.step-deviation-skipped .step-text-body .s-ingredient,
+.step-deviation-skipped .step-text-body .s-cookware,
+.step-deviation-skipped .step-text-body .s-timer,
+.step-deviation-skipped .step-text-body .s-temp,
+.step-deviation-skipped .step-text-body .s-quantity {
+  opacity: 0.5;
+}
+
+.step-text .s-ingredient,
+.step-text .s-cookware,
+.step-text .s-timer,
+.step-text .s-temp,
+.step-text .s-quantity {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.step-text .s-ingredient {
+  color: var(--chip-ingredient-fg);
+  background: var(--chip-ingredient-bg);
+}
+
+.step-text .s-ingredient.s-ingredient-ref {
+  cursor: help;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.step-text .s-ingredient.s-ingredient-ref-active {
+  background: color-mix(in srgb, var(--chip-ingredient-bg) 55%, var(--accent2));
+}
+
+.step-text .s-cookware {
+  color: var(--chip-cookware-fg);
+  background: var(--chip-cookware-bg);
+  font-weight: 500;
+}
+
+.step-text .s-temp {
+  color: var(--chip-temp-fg);
+  background: var(--chip-temp-bg);
+  font-variant-numeric: tabular-nums;
+}
+
+.step-text .s-quantity {
+  color: var(--ink2);
+  background: var(--chip-quantity-bg);
+  font-weight: 500;
+}
+
+.step-text .s-timer {
+  color: var(--chip-timer-fg);
+  background: var(--chip-timer-bg);
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+.media-strip-card {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.media-strip-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.media-strip-meta {
+  font-size: 0.8rem;
+  color: var(--ink3);
+  margin-top: 2px;
+}
+
+.media-strip-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.media-strip-preview {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.media-strip-grid {
+  margin-top: 12px;
+}
+
+.media-strip-empty {
+  margin-top: 10px;
+  font-size: 0.84rem;
+  color: var(--ink3);
+}
+
+.tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  background: var(--bg3);
+  border-radius: 20px;
+  font-size: 0.8rem;
+  color: var(--ink2);
+}
+
+.tag-chip .rm { cursor: pointer; color: var(--ink3); font-size: 0.9em; }
+
+.tag-chip .rm:hover { color: var(--accent); }
+
+/* Step timer chips on the Overview are buttons that start a timer. */
+button.s-timer-start {
+  border: 0;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  cursor: pointer;
+  line-height: inherit;
+}
+
+button.s-timer-start:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+.timer-tray {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
+  background: var(--surface);
+  border-top: 1px solid var(--border2);
+  box-shadow: var(--shadow-tray);
+  padding: 8px 16px calc(8px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+}
+
+.timer-tray[hidden] { display: none; }
+
+.timer-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; flex: 1; min-width: 0; }
+
+.timer-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 3px 4px 3px 12px;
+  background: var(--bg);
+  font-size: 0.84rem;
+  max-width: 100%;
+}
+
+.timer-label {
+  border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--ink);
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 auto;
+}
+
+.timer-label:hover { text-decoration: underline; }
+
+.timer-time { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink2); white-space: nowrap; }
+
+.timer-stop {
+  border: 0; background: none; color: var(--ink3); cursor: pointer;
+  width: 26px; height: 26px; border-radius: 50%; font-size: 0.8rem;
+}
+
+.timer-stop:hover { background: var(--bg3); color: var(--ink); }
+
+.timer-window { border-color: color-mix(in srgb, var(--gold) 70%, transparent); background: color-mix(in srgb, var(--gold) 10%, var(--bg)); }
+
+.timer-window .timer-time { color: var(--gold-ink); }
+
+.timer-done { border-color: color-mix(in srgb, var(--green) 70%, transparent); background: color-mix(in srgb, var(--green) 12%, var(--bg)); animation: timer-done-pulse 1.2s ease-in-out 3; }
+
+.timer-done .timer-time { color: var(--ink); font-weight: 600; }
+
+.timer-flash { animation: timer-done-pulse 0.6s ease-in-out 2; }
+
+@keyframes timer-done-pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .timer-done, .timer-flash { animation: none; }
+}
+
+.timer-note { margin: 0; font-size: 0.75rem; color: var(--ink3); }
+
+@media (max-width: 600px) {
+  /* Each timer gets the full row so its name isn't squeezed out. */
+  .timer-tray { gap: 4px; padding-top: 6px; }
+  .timer-list { flex-basis: 100%; flex-direction: column; gap: 6px; }
+  .timer-item { width: 100%; }
+  .timer-note { flex-basis: 100%; }
+}
+
+.upload-area {
+  border: 2px dashed var(--border2);
+  border-radius: var(--r2);
+  padding: 24px;
+  text-align: center;
+  color: var(--ink3);
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.upload-area:hover, .upload-area.drag { border-color: var(--accent); background: var(--bg2); }
+
+.image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.image-thumb {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: var(--r);
+  overflow: hidden;
+  background: var(--bg3);
+}
+
+.image-thumb-link {
+  display: block;
+  text-decoration: none;
+}
+
+.image-thumb-compact {
+  width: 72px;
+  min-width: 72px;
+}
+
+.image-thumb-large {
+  max-width: 220px;
+  margin-bottom: 12px;
+}
+
+.image-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.image-thumb .del-img {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--scrim);
+  color: var(--on-scrim);
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r2);
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.sidebar-card .section-head { padding-top: 0; }
+
+.sidebar-card .scale-control { flex-wrap: wrap; }
+
+.sidebar-card .ingredient-item:last-child { border-bottom: none; }
+
+.overview-sidebar-card-quiet {
+  padding: 12px 14px;
+  background: transparent;
+  border-style: dashed;
+}
+
+.overview-sidebar-card-quiet .overview-sidebar-card-title {
+  font-size: 0.74rem;
+}
+
+.overview-sidebar-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.overview-sidebar-card-title {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  font-weight: 600;
+}
+
+.overview-sidebar-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ingredient-reference {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: var(--bg3);
+  color: var(--link-ink);
+  text-decoration: none;
+  font-weight: 500;
+  border: 1px solid transparent;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+  cursor: pointer;
+}
+
+.ingredient-reference::before {
+  content: "→";
+  font-size: 0.78em;
+  color: var(--ink3);
+}
+
+.ingredient-reference:hover {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.ingredient-reference.broken {
+  color: var(--ink3);
+  text-decoration: line-through;
+  cursor: help;
+}
+
+.ingredient-reference.broken::before {
+  content: "⚠";
+  color: var(--ref-broken-icon);
+}
+
+.ref-pin {
+  font-size: 0.78em;
+  color: var(--ink3);
+  font-weight: 400;
+}

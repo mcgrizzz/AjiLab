@@ -1,0 +1,189 @@
+/* ── Print view and @media print ──
+   Colours come from tokens.css (var(--…)); no literal colours here. */
+
+@media print {
+  .timer-tray { display: none !important; }
+  body { padding-bottom: 0;
+    background: var(--paper);
+    color: var(--print-title); }
+}
+
+.print-view {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  color: var(--print-ink);
+}
+
+.print-actions {
+  display: flex;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  color: var(--ink2);
+}
+
+.print-options { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 0.84rem; }
+
+.print-option { display: inline-flex; align-items: center; gap: 4px; }
+
+.print-option-label { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink3); margin-right: 2px; }
+
+label.print-option { cursor: pointer; }
+
+/* The preview is the paper: a white sheet in light colours, whatever the
+   app's theme, so what you see is what prints. */
+.print-sheet {
+  color-scheme: light;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  box-shadow: var(--shadow-sheet);
+  padding: 32px 36px 40px;
+}
+
+@media (max-width: 600px) {
+  .print-sheet { padding: 20px 16px 28px; }
+}
+
+.print-view:not(.print-with-photo) .print-hero-img,
+.print-view:not(.print-with-notes) .print-notes-block { display: none; }
+
+.print-hero-img {
+  width: 100%;
+  max-height: 320px;
+  object-fit: cover;
+  border-radius: var(--r2);
+  margin-bottom: 16px;
+}
+
+.print-title {
+  font-family: var(--font-serif);
+  font-size: 2rem;
+  line-height: 1.2;
+  color: var(--print-title);
+}
+
+.print-meta {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  color: var(--print-meta);
+  font-size: 0.88rem;
+  margin: 10px 0 18px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--print-rule);
+}
+
+.print-servings {
+  margin: 12px 0;
+  color: var(--print-servings);
+  font-weight: 600;
+}
+
+.print-notes {
+  margin-top: 10px;
+  margin-bottom: 14px;
+}
+
+.print-notes-title {
+  break-after: avoid;
+}
+
+body.print-route .recipe-header,
+body.print-route .tab-bar,
+body.print-route #topnav,
+body.print-route #modal-overlay,
+body.print-route .toast,
+body.print-route nav,
+body.print-route header {
+  display: none !important;
+}
+
+@media print {
+  #topnav,
+  #modal-overlay,
+  #toast {
+    display: none !important;
+  }
+  #view-container {
+    display: block !important;
+    min-height: auto;
+  }
+  .print-actions,
+  .btn,
+  .tab-bar,
+  #modal-overlay,
+  .toast {
+    display: none !important;
+  }
+  .print-view {
+    max-width: none;
+    padding: 0;
+  }
+  .print-sheet { border: 0; box-shadow: none; padding: 0; border-radius: 0; }
+  .print-view:not(.print-with-photo) .print-hero-img { display: none; }
+  .print-hero-img { max-height: 240px; }
+  .print-title,
+  .print-meta,
+  .print-servings,
+  .print-view,
+  .notes-box,
+  .ingredient-list,
+  .step-item,
+  .cookware-chip,
+  .section-head {
+    color: var(--print-black) !important;
+  }
+  .print-meta {
+    border-bottom-color: var(--print-rule-strong);
+  }
+  .notes-box {
+    background: transparent;
+    border: 1px solid var(--print-rule-strong);
+    border-left: 3px solid var(--print-black);
+    font-style: normal;
+    break-inside: avoid;
+  }
+  .cookware-chip {
+    background: transparent;
+    border-color: var(--print-chip-rule);
+    color: var(--print-black);
+  }
+  .section-head {
+    color: var(--print-black);
+    letter-spacing: 0.02em;
+  }
+  .ingredient-list {
+    margin-top: 2px;
+  }
+  .ingredient-item {
+    gap: 6px;
+    padding: 4px 0;
+    font-size: 0.9rem;
+    line-height: 1.25;
+  }
+  .ing-qty {
+    min-width: 72px;
+    font-size: 0.8rem;
+    color: var(--print-black);
+  }
+  .ing-name {
+    color: var(--print-black);
+  }
+  .step-item,
+  .ingredient-list,
+  .print-notes {
+    break-inside: avoid;
+  }
+  .print-notes {
+    page-break-inside: avoid;
+  }
+  .print-hero-img,
+  .btn {
+    border-radius: 0;
+  }
+}

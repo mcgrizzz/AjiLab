@@ -173,7 +173,7 @@ Object.assign(RecipeView, {
     return `<div class="cook-log-card" data-id="${escHtml(log.id)}">
       <div class="cook-log-head">
         <div class="cook-log-outcome">${escHtml(log.outcome || '(no outcome)')}</div>
-        <div class="cook-log-meta">${fmtDate(log.cooked_at)} · <span class="badge badge-released">${escHtml(this.cookLogSourceLabel(log))}</span>${cookLogScaleBadge(log)}</div>
+        <div class="cook-log-meta">${fmtDate(log.cooked_at)} · <span class="badge ${versionBadgeClass(this.recipe, log.source_kind === 'draft' ? null : log.source_version_string)}">${escHtml(this.cookLogSourceLabel(log))}</span>${cookLogScaleBadge(log)}</div>
       </div>
       ${nextHtml}
       ${recipeHtml}

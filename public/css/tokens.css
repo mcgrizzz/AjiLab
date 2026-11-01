@@ -1,0 +1,170 @@
+/* ── Design tokens ─────────────────────────────────────────────────────────
+   Every colour the app uses has a name here, by role, and only here: the
+   other stylesheets use var(--…) and never a literal colour.
+
+   Text colours are picked for at least 4.5:1 on every surface they sit on
+   (bg, bg2, bg3, surface and the tinted chips/rows).
+
+   The light palette is also declared on .print-sheet: the print preview is
+   paper, so it stays light whatever the app's theme. */
+
+:root {
+  --r:          10px;
+  --r2:         16px;
+  --nav-h:      54px;
+  --font-serif: 'Lora', Georgia, serif;
+  --font-sans:  'Nunito Sans', system-ui, sans-serif;
+  --font-mono:  'DM Mono', 'Courier New', monospace;
+}
+
+/* ── Light (default) ── */
+:root,
+.print-sheet {
+  /* Surfaces and text */
+  --bg:        #faf9f6;
+  --bg2:       #f2f0ea;
+  --bg3:       #e8e5db;
+  --surface:   #ffffff;
+  --white:     #ffffff;
+  --ink:       #1a1a18;
+  --ink2:      #4a4a44;
+  --ink3:      #67675e;
+  --border:    rgba(26,26,24,0.10);
+  --border2:   rgba(26,26,24,0.18);
+  --shadow:    0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
+
+  /* Accent (brand orange) */
+  --accent:       #ad4e1d;
+  --accent2:      #e8795a;
+  --accent-hover: #93411a;
+  --link-ink:     #93411a;   /* accent text on tinted chips (bg3) */
+  --on-accent:    #ffffff;
+
+  /* Ingredient amounts: one neutral-warm tone everywhere (not the accent). */
+  --qty-ink:   #64503a;
+
+  /* Gold and green */
+  --gold:      #b89040;      /* decorative: rules, dots, tints */
+  --gold-ink:  #7e6118;      /* gold as text */
+  --green:     #3a7a4a;
+
+  /* Status */
+  --ok:        #4f8a4a;      /* save pill dot */
+  --warn:      #c2791d;      /* unsaved, recovered, release warning, title check */
+  --danger:    #c03030;      /* destructive buttons, error dot */
+  --danger-ink: #c03030;     /* error text on a tinted box */
+  --danger-text: #a52a2a;    /* error text on a surface (save pill) */
+  --danger-tint: #ffeaea;
+  --danger-solid: #b3261e;
+  --danger-solid-hover: #8f1d17;
+  --on-danger: #ffffff;
+  --settings-danger-border: rgba(196,92,42,0.25);
+  --ref-broken-icon: #c04a20;
+
+  /* Diffs */
+  --del-ink:   #b23636;      /* removed line text */
+  --diff-old:  #c04040;      /* removed rules, strikes and tints */
+  --metric-error: #c04040;
+
+  /* Badges */
+  --badge-released-bg: #e6f4ea;
+  --badge-released-fg: #2a6a38;
+  --badge-beta-bg:     #fff4e0;
+  --badge-beta-fg:     #8a5c00;
+
+  /* Inline step chips */
+  --chip-ingredient-fg: #1b5e3b;
+  --chip-ingredient-bg: #e8f5ee;
+  --chip-cookware-fg:   #4a5568;
+  --chip-cookware-bg:   #edf2f7;
+  --chip-temp-fg:       #b83000;
+  --chip-temp-bg:       #fff0e8;
+  --chip-timer-fg:      #6a4800;
+  --chip-timer-bg:      #fef6e0;
+  --chip-quantity-bg:   var(--bg2);
+
+  /* Editor syntax */
+  --syntax-ingredient:  #3d6f33;
+  --syntax-cookware:    #74541e;
+  --syntax-timer:       #8a3a2f;
+  --syntax-temperature: #9a4f1d;
+  --syntax-section:     #8f6a2a;
+  --syntax-selection:   rgba(99,127,67,0.22);
+
+  /* Overlays and shadows */
+  --overlay:  rgba(0,0,0,0.5);
+  --scrim:    rgba(0,0,0,0.6);
+  --on-scrim: #ffffff;
+  --shadow-popover:  0 8px 28px rgba(0,0,0,0.18);
+  --shadow-dialog:   0 12px 32px rgba(0,0,0,0.14);
+  --shadow-quantity: 0 20px 50px rgba(45,90,39,0.15);
+  --shadow-tray:     0 -4px 16px rgba(0,0,0,0.06);
+  --shadow-toggle:   0 1px 2px rgba(0,0,0,0.08);
+  --shadow-sheet:    0 2px 14px rgba(0,0,0,0.12);
+
+  /* Print */
+  --paper:            #ffffff;
+  --print-ink:        #1a1a1a;
+  --print-title:      #111111;
+  --print-meta:       #555555;
+  --print-servings:   #222222;
+  --print-rule:       #bbbbbb;
+  --print-black:      #000000;
+  --print-rule-strong: #999999;
+  --print-chip-rule:  #777777;
+}
+
+/* ── Dark ── (the only dark-mode block) */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:        #1a1a18;
+    --bg2:       #232320;
+    --bg3:       #2e2e2a;
+    --surface:   #262622;
+    --ink:       #f0ede4;
+    --ink2:      #c0bdb0;
+    --ink3:      #a29f94;
+    --border:    rgba(240,237,228,0.10);
+    --border2:   rgba(240,237,228,0.20);
+    --shadow:    0 1px 3px rgba(0,0,0,0.3), 0 4px 16px rgba(0,0,0,0.2);
+
+    --accent:       #e8795a;
+    --accent2:      #f0a080;
+    --accent-hover: #f0a080;
+    --link-ink:     #ef8c70;
+    --on-accent:    #1a1a18;
+
+    --qty-ink:   #d9c4a3;
+
+    --gold:      #d4aa50;
+    --gold-ink:  #dfba68;
+    --green:     #5aaa6a;
+
+    --danger-ink:  #f08080;
+    --danger-text: #f08080;
+    --danger-tint: #3d1010;
+
+    --del-ink:   #f08a8a;
+
+    --badge-released-bg: #1a3d22;
+    --badge-released-fg: #7dd890;
+    --badge-beta-bg:     #3d2e00;
+    --badge-beta-fg:     #e8b84e;
+
+    --chip-ingredient-fg: #70d088;
+    --chip-ingredient-bg: #1a3522;
+    --chip-cookware-fg:   #a0b8d0;
+    --chip-cookware-bg:   #252d38;
+    --chip-temp-fg:       #f09060;
+    --chip-temp-bg:       #3d1a10;
+    --chip-timer-fg:      #e0a840;
+    --chip-timer-bg:      #352800;
+    --chip-quantity-bg:   var(--bg3);
+
+    --syntax-ingredient:  #86c27a;
+    --syntax-cookware:    #d4a95c;
+    --syntax-timer:       #f08a78;
+    --syntax-temperature: #f0a060;
+    --syntax-section:     #d4aa50;
+  }
+}

@@ -84,6 +84,10 @@ Vanilla JS SPA, ES modules. Files prefixed `views-*` are screens (`views-index`,
 
 The CodeMirror bundle is built separately into `public/vendor/codemirror.js` — re-run `npm run build:editor` after touching `src/browser/codemirror-vendor.js`.
 
+### Styles (`public/css/`)
+
+Linked in order from `index.html` (plain `<link>`s, no `@import`): `tokens.css` → `base.css` → `components.css` → `index.css` → `recipe.css` → `editor.css` → `compare.css` → `print.css`. **Every colour is a named token in `tokens.css`** (one light block, shared with `.print-sheet`, and the only dark-mode block); other files use `var(--…)` only. `test/css.test.js` fails on a literal colour outside `tokens.css`, a selector defined twice in one context, or a second dark-mode block. New colours: add a token by role (light and, if needed, dark value) and keep text at 4.5:1.
+
 ## Conventions
 
 - All Postgres access goes through `recipe-store.ts`. Routes should not import `sql` directly.

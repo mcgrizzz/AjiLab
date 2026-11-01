@@ -1,0 +1,609 @@
+/* ── Editor: toolbar, save pill, help, panes, preview, quantity panel ──
+   Colours come from tokens.css (var(--…)); no literal colours here. */
+
+.editor-wrap { display: flex; flex-direction: column; gap: 0; }
+
+/* Toolbar + syntax strip stay in view while the page scrolls; the panes
+   start right below them. */
+.editor-head {
+  position: sticky;
+  top: var(--nav-h);
+  z-index: 60;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  flex-wrap: wrap;
+}
+
+.editor-target {
+  font-size: 0.82rem;
+  color: var(--ink2);
+  font-weight: 600;
+  min-width: 0;
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-toolbar-spacer { flex: 1; }
+
+.editor-toolbar-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Save status: one pill, with Retry/Save inside it when needed. */
+.save-pill {
+  --pill-dot: var(--ok);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.78rem;
+  color: var(--ink3);
+  white-space: nowrap;
+}
+
+.save-pill-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pill-dot); flex: none; }
+
+.save-pill[data-state="saving"] { --pill-dot: var(--ink3); }
+
+.save-pill[data-state="saving"] .save-pill-dot { animation: save-pill-pulse 1s ease-in-out infinite; }
+
+.save-pill[data-state="unsaved"] { --pill-dot: var(--warn); color: var(--ink2); }
+
+.save-pill[data-state="recovered"] { --pill-dot: var(--warn); color: var(--ink2); border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
+
+.save-pill[data-state="error"] { --pill-dot: var(--danger); color: var(--danger-text); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+
+.save-pill-action {
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: none;
+  padding: 0 0 0 8px;
+  margin-left: 2px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.save-pill-action:hover { text-decoration: underline; }
+
+@keyframes save-pill-pulse { 50% { opacity: 0.3; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .save-pill[data-state="saving"] .save-pill-dot { animation: none; }
+}
+
+/* Syntax + metadata help, together above the editor. */
+.editor-help {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  font-size: 0.78rem;
+  color: var(--ink3);
+}
+
+.editor-help > summary {
+  padding: 5px 16px;
+  cursor: pointer;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  user-select: none;
+}
+
+.editor-help-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 0 16px 8px;
+}
+
+.editor-help-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+
+.editor-help-label { font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.7rem; }
+
+.editor-help code {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  background: var(--bg3);
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--ink2);
+}
+
+.editor-help-note { flex-basis: 100%; }
+
+/* Title line vs recipe name: a chip in the toolbar with the fixes in a popover. */
+.title-check { position: relative; }
+
+.title-check[hidden] { display: none; }
+
+.title-check-chip {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+  color: var(--ink2);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.title-check-chip:hover { background: color-mix(in srgb, var(--warn) 18%, var(--surface)); }
+
+.title-check-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 70;
+  width: min(420px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-dialog);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: var(--ink2);
+}
+
+.title-check-pop[hidden] { display: none; }
+
+.title-check-pop p { margin: 0 0 10px; }
+
+.title-check-pop code { font-family: var(--font-mono); font-size: 0.8rem; }
+
+.title-check-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+@media (max-width: 600px) {
+  /* Anchor the popover to the whole head so it can't run off-screen. */
+  .title-check { position: static; }
+  .title-check-pop { left: 12px; right: 12px; width: auto; }
+}
+
+.editor-release-warning {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  padding: 10px 16px;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: var(--ink2, var(--ink3));
+  background: color-mix(in srgb, var(--warn) 16%, var(--bg2));
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border));
+}
+
+.editor-release-warning span { flex: 1; min-width: 220px; }
+
+.editor-split {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-code {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.editor-textarea {
+  width: 100%;
+  min-height: 280px;
+  padding: 16px;
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  line-height: 1.7;
+  border: none;
+  background: var(--surface);
+  color: var(--ink);
+  resize: vertical;
+  outline: none;
+}
+
+.editor-textarea-shadow {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+  inset: 0 auto auto -9999px;
+  resize: none;
+}
+
+.editor-textarea:focus { background: var(--bg); }
+
+.editor-surface {
+  min-height: 280px;
+  background: var(--surface);
+}
+
+.editor-code .cm-editor {
+  min-height: 280px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  line-height: 1.7;
+}
+
+.editor-code .cm-editor.cm-focused {
+  background: var(--bg);
+  outline: none;
+}
+
+.editor-code .cm-scroller {
+  overflow: auto;
+  font-family: inherit;
+  line-height: inherit;
+}
+
+.editor-code .cm-content,
+.editor-code .cm-placeholder {
+  padding: 16px;
+}
+
+.editor-code .cm-content {
+  min-height: 280px;
+  caret-color: var(--accent);
+}
+
+.editor-code .cm-line {
+  padding: 0;
+}
+
+.editor-code .cm-placeholder {
+  color: var(--ink3);
+  white-space: pre-wrap;
+}
+
+.editor-code .cm-selectionBackground {
+  background: var(--syntax-selection) !important;
+}
+
+.editor-code .cm-cursor,
+.editor-code .cm-dropCursor {
+  border-left-color: var(--accent);
+}
+
+.editor-code .cm-cook-ingredient {
+  color: var(--syntax-ingredient);
+  font-weight: 600;
+}
+
+.editor-code .cm-cook-cookware {
+  color: var(--syntax-cookware);
+  font-weight: 600;
+}
+
+.editor-code .cm-cook-timer {
+  color: var(--syntax-timer);
+  font-weight: 600;
+}
+
+.editor-code .cm-cook-meta-line {
+  color: var(--ink3);
+  font-style: italic;
+}
+
+.editor-code .cm-cook-section-line {
+  position: relative;
+  padding-left: 12px;
+  margin-left: -12px;
+  border-left: 3px solid var(--syntax-section);
+}
+
+.editor-code .cm-cook-section-header {
+  color: var(--syntax-section);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.editor-code .cm-cook-temperature {
+  color: var(--syntax-temperature);
+  font-weight: 600;
+}
+
+.editor-code .cm-cook-punctuation {
+  color: var(--ink2);
+}
+
+.editor-preview {
+  padding: 16px;
+  background: var(--bg);
+  overflow-y: auto;
+  max-height: 400px;
+  position: relative;
+}
+
+.editor-preview-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.draft-quantity-popover {
+  position: absolute;
+  z-index: 20;
+  width: min(360px, calc(100% - 24px));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 16px;
+  box-shadow: var(--shadow-quantity);
+}
+
+.draft-quantity-popover[hidden] {
+  display: none;
+}
+
+.draft-quantity-popover::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 18px;
+  width: 12px;
+  height: 12px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  transform: rotate(45deg);
+}
+
+.editor-sidecar {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  padding: 14px;
+}
+
+.editor-sidecar-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.editor-sidecar-card-simple { gap: 14px; }
+
+.editor-sidecar-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.editor-sidecar-title {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  margin-bottom: 6px;
+}
+
+.editor-sidecar-name {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.editor-sidecar-current {
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  color: var(--ink2);
+}
+
+.editor-sidecar-current-large {
+  font-size: 1rem;
+  color: var(--primary);
+}
+
+.editor-sidecar-presets {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.editor-sidecar-preset {
+  justify-content: center;
+  min-height: 40px;
+}
+
+.editor-sidecar-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.editor-sidecar-inline-label {
+  font-size: 0.78rem;
+  color: var(--ink3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.editor-sidecar-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.editor-sidecar-control .field-input {
+  min-width: 0;
+}
+
+.editor-sidecar-unit {
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  color: var(--ink3);
+}
+
+.editor-sidecar-divider {
+  position: relative;
+  text-align: center;
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+}
+
+.editor-sidecar-divider span {
+  position: relative;
+  top: -0.7em;
+  display: inline-block;
+  padding: 0 8px;
+  background: var(--surface);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink3);
+}
+
+.editor-sidecar-preview {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px dashed var(--border2);
+  border-radius: 10px;
+  background: var(--bg);
+  gap: 10px;
+}
+
+.editor-sidecar-preview-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink3);
+}
+
+.editor-sidecar-preview-value {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.editor-sidecar-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 10px;
+}
+
+.editor-sidecar-actions .btn {
+  justify-content: center;
+}
+
+.editor-sidecar-note {
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.editor-sidecar-close {
+  min-width: 32px;
+  padding-inline: 0;
+}
+
+.draft-token-selectable {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.15em;
+}
+
+@media (max-width: 520px) {
+  .editor-sidecar-presets,
+  .editor-sidecar-actions { grid-template-columns: 1fr 1fr; }
+}
+
+.editor-preview .parse-error {
+  color: var(--danger-ink);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  padding: 8px;
+  background: var(--danger-tint);
+  border-radius: var(--r);
+}
+
+/* The step being edited, marked in the preview. */
+.editor-preview .step-item.preview-cursor {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+@media (min-width: 768px) {
+  /* Source and preview each scroll on their own, filling the screen below
+     the sticky toolbar. */
+  .editor-split {
+    flex-direction: row;
+    height: calc(100dvh - var(--nav-h) - var(--editor-toolbar-h, 44px) - var(--timer-tray-h, 0px));
+    min-height: 420px;
+  }
+  .editor-code {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    border-right: 1px solid var(--border);
+  }
+  .editor-code .editor-surface {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .editor-code .cm-editor {
+    flex: 1;
+    height: 100%;
+  }
+  .editor-code .editor-textarea {
+    flex: 1;
+    min-height: 0;
+    resize: none;
+  }
+  .editor-code .cm-editor,
+  .editor-code .cm-content {
+    min-height: 0;
+  }
+  .editor-preview-pane,
+  .editor-preview {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+  .editor-preview {
+    max-height: none;
+    overflow-y: auto;
+  }
+}
+
+.editor-meta {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--surface);
+}
+
+@media (min-width: 640px) {
+  .editor-textarea { min-height: 360px; }
+}

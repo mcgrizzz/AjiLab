@@ -236,6 +236,13 @@ function replaceTitleLine(text, title) {
   return source;
 }
 
+// Badge class for a version by its real status: green released, amber beta.
+function versionBadgeClass(recipe, versionString) {
+  if (!versionString) return 'badge-draft';
+  const version = (recipe?.versions || []).find((v) => v.version_string === versionString);
+  return `badge-${version?.status || (/-beta/.test(versionString) ? 'beta' : 'released')}`;
+}
+
 // "2×" badge for a cook log made at another scale; '' at 1×.
 function cookLogScaleBadge(log) {
   const scale = Number(log?.scale) || 1;
