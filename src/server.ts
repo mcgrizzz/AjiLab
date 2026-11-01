@@ -24,6 +24,10 @@ app.use("/*", async (c, next) => {
 const assetEtag = etag();
 app.use("/*", async (c, next) => (c.req.path.startsWith("/api/") ? next() : assetEtag(c, next)));
 app.use("/*", serveStatic({ root: "./public" }));
+// Page routes fall back to the SPA; a missing file (anything with an
+// asset extension, e.g. an old /css/app.css) is a real 404, not the HTML
+// page. Version URLs like /versions/v1.1-beta.1 still reach the SPA.
+app.get("*", async (c, next) => (/\.(?:css|m?js|map|json|webmanifest|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|txt)$/i.test(c.req.path) ? c.notFound() : next()));
 app.get("*", serveStatic({ path: "./public/index.html" }));
 
 await applySchema();
