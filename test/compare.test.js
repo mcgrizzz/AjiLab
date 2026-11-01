@@ -589,3 +589,63 @@ test("step temperatures follow the reader's chosen unit", () => {
   const [inC] = diffStepBlocks(from, to, { temperatureUnit: "C" });
   assert.deepEqual(inC.inline_tokens.filter((t) => t.op === "replace").map((t) => [t.removed, t.added]), [["26.5", "23"]]);
 });
+
+test("step diff: a step inserted mid-section reads as one added step", () => {
+  const from = `= Dough
+Mix @flour{500%g} and @water{350%g}.
+
+Rest for ~{30%min}.
+
+Add @salt{10%g} and mix well.
+
+Fold every ~{30%min}.`;
+  const to = `= Dough
+Mix @flour{500%g} and @water{350%g}.
+
+Rest for ~{30%min}.
+
+Add @levain{100%g} and squeeze it in.
+
+Add @salt{10%g} and mix well.
+
+Fold every ~{30%min}.`;
+  const changes = diffStepBlocks(from, to);
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].kind, "added");
+  assert.equal(changes[0].step_number, 3);
+  assert.match(changes[0].text, /levain/);
+});
+
+test("step diff: a removed step doesn't shift the ones after it", () => {
+  const from = `Mix the dough.
+
+Knead for ~{10%min}.
+
+Shape into a loaf.
+
+Bake at ^{450%F}.`;
+  const to = `Mix the dough.
+
+Shape into a loaf.
+
+Bake at ^{475%F}.`;
+  const changes = diffStepBlocks(from, to);
+  assert.deepEqual(changes.map((c) => c.kind), ["removed", "modified"]);
+  assert.match(changes[0].text, /Knead/);
+  assert.equal(changes[1].step_number, 3);
+  assert.equal(changes[1].from_step_number, 4);
+});
+
+test("step diff: an edited step still pairs with its old self", () => {
+  const changes = diffStepBlocks(
+    "Cover and ferment at ^{26.5%C} for ~{2%hours}, until bubbly.",
+    "Cover and ferment at ^{23%C} for ~{2.5%hours}, until tripled and bubbly.",
+  );
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].kind, "modified");
+});
+
+test("step diff: a rewritten step reads as removed + added, in that order", () => {
+  const changes = diffStepBlocks("Preheat the oven.", "Score the loaf with a lame.");
+  assert.deepEqual(changes.map((c) => c.kind), ["removed", "added"]);
+});

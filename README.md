@@ -2,7 +2,7 @@
 
 A self-hosted recipe lab for people who iterate on recipes over time.
 
-AjiLab keeps the recipe, the experiment, and the result together. Write in Cooklang, test variations on branches, record what you actually cooked, and compare changes before promoting an experiment to a named release.
+AjiLab keeps the recipe, the experiment, and the result together. Write in Cooklang, iterate through beta snapshots, record what you actually cooked, and compare changes before promoting an experiment to a named release.
 
 ![Bagels in AjiLab, with ingredients grouped by section, scaling controls, and cooking steps with highlighted ingredients and timers.](docs/screenshots/recipe-overview.png)
 
@@ -40,7 +40,7 @@ Use it when you want to:
 * keep a clean main recipe while testing variations
 * release named recipe versions such as `v1.0`, `v1.1`, or `v2.0-beta.1`
 * keep cooking notes tied to the exact version you cooked
-* compare changes between drafts, releases, branches, and logs
+* compare changes between drafts, releases, and cook logs
 * track derived values like hydration, baker's percentages, salt percentage, or yield
 * build recipes out of other recipes, such as levain, aioli, fillings, sauces, or components
 
@@ -60,11 +60,13 @@ Open the **Editor** to write or continue working on a recipe. When you are happy
 * Release versions such as `v1.0`, `v1.1`, or `v2.0-beta.1`
 * Mark versions as `released`, `beta`, or `archived`
 * Fork any old version back into the Editor to continue from there
-* Create automatic beta snapshots with **advance beta**: `v1.1-beta.1`, `v1.1-beta.2`, and so on
+* Snapshot the Editor as the next beta with one click (**Save as v1.1-beta.2**), with Undo; the Editor autosaves, and a beta never changes once taken
 
-### Branches
+### Branches (API only for now)
 
-Create a **branch** when you want to experiment with a fundamentally different direction without disturbing the main recipe.
+Branches are created through the API; the app has no button for it yet. Once a recipe has a second branch, a branch picker appears next to the version picker, and everything else (Editor, versions, cook logs, compare) works per branch. See [API: Branches](docs/API.md#branches).
+
+A **branch** is for a fundamentally different direction that shouldn't disturb the main recipe.
 
 Examples:
 
@@ -91,12 +93,12 @@ Cook logs can be:
 
 ### Compare
 
-Compare any two versions, branches, cook logs, or the current Editor.
+Compare any two versions, cook logs, or the current Editor.
 
 AjiLab provides more than a plain text diff:
 
 * **Ingredient diff** — unit-normalized, so `500 g` and `0.5 kg` are treated as equivalent
-* **Step diff** — grouped by Cooklang section headers such as `= Dough` or `= Bake`
+* **Step diff** — grouped by Cooklang section headers such as `= Dough` or `= Bake`; steps are matched by similarity, so an inserted step shows as added instead of shifting every step after it
 * **Inline diff** — character-level highlights inside changed lines
 
 ![Comparison of Bagels v1.0 and v1.1-beta.1, showing changed quantities, fermentation time, and ingredient totals.](docs/screenshots/version-compare.png)

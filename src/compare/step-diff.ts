@@ -1,6 +1,6 @@
 // ── Section-aware step diff ──────────────────────────────────────────────────
 // Groups raw cooklang into ordered blocks (steps, notes) per section, pairs
-// them across versions by section + ordinal, and emits a list of changes —
+// them across versions by section and word similarity, and emits a list of changes —
 // each carrying its own context (section name, step number) and a token-level
 // intra-step word diff so the surrounding sentence stays readable.
 //
@@ -100,24 +100,87 @@ function diffSectionBlocks(
   toBlocks: StepBlock[],
   out: StepChange[],
 ) {
-  // Pair blocks positionally within the section. Real recipes rarely reorder
-  // steps; LCS would be overkill and brittle for short lists.
-  const pairs = Math.min(fromBlocks.length, toBlocks.length);
-  for (let i = 0; i < pairs; i++) {
-    const f = fromBlocks[i];
-    const t = toBlocks[i];
-    if (f.text === t.text) continue; // unchanged
-    out.push({
-      kind: "modified",
-      section_name: sectionName,
-      step_number: t.step_number,
-      from_step_number: f.step_number,
-      block_kind: t.kind,
-      inline_tokens: inlineWordDiff(f.text, t.text),
-    });
+  for (const [f, t] of alignBlocks(fromBlocks, toBlocks)) {
+    if (f && t) {
+      if (f.text === t.text) continue; // unchanged
+      out.push({
+        kind: "modified",
+        section_name: sectionName,
+        step_number: t.step_number,
+        from_step_number: f.step_number,
+        block_kind: t.kind,
+        inline_tokens: inlineWordDiff(f.text, t.text),
+      });
+    } else if (f) {
+      out.push(blockChange("removed", sectionName, f));
+    } else if (t) {
+      out.push(blockChange("added", sectionName, t));
+    }
   }
-  for (let i = pairs; i < fromBlocks.length; i++) out.push(blockChange("removed", sectionName, fromBlocks[i]));
-  for (let i = pairs; i < toBlocks.length; i++) out.push(blockChange("added", sectionName, toBlocks[i]));
+}
+
+// ── Pairing steps by similarity ──
+// A step inserted mid-section should read as one added step, not as every
+// later step "changed" into the next one. Blocks pair in order, maximizing
+// the total word overlap; a pair needs at least MATCH_THRESHOLD in common,
+// otherwise the old block reads as removed and the new one as added.
+
+const MATCH_THRESHOLD = 0.3;
+
+function blockWords(text: string): Set<string> {
+  // Letters only: amounts and numbers change between versions of the same step.
+  return new Set(text.toLowerCase().match(/[a-z]+/g) || []);
+}
+
+function wordOverlap(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 1;
+  let shared = 0;
+  for (const w of a) if (b.has(w)) shared++;
+  const union = a.size + b.size - shared;
+  return union === 0 ? 0 : shared / union;
+}
+
+function blockSimilarity(a: StepBlock, b: StepBlock, aWords: Set<string>, bWords: Set<string>): number {
+  if (a.kind !== b.kind) return 0;
+  if (a.text === b.text) return 1.5; // identical blocks anchor the alignment
+  return wordOverlap(aWords, bWords);
+}
+
+export function alignBlocks(from: StepBlock[], to: StepBlock[]): Array<[StepBlock | null, StepBlock | null]> {
+  const n = from.length;
+  const m = to.length;
+  const fromWords = from.map((b) => blockWords(b.text));
+  const toWords = to.map((b) => blockWords(b.text));
+  const sim = (i: number, j: number) => blockSimilarity(from[i], to[j], fromWords[i], toWords[j]);
+  // best[i][j]: best total for from[i..] against to[j..].
+  const best: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      const s = sim(i, j);
+      const match = s >= MATCH_THRESHOLD ? s + best[i + 1][j + 1] : -Infinity;
+      best[i][j] = Math.max(match, best[i + 1][j], best[i][j + 1]);
+    }
+  }
+  const pairs: Array<[StepBlock | null, StepBlock | null]> = [];
+  let i = 0;
+  let j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m) {
+      const s = sim(i, j);
+      if (s >= MATCH_THRESHOLD && s + best[i + 1][j + 1] >= best[i][j] - 1e-9) {
+        pairs.push([from[i++], to[j++]]);
+        continue;
+      }
+      // Removed before added, so a replaced step reads old → new.
+      if (best[i + 1][j] >= best[i][j + 1]) pairs.push([from[i++], null]);
+      else pairs.push([null, to[j++]]);
+    } else if (i < n) {
+      pairs.push([from[i++], null]);
+    } else {
+      pairs.push([null, to[j++]]);
+    }
+  }
+  return pairs;
 }
 
 function parseBlocks(text: string, options: StepDiffOptions): StepBlock[] {

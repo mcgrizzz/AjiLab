@@ -166,7 +166,26 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     });
     session.onChange = () => this.renderEditorSaveStatus(session);
     this.renderEditorSaveStatus(session);
+    if (this.editorScrollPending) {
+      this.scrollEditorIntoView(this.editorScrollForce);
+    }
+    this.editorScrollPending = false;
+    this.editorScrollForce = false;
     this.updatePreview();
+  },
+
+  // Scroll the page so the editor head pins under the nav and the panes fill
+  // the window. Arriving by URL (or a reload) never scrolls back up past where
+  // you already are; a tab switch (force) always lands on the panes.
+  scrollEditorIntoView(force = false) {
+    const head = document.querySelector('.editor-head');
+    if (!head) return;
+    const nav = document.getElementById('topnav')?.offsetHeight || 0;
+    // Measure where the head sits in the page, not where it's stuck on screen.
+    const before = head.previousElementSibling;
+    const naturalTop = before ? before.getBoundingClientRect().bottom : head.parentElement.getBoundingClientRect().top;
+    const target = Math.max(0, Math.round(naturalTop + window.scrollY - nav));
+    if (force ? window.scrollY !== target : window.scrollY < target) window.scrollTo({ top: target, behavior: 'auto' });
   },
 
   openEditorSaveSession(editable) {

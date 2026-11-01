@@ -31,6 +31,8 @@ const RecipeView = {
     this.branchSlug = opts.branch || 'main';
     // Backward compat: old bookmarks used ?tab=history before the rename.
     this.activeTab = opts.tab === 'history' ? 'versions' : (opts.tab || 'overview');
+    // Arriving with ?tab=editor counts as switching to the editor.
+    this.lastRenderedTab = null;
     this.scale = parseFloat(opts.scale) > 0 ? parseFloat(opts.scale) : 1;
     this.showAmounts = true;
     this.temperatureUnit = 'F';
@@ -254,6 +256,8 @@ const RecipeView = {
       this.cookLogEditingId = null;
       this.activeVersion = null;
     }
+    // A real switch to the editor lands exactly on the panes, from any scroll.
+    this.editorScrollForce = tab === 'editor' && this.activeTab !== 'editor';
     this.activeTab = tab;
     if (tab !== 'versions') this.focusedVersion = null;
     document.querySelectorAll('.tab[data-tab]').forEach((el) => {
@@ -279,6 +283,9 @@ const RecipeView = {
     const body = document.getElementById('tab-body');
     if (!body) return;
     this.destroyDraftEditor();
+    // Switching to the editor (not re-rendering it) opens it scrolled to the panes.
+    this.editorScrollPending = this.activeTab === 'editor' && this.lastRenderedTab !== 'editor';
+    this.lastRenderedTab = this.activeTab;
     switch (this.activeTab) {
       case 'overview': this.renderOverviewTab(body); break;
       case 'editor': this.renderEditorTab(body); break;
