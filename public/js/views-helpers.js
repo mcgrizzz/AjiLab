@@ -5,9 +5,11 @@ function tagChip(tag) {
 }
 
 function recipePathForSelection(slug, version, branch = 'main', scale = 1) {
-  const base = version && !version.is_draft && version.version_string
-    ? `/recipe/${slug}/versions/${encodeURIComponent(version.version_string)}`
-    : `/recipe/${slug}`;
+  let base = `/recipe/${slug}`;
+  if (version?.kind === 'test' && version.test_number) base = `/recipe/${slug}/tests/${version.test_number}`;
+  else if (version && !version.is_draft && version.version_string && !version.is_current) {
+    base = `/recipe/${slug}/versions/${encodeURIComponent(version.version_string)}`;
+  }
   const params = new URLSearchParams();
   if (branch && branch !== 'main') params.set('branch', branch);
   if (scale && scale !== 1) params.set('scale', String(scale));
@@ -236,11 +238,62 @@ function replaceTitleLine(text, title) {
   return source;
 }
 
-// Badge class for a version by its real status: green released, amber beta.
+// ── Versions, tests and the working copy ───────────────────────────────────
+// The server labels every entry: "v1.1", "Test 4", "Working copy". Tests are
+// stored under internal names (test-4, or an old v1.1-beta.1); never show those.
+
+function entryByKey(recipe, versionString) {
+  if (!versionString || versionString === 'draft') return recipe?.draft || null;
+  return (recipe?.versions || []).find((v) => v.version_string === versionString) || null;
+}
+
+function entryLabelFor(recipe, versionString) {
+  if (!versionString || versionString === 'draft') return 'Working copy';
+  return entryByKey(recipe, versionString)?.label || versionString;
+}
+
+// "Test 4 · more water"
+function entryTitle(entry) {
+  if (!entry) return '';
+  return entry.kind === 'test' && entry.testing ? `${entry.label} · ${entry.testing}` : (entry.label || entry.version_string || '');
+}
+
+// What a test came to: "adopted as v1.1", "stopped", "superseded".
+function testStateText(entry) {
+  if (!entry || entry.kind !== 'test') return '';
+  if (entry.open) return 'open';
+  if (entry.closed_as === 'adopted') return entry.adopted_as ? `adopted as ${entry.adopted_as}` : 'adopted';
+  if (entry.closed_as === 'rebased') return 're-based';
+  if (entry.closed_as === 'superseded') return 'superseded';
+  return 'stopped';
+}
+
+// Option lists for pickers: versions (current first), then tests (open
+// first). The working copy isn't a sheet, so it's never listed.
+function sheetOptionGroups(recipe) {
+  const all = (recipe?.versions || []).filter((v) => !v.is_draft && v.version_string);
+  const versions = all.filter((v) => v.kind === 'version')
+    .map((v) => ({ val: v.version_string, label: v.is_current ? `${v.label} · current` : v.label }));
+  const tests = all.filter((v) => v.kind === 'test')
+    .sort((a, b) => (b.open - a.open) || ((b.test_number || 0) - (a.test_number || 0)))
+    .map((v) => ({ val: v.version_string, label: `${entryTitle(v)} · ${testStateText(v)}` }));
+  return [
+    ...(versions.length ? [{ label: 'Versions', options: versions }] : []),
+    ...(tests.length ? [{ label: 'Tests', options: tests }] : []),
+  ];
+}
+
+function sheetOptionsHtml(groups, selected) {
+  return groups.map((group) => `<optgroup label="${escHtml(group.label)}">${group.options.map((o) =>
+    `<option value="${escHtml(o.val)}" ${o.val === selected ? 'selected' : ''}>${escHtml(o.label)}</option>`).join('')}</optgroup>`).join('');
+}
+
+// Badge colour by what it is: green version, amber test, grey working copy.
 function versionBadgeClass(recipe, versionString) {
   if (!versionString) return 'badge-draft';
-  const version = (recipe?.versions || []).find((v) => v.version_string === versionString);
-  return `badge-${version?.status || (/-beta/.test(versionString) ? 'beta' : 'released')}`;
+  const entry = entryByKey(recipe, versionString);
+  if (entry) return entry.kind === 'test' ? 'badge-beta' : (entry.kind === 'working_copy' ? 'badge-draft' : 'badge-released');
+  return /-beta|^test-/.test(versionString) ? 'badge-beta' : 'badge-released';
 }
 
 // "2×" badge for a cook log made at another scale; '' at 1×.
@@ -368,4 +421,32 @@ function waitForNextPaint() {
 // keep the exact value for math but show three decimals.
 function roundScale(scale) {
   return Math.round(scale * 1000) / 1000;
+}
+
+// A ⋯ menu under `btn`: items are { label, onClick, danger?, title? } or
+// 'sep'. Same look as the step menus.
+function openActionMenu(event, btn, items) {
+  event?.stopPropagation();
+  document.querySelectorAll('.step-action-menu').forEach((m) => m.remove());
+  const menu = document.createElement('div');
+  menu.className = 'step-action-menu';
+  menu.setAttribute('role', 'menu');
+  const actions = [];
+  menu.innerHTML = items.filter(Boolean).map((item) => {
+    if (item === 'sep') return '<div class="step-action-sep"></div>';
+    actions.push(item.onClick);
+    return `<button class="step-action-item${item.danger ? ' step-action-danger' : ''}" role="menuitem" data-i="${actions.length - 1}"${item.title ? ` title="${escHtml(item.title)}"` : ''}>${escHtml(item.label)}</button>`;
+  }).join('');
+  document.body.appendChild(menu);
+  const r = btn.getBoundingClientRect();
+  menu.style.top = `${r.bottom + window.scrollY + 4}px`;
+  menu.style.left = `${Math.max(8, r.right + window.scrollX - menu.offsetWidth)}px`;
+  menu.addEventListener('click', (e) => {
+    const item = e.target.closest('.step-action-item');
+    if (!item) return;
+    menu.remove();
+    actions[Number(item.dataset.i)]?.();
+  });
+  setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+  menu.querySelector('.step-action-item')?.focus();
 }

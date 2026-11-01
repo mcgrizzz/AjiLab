@@ -1,32 +1,41 @@
 // ── 3-way merge for cooklang text (pure) ─────────────────────────────────────
-// Used by branch sync: given the common ancestor (base) and the two divergent
-// versions (ours, theirs), produce either a merged text or a list of
-// conflicting hunks. The algorithm is line-level — we trim the longest matching
-// prefix and suffix between base and each side to get a single edit hunk, then
-// detect overlapping hunks as conflicts. Identical hunks are not conflicts.
+// Used by branch sync and by adopting a test made from an older version:
+// given the common ancestor (base) and the two divergent versions (ours,
+// theirs), produce either a merged text or a list of conflicting hunks. The algorithm is line-level: each side's line diff
+// against base gives its edit hunks, and overlapping hunks are conflicts.
+// Identical hunks are not conflicts.
 //
 // DB-touching wrappers (previewBranchSync, applyBranchSync, syncPreviewContext)
 // stay in recipe-store.ts; this file is pure.
 
+import { diffArrays } from "diff";
+
 export type MergeEdit = { baseStart: number; baseEnd: number; replacement: string[] };
 
+// Each separate run of changed lines is its own edit, so changes in different
+// steps never collide.
 export function lineEdits(base: string, next: string): MergeEdit[] {
   if (base === next) return [];
-  const baseLines = base.split("\n");
-  const nextLines = next.split("\n");
-  let prefix = 0;
-  while (prefix < baseLines.length && prefix < nextLines.length && baseLines[prefix] === nextLines[prefix]) prefix += 1;
-  let suffix = 0;
-  while (
-    suffix < (baseLines.length - prefix) &&
-    suffix < (nextLines.length - prefix) &&
-    baseLines[baseLines.length - 1 - suffix] === nextLines[nextLines.length - 1 - suffix]
-  ) suffix += 1;
-  return [{
-    baseStart: prefix,
-    baseEnd: baseLines.length - suffix,
-    replacement: nextLines.slice(prefix, nextLines.length - suffix),
-  }];
+  const edits: MergeEdit[] = [];
+  let position = 0;
+  let current: MergeEdit | null = null;
+  for (const part of diffArrays(base.split("\n"), next.split("\n"))) {
+    const count = part.count ?? part.value.length;
+    if (!part.added && !part.removed) {
+      if (current) { edits.push(current); current = null; }
+      position += count;
+      continue;
+    }
+    if (!current) current = { baseStart: position, baseEnd: position, replacement: [] };
+    if (part.removed) {
+      position += count;
+      current.baseEnd = position;
+    } else {
+      current.replacement.push(...part.value);
+    }
+  }
+  if (current) edits.push(current);
+  return edits;
 }
 
 export function editsOverlap(a: MergeEdit, b: MergeEdit): boolean {
@@ -53,11 +62,13 @@ export function mergeCooklangText(base: string, ours: string, theirs: string) {
   if (theirs === ours) return { status: "clean" as const, merged_text: ours, conflicts: [] };
   const ourEdits = lineEdits(base, ours);
   const theirEdits = lineEdits(base, theirs);
+  // The same edit made on both sides is applied once.
+  const same = (a: MergeEdit, b: MergeEdit) => JSON.stringify(a) === JSON.stringify(b);
+  const theirOwnEdits = theirEdits.filter((edit) => !ourEdits.some((ours) => same(ours, edit)));
   const conflicts: Array<Record<string, unknown>> = [];
   for (const ourEdit of ourEdits) {
-    for (const theirEdit of theirEdits) {
+    for (const theirEdit of theirOwnEdits) {
       if (!editsOverlap(ourEdit, theirEdit)) continue;
-      if (JSON.stringify(ourEdit) === JSON.stringify(theirEdit)) continue;
       conflicts.push({
         base_start: ourEdit.baseStart,
         base_end: Math.max(ourEdit.baseEnd, theirEdit.baseEnd),
@@ -67,5 +78,5 @@ export function mergeCooklangText(base: string, ours: string, theirs: string) {
     }
   }
   if (conflicts.length) return { status: "conflict" as const, merged_text: null, conflicts };
-  return { status: "clean" as const, merged_text: applyEdits(base.split("\n"), [...ourEdits, ...theirEdits]), conflicts: [] };
+  return { status: "clean" as const, merged_text: applyEdits(base.split("\n"), [...ourEdits, ...theirOwnEdits]), conflicts: [] };
 }

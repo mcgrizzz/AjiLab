@@ -5,6 +5,10 @@
 export type RecipeStatus = "draft" | "released" | "beta" | "archived";
 export type RecipeBranchKind = "main" | "variant";
 export type CookLogSourceKind = "draft" | "version";
+// What an entry is in the interface: a version (v1.1), a test (Test 4) or the
+// working copy (the draft). Derived; the stored status values don't change.
+export type EntryKind = "version" | "test" | "working_copy";
+export type TestClosedAs = "adopted" | "stopped" | "rebased" | "superseded";
 
 export const MAIN_BRANCH_SLUG = "main";
 
@@ -53,6 +57,24 @@ export interface VersionRecord {
   created_at: string;
   updated_at: string;
   is_draft: boolean;
+  // Tests and lineage (stored)
+  test_number: number | null;
+  closed_as: TestClosedAs | null;
+  closed_at: string | null;
+  from_entry_id: string | null;
+  from_cook_log_id: string | null;
+  // Derived by the loader (defaults set by the row mapper)
+  kind: EntryKind;
+  label: string;              // "v1.1", "Test 4", "Working copy"
+  testing: string;            // a test's "Testing:" line (its changelog); the working copy's pending one
+  base_version: string | null; // the version a test or the working copy is based on
+  is_current: boolean;
+  open: boolean;              // an open test
+  adopted_as: string | null;  // a test: the version adopted from it
+  from_label: string | null;  // a version: "Test 3"; a test: the test it was made from
+  cook_count: number;
+  last_cooked_at: string | null;
+  last_outcome: string | null;
 }
 
 export interface CookLogRecord {
@@ -79,8 +101,9 @@ export interface CookLogRecord {
 }
 
 export interface BranchCounts {
-  releases_count: number;
-  betas_count: number;
+  releases_count: number;   // versions
+  betas_count: number;      // tests
+  open_tests_count: number;
   cook_logs_count: number;
 }
 
@@ -96,6 +119,12 @@ export interface RecipeBranchRecord extends RecipeBranchMeta {
   next_beta_version: string | null;
   current_best_release: VersionRecord | null;
   active_experiment: VersionRecord | null;
+  // The newest version ("current"); null when there's no version yet.
+  current_version: VersionRecord | null;
+  open_tests: VersionRecord[];
+  next_test_number: number;
+  // What adopting or releasing would be called by default (v1.2, or v1.0).
+  next_version_string: string;
   latest_cook_log: CookLogRecord | null;
   counts: BranchCounts;
 }
@@ -121,6 +150,12 @@ export interface RecipeRecord {
   next_beta_version: string | null;
   current_best_release: VersionRecord | null;
   active_experiment: VersionRecord | null;
+  // The newest version ("current"); null when there's no version yet.
+  current_version: VersionRecord | null;
+  open_tests: VersionRecord[];
+  next_test_number: number;
+  // What adopting or releasing would be called by default (v1.2, or v1.0).
+  next_version_string: string;
   latest_cook_log: CookLogRecord | null;
   counts: BranchCounts;
 }

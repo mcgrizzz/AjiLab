@@ -87,9 +87,25 @@ Object.assign(RecipeView, {
     }));
   },
 
+  // "from Test 4", "from v1.1"; old cooks of the working copy say so.
   cookLogSourceLabel(log) {
-    if (log.source_kind === 'draft') return 'from draft';
-    return log.source_version_string ? `from ${log.source_version_string}` : 'from draft';
+    if (log.source_kind === 'draft' || !log.source_version_string) return `from the working copy (${shortDate(log.created_at || log.cooked_at)})`;
+    return `from ${entryLabelFor(this.recipe, log.source_version_string)}`;
+  },
+
+  // Which decisions sit on the card itself (the rest are in ⋯): while the
+  // cook's test is open and nothing was adopted from it, Adopt and New test;
+  // for a cook of the current version, New test.
+  cookDecisions(log) {
+    const sheet = log.source_kind === 'version' ? entryByKey(this.recipe, log.source_version_string) : null;
+    if (this.cookAdoptedAs(log)) return { adopt: false, newTest: false };
+    if (sheet?.kind === 'test' && sheet.open) return { adopt: true, newTest: true };
+    return { adopt: false, newTest: !!sheet?.is_current };
+  },
+
+  // The version adopted from this cook, if any.
+  cookAdoptedAs(log) {
+    return (this.recipe.versions || []).find((v) => v.kind === 'version' && v.from_cook_log_id === log.id)?.label || null;
   },
 
   cookLogSourceKey(log) {
@@ -105,22 +121,22 @@ Object.assign(RecipeView, {
       <div class="cook-log-version-chips">
         <button class="cook-log-chip${!filter ? ' active' : ''}" onclick="RecipeView.setCookLogFilter(null)">All</button>
         ${keysInUse.map((key) => {
-          const label = key === '__draft__' ? 'Draft' : key;
+          const label = key === '__draft__' ? 'Working copy' : entryLabelFor(this.recipe, key);
           return `<button class="cook-log-chip${filter === key ? ' active' : ''}" onclick="RecipeView.setCookLogFilter('${escJs(key)}')">${escHtml(label)}</button>`;
         }).join('')}
       </div>` : '';
-    const newButton = `<button class="btn btn-primary" onclick="RecipeView.openCookLogModal()">New cook log</button>`;
+    const newButton = `<button class="btn btn-primary" onclick="RecipeView.openCookLogModal()">Record a cook</button>`;
     const empty = filtered.length === 0
       ? `<div class="empty-state" style="padding:36px 0">
-          <p>${logs.length === 0 ? 'No cook logs yet.' : 'No logs for this source.'}</p>
+          <p>${logs.length === 0 ? 'No cooks recorded yet.' : 'No cooks from this sheet.'}</p>
         </div>`
       : '';
     body.innerHTML = `
       <div class="tab-content cook-logs-tab">
         <div class="cook-logs-head">
           <div>
-            <div class="section-head">Cook Logs</div>
-            <div class="text-muted" style="font-size:0.85rem">${logs.length} log${logs.length === 1 ? '' : 's'} on this branch</div>
+            <div class="section-head">Cooks</div>
+            <div class="text-muted" style="font-size:0.85rem">${logs.length} cook${logs.length === 1 ? '' : 's'}</div>
           </div>
           ${newButton}
         </div>
@@ -170,17 +186,20 @@ Object.assign(RecipeView, {
           </div>
         </details>`
       : (log.cooklang_text ? '<div class="cook-log-recipe-loading text-muted">Parsing recipe…</div>' : '');
+    const adoptedAs = this.cookAdoptedAs(log);
+    const decide = this.cookDecisions(log);
     return `<div class="cook-log-card" data-id="${escHtml(log.id)}">
       <div class="cook-log-head">
         <div class="cook-log-outcome">${escHtml(log.outcome || '(no outcome)')}</div>
-        <div class="cook-log-meta">${fmtDate(log.cooked_at)} · <span class="badge ${versionBadgeClass(this.recipe, log.source_kind === 'draft' ? null : log.source_version_string)}">${escHtml(this.cookLogSourceLabel(log))}</span>${cookLogScaleBadge(log)}</div>
+        <div class="cook-log-meta">${fmtDate(log.cooked_at)} · <span class="badge ${versionBadgeClass(this.recipe, log.source_kind === 'draft' ? null : log.source_version_string)}">${escHtml(this.cookLogSourceLabel(log))}</span>${cookLogScaleBadge(log)}${adoptedAs ? ` <span class="badge badge-released">Adopted as ${escHtml(adoptedAs)}</span>` : ''}</div>
       </div>
       ${nextHtml}
       ${recipeHtml}
       ${detailHtml}
       <div class="cook-log-actions">
         <button class="btn btn-sm" onclick="RecipeView.markDifferences('${escJs(log.id)}')">Mark differences</button>
-        <button class="btn btn-sm" onclick="RecipeView.openPromoteLogModal('${escJs(log.id)}')">Promote to release</button>
+        ${decide.adopt ? `<button class="btn btn-sm" onclick="RecipeView.openPromoteLogModal('${escJs(log.id)}')">Adopt from this cook…</button>` : ''}
+        ${decide.newTest ? `<button class="btn btn-sm" onclick="RecipeView.iterateFromCookLog('${escJs(log.id)}')">New test from this cook…</button>` : ''}
         <button class="btn btn-sm cook-log-more-btn" data-log-id="${escJs(log.id)}" onclick="RecipeView.openCookLogMoreMenu(event, this)" aria-label="More actions" title="More actions">⋯</button>
       </div>
     </div>`;
@@ -192,20 +211,45 @@ Object.assign(RecipeView, {
     if (body) this.paintCookLogs(body);
   },
 
-  async iterateFromCookLog(logId) {
+  // "New test from this cook": what happened becomes the next test. Asks
+  // what's being tested, then opens the working copy in the Editor.
+  iterateFromCookLog(logId) {
+    const log = (this.cookLogs || []).find((entry) => entry.id === logId);
+    if (!log) return;
+    showModal(`
+      <div class="modal-title">New test from the ${escHtml(fmtDate(log.cooked_at))} cook</div>
+      <div class="field-group mt8">
+        <label class="field-label" for="cook-test-testing">What are you testing?</label>
+        <input id="cook-test-testing" class="field-input" placeholder="e.g. longer rest, as in this cook" maxlength="120" value="${escHtml((log.changes_to_try_next || '').trim().split('\n')[0].slice(0, 120))}" />
+        <small style="color:var(--ink2);font-size:0.78rem">One short phrase. It goes on the printout.</small>
+      </div>
+      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">The working copy becomes this cook as cooked${(Number(log.scale) || 1) !== 1 ? ', back at 1×' : ''}. Adjust it in the Editor, then save it as Test ${this.recipe.next_test_number}.</p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" id="cook-test-go">Start test</button>
+      </div>`);
+    const input = document.getElementById('cook-test-testing');
+    const go = () => this.startTestFromCook(logId, input?.value.trim() || '');
+    document.getElementById('cook-test-go')?.addEventListener('click', go);
+    input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    setTimeout(() => input?.select(), 60);
+  },
+
+  async startTestFromCook(logId, testing) {
+    closeModal();
     const log = (this.cookLogs || []).find((entry) => entry.id === logId);
     if (!log) return;
     try {
       await this.replaceDraft({
-        sourceLabel: `the ${fmtDate(log.cooked_at)} cook log`,
-        // At another scale the draft gets the log brought back to 1×, which
-        // only the server computes; skip the "already matches" shortcut.
+        sourceLabel: `the ${fmtDate(log.cooked_at)} cook`,
+        // At another scale the working copy gets the cook brought back to 1×,
+        // which only the server computes; skip the "already matches" shortcut.
         targetText: (Number(log.scale) || 1) === 1 ? (log.cooklang_text || null) : null,
         request: async () => {
-          await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/fork-to-draft`, {});
+          await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/fork-to-draft`, { testing });
           this.cookLogEditingId = null;
         },
-        message: 'Draft replaced with this cook log. Save advances the next beta',
+        message: `Working copy is now this cook. Make any changes, then save it as Test ${this.recipe.next_test_number}.`,
       });
     } catch (e) {
       showToast('Error: ' + e.message);
@@ -218,10 +262,10 @@ Object.assign(RecipeView, {
     const scale = Number(log.scale) || 1;
     const atScale = scale === 1 ? '' : ` at ${formatEditableQuantity(scale)}×`;
     const fromLabel = log.source_kind === 'draft'
-      ? `Source snapshot (draft at log creation)${atScale}`
-      : `Source snapshot (${log.source_version_string})${atScale}`;
+      ? `The working copy as it was then${atScale}`
+      : `${entryLabelFor(this.recipe, log.source_version_string)}${atScale}`;
     showModal(`
-      <div class="modal-title">Compare cook log to source</div>
+      <div class="modal-title">Compare this cook with its sheet</div>
       <div class="text-muted" style="font-size:0.85rem;margin-bottom:10px">
         ${escHtml(fromLabel)} → recipe as cooked
       </div>
@@ -246,13 +290,13 @@ Object.assign(RecipeView, {
   // afterwards, since that would silently reinterpret every amount.
   openCookLogModal(existingId, options = {}) {
     const existing = existingId ? (this.cookLogs || []).find((log) => log.id === existingId) : null;
-    const versions = (this.recipe.versions || []).filter((v) => !v.is_draft && v.version_string);
+    // "Which sheet?": versions and tests. The working copy is never cooked;
+    // an old cook of it shows as such.
     const defaultSourceKey = existing
       ? (existing.source_kind === 'draft' ? '__draft__' : (existing.source_version_string || '__draft__'))
       : RecipeEditState.cookLogSourceKey(this.recipe, this.activeVersion);
-    const sourceOptions = [`<option value="__draft__" ${defaultSourceKey === '__draft__' ? 'selected' : ''}>Current draft</option>`]
-      .concat(versions.map((v) => `<option value="${escHtml(v.version_string)}" ${v.version_string === defaultSourceKey ? 'selected' : ''}>${escHtml(v.version_string)} (${escHtml(v.status)})</option>`))
-      .join('');
+    const sourceOptions = (defaultSourceKey === '__draft__' ? `<option value="__draft__" selected>Working copy</option>` : '')
+      + sheetOptionsHtml(sheetOptionGroups(this.recipe), defaultSourceKey);
     const cookedAtDefault = RecipeEditState.localDateTimeInput(existing?.cooked_at || new Date());
     const startScale = Number(options.scale) > 0 ? Number(options.scale) : 1;
     const existingScale = Number(existing?.scale) || 1;
@@ -260,20 +304,20 @@ Object.assign(RecipeView, {
       ? `<div class="field-group mt8 cl-scale-field">
           <span class="field-label">Scale</span>
           <div class="cl-scale-fixed">${formatEditableQuantity(existingScale)}×</div>
-          <small style="color:var(--ink2);font-size:0.78rem">Fixed. To change it, delete this log and log the cook again.</small>
+          <small style="color:var(--ink2);font-size:0.78rem">Fixed. To change it, delete this cook and record it again.</small>
         </div>`
       : `<div class="field-group mt8 cl-scale-field">
           <label class="field-label" for="cl-scale">Scale</label>
           <div class="cl-scale-input"><input id="cl-scale" class="field-input" type="number" min="0.05" max="100" step="any" inputmode="decimal" value="${escHtml(formatEditableQuantity(startScale))}" /><span aria-hidden="true">×</span></div>
-          <small style="color:var(--ink2);font-size:0.78rem">Log amounts as cooked. Can't be changed later.</small>
+          <small style="color:var(--ink2);font-size:0.78rem">Amounts are recorded as cooked. Can't be changed later.</small>
         </div>`;
     showModal(`
-      <div class="modal-title">${existing ? 'Edit cook log notes' : 'New cook log'}</div>
+      <div class="modal-title">${existing ? 'Edit cook notes' : 'Record a cook'}</div>
       <div class="cook-log-modal-row">
         <div class="field-group mt8" style="flex:1">
-          <label class="field-label" for="cl-source">Source</label>
+          <label class="field-label" for="cl-source">Which sheet?</label>
           <select id="cl-source" class="field-input" ${existing ? 'disabled' : ''}>${sourceOptions}</select>
-          ${existing ? '' : '<small style="color:var(--ink2);font-size:0.78rem">A copy of this version is saved with the log.</small>'}
+          ${existing ? '' : '<small style="color:var(--ink2);font-size:0.78rem">The version or test you cooked from. A copy is kept with the cook.</small>'}
         </div>
         <div class="field-group mt8" style="flex:1">
           <label class="field-label" for="cl-cooked-at">Cooked at</label>
@@ -309,7 +353,7 @@ Object.assign(RecipeView, {
       </div>`}
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="RecipeView.saveCookLog('${escJs(existingId || '')}')">${existing ? 'Save notes' : 'Create cook log'}</button>
+        <button class="btn btn-primary" onclick="RecipeView.saveCookLog('${escJs(existingId || '')}')">${existing ? 'Save notes' : 'Save cook'}</button>
       </div>`);
     if (!existing) this.trackUnsentCookLog({ keepScale: options.scale != null });
     setTimeout(() => document.getElementById('cl-outcome')?.focus(), 80);
@@ -356,7 +400,8 @@ Object.assign(RecipeView, {
   },
 
   async saveCookLog(existingId) {
-    const sourceKey = document.getElementById('cl-source')?.value || '__draft__';
+    const sourceKey = document.getElementById('cl-source')?.value || '';
+    if (!existingId && (!sourceKey || sourceKey === '__draft__')) { showToast('Pick the version or test you cooked from'); return; }
     const cookedAtLocal = document.getElementById('cl-cooked-at')?.value;
     const existing = existingId ? (this.cookLogs || []).find(log => log.id === existingId) : null;
     // Preserve the exact instant (including seconds and a DST fold) when only notes change.
@@ -401,42 +446,40 @@ Object.assign(RecipeView, {
         // measurements against the source recipe, not edit the whole text.
         this.markDifferences(created.id);
       }
-      showToast(existingId ? 'Cook log saved' : 'Cook log added — mark differences next');
+      showToast(existingId ? 'Cook saved' : 'Cook recorded. Mark what you did differently next');
     } catch (e) {
       showToast('Error: ' + e.message);
     }
   },
 
+  // Adopt from a cook: the sheet it was cooked from plus the ticked changes
+  // become the next version (merged into the current one if the sheet was
+  // based on an older version).
   async openPromoteLogModal(logId) {
     const log = (this.cookLogs || []).find((entry) => entry.id === logId);
     if (!log) return;
-    const versions = (this.recipe.versions || []).filter((v) => !v.is_draft && v.version_string);
-    const lastVersion = versions[0]?.version_string;
-    // Show shell + spinner while we fetch the classification.
+    const recipe = this.recipe;
+    const sheetLabel = log.source_kind === 'draft' ? 'the working copy' : entryLabelFor(recipe, log.source_version_string);
+    const already = this.cookAdoptedAs(log);
+    const scale = Number(log.scale) || 1;
     showModal(`
-      <div class="modal-title">Promote cook log to release</div>
+      <div class="modal-title">Adopt changes from this cook</div>
+      ${already ? `<div class="release-evidence release-evidence-warn">This cook was already adopted as ${escHtml(already)}.</div>` : ''}
       <div class="field-group mt8">
-        <label class="field-label">Version number</label>
-        <input id="rel-version" class="field-input" placeholder="e.g. v1.0, v1.1" value="${lastVersion ? suggestNextVersion(lastVersion) : 'v1.0'}" />
-        ${lastVersion ? `<small style="color:var(--ink3);font-size:0.78rem;margin-top:4px">Previous: ${escHtml(lastVersion)}</small>` : ''}
+        <label class="field-label" for="rel-version">Version number</label>
+        <input id="rel-version" class="field-input" placeholder="e.g. v1.1" value="${escHtml(recipe.next_version_string || 'v1.0')}" />
+        ${recipe.current_version ? `<small style="color:var(--ink3);font-size:0.78rem;margin-top:4px">Current: ${escHtml(recipe.current_version.label)}</small>` : ''}
       </div>
       <div class="field-group mt12">
-        <label class="field-label">Status</label>
-        <select id="rel-status" class="field-input">
-          <option value="released">Released (stable)</option>
-          <option value="beta">Beta</option>
-          <option value="archived">Archived</option>
-        </select>
-      </div>
-      <div class="field-group mt12">
-        <label class="field-label">Changelog</label>
-        <textarea id="rel-changelog" class="field-input" placeholder="What changed in this version?">${escHtml((log.outcome || ''))}</textarea>
+        <label class="field-label" for="rel-changelog">What changed</label>
+        <textarea id="rel-changelog" class="field-input" placeholder="e.g. rest 30 → 40 min"></textarea>
       </div>
       <div id="cherry-pick-panel" class="mt12"><div class="loading"><div class="spinner"></div></div></div>
-      <div class="text-muted" style="font-size:0.82rem;margin-top:10px">Source: cook log "${escHtml(log.outcome || log.id)}" (${escHtml(this.cookLogSourceLabel(log))}${(Number(log.scale) || 1) !== 1 ? `, cooked at ${formatEditableQuantity(Number(log.scale))}×` : ''})${(Number(log.scale) || 1) !== 1 ? `<br>Changes are shown as cooked; the new version is saved at 1×, with amounts divided by ${formatEditableQuantity(Number(log.scale))}.` : ''}</div>
+      <div id="rel-conflict" class="release-evidence release-evidence-warn" hidden></div>
+      <div class="text-muted" style="font-size:0.82rem;margin-top:10px">Cook of ${escHtml(fmtDate(log.cooked_at))} (“${escHtml(log.outcome || '')}”) from ${escHtml(sheetLabel)}${scale !== 1 ? `, at ${formatEditableQuantity(scale)}×.<br>Changes are shown as cooked; the version is saved at 1×, with amounts divided by ${formatEditableQuantity(scale)}` : ''}.</div>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="RecipeView.promoteLog('${escJs(logId)}')">Promote</button>
+        <button class="btn btn-primary" onclick="RecipeView.promoteLog('${escJs(logId)}')">Adopt</button>
       </div>`);
     setTimeout(() => document.getElementById('rel-version')?.select(), 100);
     try {
@@ -490,7 +533,7 @@ Object.assign(RecipeView, {
       (allWithinSpec ? withinSpecItems : primaryItems).push(group);
     }
     if (totalChanges === 0) {
-      return `<p class="text-muted" style="font-size:0.85rem">No changes vs source. The promoted version will match the source recipe.</p>`;
+      return `<p class="text-muted" style="font-size:0.85rem">Cooked as written. The new version will match the sheet.</p>`;
     }
     const withinSpecBlock = withinSpecItems.length
       ? `<details class="cp-within-spec">
@@ -500,8 +543,8 @@ Object.assign(RecipeView, {
       : '';
     return `
       <div class="cp-header">
-        <div class="cp-title">Changes to promote</div>
-        <div class="cp-legend text-muted">${totalChanges} change${totalChanges === 1 ? '' : 's'}. Unchecked = source value preserved.</div>
+        <div class="cp-title">Changes to adopt</div>
+        <div class="cp-legend text-muted">${totalChanges} change${totalChanges === 1 ? '' : 's'}. Unticked ones keep the sheet's value.</div>
       </div>
       ${primaryItems.length ? `<ul class="cp-list">${primaryItems.join('')}</ul>` : ''}
       ${withinSpecBlock}
@@ -510,7 +553,6 @@ Object.assign(RecipeView, {
 
   async promoteLog(logId) {
     const versionString = document.getElementById('rel-version')?.value.trim();
-    const status = document.getElementById('rel-status')?.value;
     const changelog = document.getElementById('rel-changelog')?.value.trim();
     if (!versionString) { showToast('Version number required'); return; }
     const selections = Array.from(document.querySelectorAll('.cp-checkbox:checked')).map((el) => el.value);
@@ -520,28 +562,31 @@ Object.assign(RecipeView, {
         ? `/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/promote-cherry-pick`
         : `/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/promote`;
       const body = useCherryPick
-        ? { version_string: versionString, status, changelog, selections }
-        : { version_string: versionString, status, changelog };
-      await API.post(endpoint, body);
+        ? { version_string: versionString, changelog, selections }
+        : { version_string: versionString, changelog };
+      const response = await API.post(endpoint, body);
       this.cherryPickClassified = null;
       closeModal();
+      this.cookLogEditingId = null;
+      this.activeTab = 'overview';
       await this.refreshRecipe();
       await this.renderDetail(document.getElementById('view-container'), versionString, { syncUrl: true, replaceUrl: true });
-      showToast(`Released ${versionString}`);
+      showToast(`${versionString} is now the current version${response?.merged ? ' (merged with the previous one)' : ''}`);
     } catch (e) {
+      if (e.message === 'conflict') { this.showAdoptConflict('This cook'); return; }
       showToast('Error: ' + e.message);
     }
   },
 
   async deleteCookLogConfirm(id) {
-    if (!confirm('Delete this cook log?')) return;
+    if (!confirm('Delete this cook?')) return;
     try {
       await API.delete(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(id)}`);
       await this.refreshRecipe();
       this.renderScaffold(document.getElementById('view-container'));
       this.renderHeaderThumbnail();
       await this.renderCookLogsTab(document.getElementById('tab-body'));
-      showToast('Cook log deleted');
+      showToast('Cook deleted');
     } catch (e) {
       showToast('Error: ' + e.message);
     }
@@ -798,14 +843,17 @@ Object.assign(RecipeView, {
     const logId = btn.dataset.logId;
     if (!logId) return;
     closeStepActionMenu();
+    const log = (this.cookLogs || []).find((entry) => entry.id === logId);
+    const decide = log ? this.cookDecisions(log) : { adopt: true, newTest: true };
     const menu = document.createElement('div');
     menu.className = 'step-action-menu';
     menu.innerHTML = `
-      <button class="step-action-item" data-act="iterate" title="Replace the draft with this log's recipe as cooked">↗ Load into draft…</button>
+      ${decide.adopt ? '' : `<button class="step-action-item" data-act="adopt">Adopt changes from this cook…</button>`}
+      ${decide.newTest ? '' : `<button class="step-action-item" data-act="new-test">New test from this cook…</button>`}
       <button class="step-action-item" data-act="notes">✎ Edit notes</button>
-      <button class="step-action-item" data-act="compare">≡ Compare to source</button>
+      <button class="step-action-item" data-act="compare">≡ Compare with its sheet</button>
       <div class="step-action-sep"></div>
-      <button class="step-action-item step-action-danger" data-act="delete">✕ Delete cook log</button>`;
+      <button class="step-action-item step-action-danger" data-act="delete">✕ Delete cook</button>`;
     document.body.appendChild(menu);
     const r = btn.getBoundingClientRect();
     menu.style.top = `${r.bottom + window.scrollY + 4}px`;
@@ -815,7 +863,8 @@ Object.assign(RecipeView, {
       if (!item) return;
       closeStepActionMenu();
       const act = item.dataset.act;
-      if (act === 'iterate') this.iterateFromCookLog(logId);
+      if (act === 'adopt') this.openPromoteLogModal(logId);
+      else if (act === 'new-test') this.iterateFromCookLog(logId);
       else if (act === 'notes') this.openCookLogModal(logId);
       else if (act === 'compare') this.compareCookLogToSource(logId);
       else if (act === 'delete') this.deleteCookLogConfirm(logId);

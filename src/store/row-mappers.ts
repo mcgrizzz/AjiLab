@@ -28,7 +28,25 @@ export type EntryRow = {
   tags: string[];
   created_at: Date;
   updated_at: Date;
+  test_number: number | null;
+  closed_as: string | null;
+  closed_at: Date | null;
+  from_entry_id: string | null;
+  from_cook_log_id: string | null;
 };
+
+export function entryKind(row: { version_string: string | null; status: string; test_number: number | null }) {
+  if (row.version_string === null) return "working_copy" as const;
+  if (row.test_number !== null || row.status === "beta") return "test" as const;
+  return "version" as const;
+}
+
+export function entryLabel(row: { version_string: string | null; status: string; test_number: number | null }): string {
+  const kind = entryKind(row);
+  if (kind === "working_copy") return "Working copy";
+  if (kind === "test") return row.test_number !== null ? `Test ${row.test_number}` : (row.version_string || "Test");
+  return row.version_string || "";
+}
 
 export function entryRowToVersion(row: EntryRow): VersionRecord {
   const parsed = parseVersionMetadata(row.cooklang_text || "");
@@ -48,6 +66,22 @@ export function entryRowToVersion(row: EntryRow): VersionRecord {
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
     is_draft: row.version_string === null,
+    test_number: row.test_number ?? null,
+    closed_as: (row.closed_as as VersionRecord["closed_as"]) ?? null,
+    closed_at: row.closed_at ? row.closed_at.toISOString() : null,
+    from_entry_id: row.from_entry_id ?? null,
+    from_cook_log_id: row.from_cook_log_id ?? null,
+    kind: entryKind(row),
+    label: entryLabel(row),
+    testing: entryKind(row) === "version" ? "" : (row.changelog || ""),
+    base_version: null,
+    is_current: false,
+    open: entryKind(row) === "test" && !row.closed_as,
+    adopted_as: null,
+    from_label: null,
+    cook_count: 0,
+    last_cooked_at: null,
+    last_outcome: null,
   };
 }
 

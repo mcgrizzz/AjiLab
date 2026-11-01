@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-AjiLab — a self-hosted recipe lab. Users write Cooklang recipes, version them like code (drafts → released/beta/archived), branch and 3-way merge them, log cook sessions against specific versions, and diff across all of those.
+AjiLab — a self-hosted recipe lab. Users write Cooklang recipes and improve them by testing: the **working copy** (stored as the draft) is saved as a fixed, numbered **test** ("Test 4 · more water"), cooked from paper, and **adopted** into the next **version** (v1.2; the newest is "current"). Cooks are recorded against the version or test they were cooked from, and everything can be diffed. See `docs/VERSIONING-DESIGN.md`. Branches and 3-way merge exist in the API only.
 
 ## Commands
 
@@ -43,9 +43,13 @@ Every route that operates on a branch (draft, versions, cook logs, images, compa
 
 ### Data model (`src/schema.sql`)
 
-Six tables. The key idea: **drafts and versions share one `entries` table**.
-- `entries.version_string IS NULL` + `status = 'draft'` → the draft
-- `entries.version_string IS NOT NULL` + `status IN ('released','beta','archived')` → a released version
+The key idea: **the working copy, tests and versions share one `entries` table**. The stored status values predate the interface words:
+- `version_string IS NULL` + `status = 'draft'` → the working copy. Its `changelog` holds the pending "Testing:" line.
+- `test_number IS NOT NULL` (status `beta`, or `archived` for an old archived beta) → a test. `changelog` is its Testing line; `closed_as` (adopted/stopped/rebased/superseded, NULL = open). New tests are named `test-N` internally; older ones keep `v1.1-beta.1`. Never show `version_string` for a test; use the derived `label`.
+- `status = 'released'` → a version; the newest by `created_at` is current. `from_entry_id` / `from_cook_log_id` record what it was adopted from.
+- The loader derives `kind`, `label`, `testing`, `base_version`, `is_current`, `open`, `adopted_as` per entry (`src/store/lineage.ts`). Adopting a test made from an older version 3-way merges it into the current one and refuses on a conflict (`adoptedText` in `recipe-store.ts`).
+- `entries.updated_at` moves only when the text or tags change (`touch_entry_content`), not on bookkeeping like closing a test.
+- One-time data steps run inside guarded `DO` blocks recorded in `app_migrations`, so a restart never re-runs them.
 - Notes and servings are **not columns** — they live in the Cooklang frontmatter (`>> servings:`, `>> notes:`) and are parsed on read. Don't add columns for them.
 - `parent_version` / `current_beta_version` are strings, not FK UUIDs, because version_strings are immutable once assigned (saves a JOIN on every read).
 - `search_vector` is a GENERATED tsvector on `entries`.

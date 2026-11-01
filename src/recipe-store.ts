@@ -12,6 +12,7 @@ import {
   nextAutoBetaVersion,
 } from "./store/version-string.ts";
 import { mergeCooklangText } from "./store/merge.ts";
+import { baseVersionOf } from "./store/lineage.ts";
 import {
   MAIN_BRANCH_SLUG,
 } from "./store/types.ts";
@@ -161,7 +162,9 @@ export async function createRecipeBranch(slug: string, input: { name: string; so
 
 async function ensureDraft(recipe: RecipeRecord): Promise<VersionRecord> {
   if (recipe.draft) return recipe.draft;
-  const source = latestComparableVersion(recipe.versions) || recipe.source_version;
+  // The working copy starts from the current version; with no version yet,
+  // from the newest open test.
+  const source = recipe.current_version || recipe.open_tests[0] || latestComparableVersion(recipe.versions) || recipe.source_version;
   const branchId = recipe.branch.id;
   const draftId = generateId();
   const sourceText = source?.cooklang_text || "";
@@ -187,6 +190,11 @@ async function ensureDraft(recipe: RecipeRecord): Promise<VersionRecord> {
     tags: sourceTags,
     created_at: now,
     updated_at: now,
+    test_number: null,
+    closed_as: null,
+    closed_at: null,
+    from_entry_id: null,
+    from_cook_log_id: null,
   });
 }
 
@@ -203,29 +211,16 @@ export async function updateDraft(
   const nextTags = updates.tags ?? JSON.parse(draft.tags || "[]");
   const advanceBeta = options.advance_beta === true;
 
-  let snapshotVersion: string | null = draft.current_beta_version || null;
-  let createdBeta: string | null = null;
-
-  // A beta is a fixed snapshot: ordinary (auto)saves change only the draft.
-  // advance_beta takes a new snapshot, unless the draft still matches the
-  // last one.
+  // Ordinary (auto)saves change only the working copy. advance_beta (old
+  // clients' "Save as new beta") saves it as a test.
   if (advanceBeta && nextText.trim()) {
-    const currentBeta = snapshotVersion ? recipe.versions.find((v) => v.version_string === snapshotVersion) : null;
-    if (!sameDraftState(currentBeta, nextText, nextTags)) {
-      const base = nextAutoBetaBase(recipe.versions, draft, recipe.latest_released, recipe.latest_beta);
-      const previousBeta = recipe.versions.find((v) => v.version_string?.startsWith(`${base}-beta.`));
-      const newVersion = nextAutoBetaVersion(recipe.versions, base);
-      const betaId = generateId();
-      await sql`
-        INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, parent_version, tags)
-        VALUES (${betaId}, ${branchId}, ${newVersion}, 'beta', ${nextText},
-                ${previousBeta?.version_string || draft.parent_version || null}, ${nextTags})
-      `;
-      await syncReferencesForEntry(betaId, nextText);
-      snapshotVersion = newVersion;
-      createdBeta = newVersion;
-    }
+    await sql`UPDATE entries SET cooklang_text = ${nextText}, tags = ${nextTags} WHERE id = ${draft.id}`;
+    await syncReferencesForEntry(draft.id, nextText);
+    const saved = await saveTest(slug, { testing: draft.testing }, branchSlug);
+    return { ok: true, snapshot_version: saved.version_string, created_beta: saved.created ? saved.version_string : null };
   }
+  const snapshotVersion: string | null = draft.current_beta_version || null;
+  const createdBeta: string | null = null;
 
   await sql`
     UPDATE entries
@@ -234,6 +229,142 @@ export async function updateDraft(
   `;
   await syncReferencesForEntry(draft.id, nextText);
   return { ok: true, snapshot_version: snapshotVersion, created_beta: createdBeta };
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+// Save the working copy as the next test: a fixed sheet with a "Testing:"
+// line. If it still matches the last test saved from it, that test is
+// returned instead of a duplicate.
+export async function saveTest(
+  slug: string,
+  input: { testing?: string },
+  branchSlug = MAIN_BRANCH_SLUG,
+): Promise<{ ok: true; version_string: string; test_number: number; created: boolean }> {
+  const recipe = await requireRecipe(slug, branchSlug);
+  const draft = recipe.draft;
+  if (!draft?.cooklang_text.trim()) throw new Error("the working copy is empty");
+  const testing = String(input.testing ?? draft.testing ?? "").trim();
+  const last = draft.current_beta_version
+    ? recipe.versions.find((v) => v.version_string === draft.current_beta_version)
+    : null;
+  if (last && last.kind === "test" && sameDraftState(last, draft.cooklang_text, JSON.parse(draft.tags || "[]"))) {
+    if (testing && testing !== last.testing) await sql`UPDATE entries SET changelog = ${testing} WHERE id = ${last.id}`;
+    return { ok: true, version_string: last.version_string!, test_number: last.test_number!, created: false };
+  }
+  const branchId = recipe.branch.id;
+  const id = generateId();
+  const number = recipe.next_test_number;
+  const versionString = `test-${number}`;
+  await sql.begin(async (tx) => {
+    await tx`
+      INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, changelog, parent_version, tags,
+                           test_number, from_entry_id, from_cook_log_id)
+      VALUES (${id}, ${branchId}, ${versionString}, 'beta', ${draft.cooklang_text}, ${testing},
+              ${draft.base_version}, ${JSON.parse(draft.tags || "[]")},
+              ${number}, ${draft.from_entry_id}, ${draft.from_cook_log_id})
+    `;
+    // The working copy remembers its last test; the pending Testing line is used up.
+    await tx`UPDATE entries SET current_beta_version = ${versionString}, changelog = '' WHERE id = ${draft.id}`;
+  });
+  await syncReferencesForEntry(id, draft.cooklang_text);
+  return { ok: true, version_string: versionString, test_number: number, created: true };
+}
+
+function findTest(recipe: RecipeRecord, versionString: string): VersionRecord {
+  const test = recipe.versions.find((v) => v.version_string === versionString);
+  if (!test) throw new Error("version not found");
+  if (test.kind !== "test") throw new Error("not a test");
+  return test;
+}
+
+// The "Testing:" line is a label, not part of the sheet, so it can change.
+export async function updateTesting(slug: string, versionString: string, testing: string, branchSlug = MAIN_BRANCH_SLUG) {
+  const recipe = await requireRecipe(slug, branchSlug);
+  const test = findTest(recipe, versionString);
+  await sql`UPDATE entries SET changelog = ${String(testing || "").trim()} WHERE id = ${test.id}`;
+  return { ok: true };
+}
+
+// Stop testing, or reopen a stopped or superseded test.
+export async function setTestOpen(slug: string, versionString: string, open: boolean, branchSlug = MAIN_BRANCH_SLUG) {
+  const recipe = await requireRecipe(slug, branchSlug);
+  const test = findTest(recipe, versionString);
+  if (open) {
+    if (test.closed_as === "adopted" || test.closed_as === "rebased") throw new Error(`${test.label} was ${test.closed_as}`);
+    await sql`UPDATE entries SET closed_as = NULL, closed_at = NULL WHERE id = ${test.id}`;
+  } else if (!test.closed_as) {
+    await sql`UPDATE entries SET closed_as = 'stopped', closed_at = now() WHERE id = ${test.id}`;
+  }
+  return { ok: true };
+}
+
+// ── Adopting: making the next version ────────────────────────────────────────
+
+export class AdoptConflictError extends Error {
+  conflicts: Array<Record<string, unknown>>;
+  constructor(message: string, conflicts: Array<Record<string, unknown>>) {
+    super(message);
+    this.conflicts = conflicts;
+  }
+}
+
+// What a sheet was based on: a version is its own base; a test or the
+// working copy has a base version (null if it was made before any version).
+function baseTextFor(recipe: RecipeRecord, entry: VersionRecord | null): string | null {
+  if (!entry) return null;
+  if (entry.kind === "version") return entry.cooklang_text;
+  const base = baseVersionOf(entry, recipe.versions);
+  return base ? recipe.versions.find((v) => v.version_string === base)?.cooklang_text ?? null : null;
+}
+
+// The text the next version gets. Changes made against an older version are
+// merged into the current one, so adopting never undoes what was adopted
+// since. Without a current version (or a base) it's the text as is.
+export function adoptedText(baseText: string | null, currentText: string | null, text: string): {
+  text: string; mode: "as-is" | "merged";
+} {
+  if (currentText === null || baseText === null || baseText === currentText) return { text, mode: "as-is" };
+  const merged = mergeCooklangText(baseText, currentText, text);
+  if (merged.status === "conflict") {
+    throw new AdoptConflictError("conflicts with the current version", merged.conflicts);
+  }
+  return { text: merged.merged_text!, mode: "merged" };
+}
+
+async function insertVersion(
+  recipe: RecipeRecord,
+  input: {
+    version_string: string; changelog?: string; text: string; tags: string[];
+    from_entry_id?: string | null; from_cook_log_id?: string | null;
+    close_test_id?: string | null; delete_entry_id?: string | null;
+  },
+) {
+  const versionString = input.version_string.trim();
+  if (!versionString) throw new Error("version_string required");
+  if (recipe.versions.some((v) => v.version_string === versionString)) throw new Error("version already exists");
+  if (/^test-\d+$/.test(versionString)) throw new Error("that name is kept for tests");
+  if (!input.text.trim()) throw new Error("version is empty");
+  const id = generateId();
+  const parent = recipe.current_version?.version_string ?? null;
+  await sql.begin(async (tx) => {
+    await tx`
+      INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, changelog, parent_version, tags,
+                           from_entry_id, from_cook_log_id)
+      VALUES (${id}, ${recipe.branch.id}, ${versionString}, 'released', ${input.text}, ${input.changelog || ""},
+              ${parent}, ${input.tags}, ${input.from_entry_id ?? null}, ${input.from_cook_log_id ?? null})
+    `;
+    if (input.close_test_id) {
+      await tx`UPDATE entries SET closed_as = 'adopted', closed_at = now() WHERE id = ${input.close_test_id}`;
+    }
+    if (input.delete_entry_id) {
+      // The working copy: recreated lazily from the new version.
+      await tx`DELETE FROM images WHERE entry_id = ${input.delete_entry_id}`;
+      await tx`DELETE FROM entries WHERE id = ${input.delete_entry_id}`;
+    }
+  });
+  await syncReferencesForEntry(id, input.text);
+  return id;
 }
 
 // Undo "Save as new beta": remove that beta and point the draft back at the
@@ -261,7 +392,8 @@ export async function undoDraftBeta(
   const previous = previousBeta && recipe.versions.some((v) => v.version_string === previousBeta) ? previousBeta : null;
   await sql.begin(async (tx) => {
     await tx`DELETE FROM entries WHERE id = ${beta.id}`;
-    await tx`UPDATE entries SET current_beta_version = ${previous} WHERE id = ${draft.id}`;
+    // Give the Testing line back to the working copy for the next save.
+    await tx`UPDATE entries SET current_beta_version = ${previous}, changelog = ${beta.testing || ""} WHERE id = ${draft.id}`;
   });
   return { ok: true, current_beta_version: previous };
 }
@@ -303,44 +435,36 @@ export async function deleteVersion(slug: string, versionString: string, branchS
   await sql`DELETE FROM entries WHERE id = ${version.id}`;
 }
 
+// Make the next version from the working copy ("Release without testing"),
+// a test ("Adopt"), or an old version (re-release, as is). The status
+// argument is accepted for old clients; anything but a version is refused.
 async function releaseSource(
   recipe: RecipeRecord,
   source: VersionRecord,
-  release: { version_string: string; status: "released" | "beta" | "archived"; changelog?: string },
+  release: { version_string: string; status?: string; changelog?: string },
 ) {
-  if (!source.cooklang_text.trim()) throw new Error(source.is_draft ? "draft is empty" : "version is empty");
-  if (recipe.versions.some((v) => v.version_string === release.version_string)) {
-    throw new Error("version already exists");
-  }
-  const previousComparable = latestComparableVersion(recipe.versions);
-  const branchId = recipe.branch.id;
-  // Always a new row. Promoting a beta copies it: the beta keeps its id and
-  // version string, so its cook logs and printouts still match it.
-  const newId = generateId();
-
-  await sql.begin(async (tx) => {
-    await tx`
-      INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, changelog, parent_version, tags)
-      VALUES (${newId}, ${branchId}, ${release.version_string}, ${release.status},
-              ${source.cooklang_text}, ${release.changelog || ""},
-              ${previousComparable?.version_string || source.parent_version || null},
-              ${JSON.parse(source.tags || "[]")})
-    `;
-    if (source.is_draft) {
-      // The draft's images don't carry over; the draft itself is recreated
-      // lazily by ensureDraft.
-      await tx`DELETE FROM images WHERE entry_id = ${source.id}`;
-      await tx`DELETE FROM entries WHERE id = ${source.id}`;
-    }
+  if (release.status && release.status !== "released") throw new Error("only versions can be released; save a test instead");
+  if (!source.cooklang_text.trim()) throw new Error(source.is_draft ? "the working copy is empty" : "version is empty");
+  const current = recipe.current_version;
+  const { text, mode } = source.kind === "version"
+    ? { text: source.cooklang_text, mode: "as-is" as const }
+    : adoptedText(baseTextFor(recipe, source), current?.cooklang_text ?? null, source.cooklang_text);
+  await insertVersion(recipe, {
+    version_string: release.version_string,
+    changelog: release.changelog,
+    text,
+    tags: JSON.parse(source.tags || "[]"),
+    from_entry_id: source.kind === "test" ? source.id : (source.is_draft ? source.from_entry_id : null),
+    from_cook_log_id: source.is_draft ? source.from_cook_log_id : null,
+    close_test_id: source.kind === "test" ? source.id : null,
+    delete_entry_id: source.is_draft ? source.id : null,
   });
-
-  await syncReferencesForEntry(newId, source.cooklang_text);
-  return { ok: true, version_string: release.version_string };
+  return { ok: true, version_string: release.version_string.trim(), merged: mode === "merged" };
 }
 
 export async function releaseDraft(
   slug: string,
-  release: { version_string: string; status: "released" | "beta" | "archived"; changelog?: string },
+  release: { version_string: string; status?: string; changelog?: string },
   branchSlug = MAIN_BRANCH_SLUG,
 ) {
   const recipe = await requireRecipe(slug, branchSlug);
@@ -351,7 +475,7 @@ export async function releaseDraft(
 export async function releaseVersion(
   slug: string,
   sourceVersionString: string,
-  release: { version_string: string; status: "released" | "beta" | "archived"; changelog?: string },
+  release: { version_string: string; status?: string; changelog?: string },
   branchSlug = MAIN_BRANCH_SLUG,
 ) {
   const recipe = await requireRecipe(slug, branchSlug);
@@ -360,34 +484,51 @@ export async function releaseVersion(
   return releaseSource(recipe, source, release);
 }
 
-export async function forkVersionToDraft(slug: string, versionString: string, branchSlug = MAIN_BRANCH_SLUG) {
+// Reset the working copy to a version or a test ("New test…", "New test from
+// Test 4"). `testing` is the pending Testing line for the test it becomes.
+export async function forkVersionToDraft(slug: string, versionString: string, branchSlug = MAIN_BRANCH_SLUG, options: { testing?: string } = {}) {
   const recipe = await requireRecipe(slug, branchSlug);
   const version = recipe.versions.find((v) => v.version_string === versionString);
   if (!version) throw new Error("version not found");
-  const branchId = recipe.branch.id;
-  const tags = JSON.parse(version.tags || "[]");
+  await writeDraft(recipe, {
+    text: version.cooklang_text,
+    tags: JSON.parse(version.tags || "[]"),
+    parent_version: version.version_string,
+    from_entry_id: version.kind === "test" ? version.id : null,
+    from_cook_log_id: null,
+    testing: String(options.testing || "").trim(),
+  });
+}
+
+async function writeDraft(recipe: RecipeRecord, input: {
+  text: string; tags: string[]; parent_version: string | null;
+  from_entry_id: string | null; from_cook_log_id: string | null; testing: string;
+}) {
   let draftId: string;
   if (recipe.draft) {
     draftId = recipe.draft.id;
     await sql`
-      UPDATE entries SET cooklang_text = ${version.cooklang_text}, tags = ${tags},
-                          parent_version = ${version.version_string}, current_beta_version = NULL
+      UPDATE entries SET cooklang_text = ${input.text}, tags = ${input.tags},
+                          parent_version = ${input.parent_version}, current_beta_version = NULL,
+                          changelog = ${input.testing},
+                          from_entry_id = ${input.from_entry_id}, from_cook_log_id = ${input.from_cook_log_id}
       WHERE id = ${draftId}
     `;
   } else {
     draftId = generateId();
     await sql`
-      INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, parent_version, tags)
-      VALUES (${draftId}, ${branchId}, NULL, 'draft', ${version.cooklang_text},
-              ${version.version_string}, ${tags})
+      INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, parent_version, tags,
+                           changelog, from_entry_id, from_cook_log_id)
+      VALUES (${draftId}, ${recipe.branch.id}, NULL, 'draft', ${input.text}, ${input.parent_version}, ${input.tags},
+              ${input.testing}, ${input.from_entry_id}, ${input.from_cook_log_id})
     `;
   }
-  await syncReferencesForEntry(draftId, version.cooklang_text);
+  await syncReferencesForEntry(draftId, input.text);
 }
 
 export async function forkBranchHeadToDraft(slug: string, branchSlug = MAIN_BRANCH_SLUG) {
   const recipe = await requireRecipe(slug, branchSlug);
-  const source = latestComparableVersion(recipe.versions) || recipe.source_version;
+  const source = recipe.current_version || recipe.open_tests[0] || latestComparableVersion(recipe.versions) || recipe.source_version;
   if (!source) throw new Error("no branch head to fork");
   await forkVersionToDraft(slug, source.version_string!, branchSlug);
   return { ok: true };
@@ -398,6 +539,9 @@ export interface DraftSnapshot {
   tags?: unknown;
   parent_version?: unknown;
   current_beta_version?: unknown;
+  testing?: unknown;
+  from_entry_id?: unknown;
+  from_cook_log_id?: unknown;
 }
 
 // Undo for the fork-to-draft actions: the client captures the draft before
@@ -415,10 +559,17 @@ export async function restoreDraftSnapshot(slug: string, snapshot: DraftSnapshot
   } catch {}
   const known = new Set(recipe.versions.map((v) => v.version_string).filter(Boolean));
   const lineage = (value: unknown) => (typeof value === "string" && known.has(value) ? value : null);
+  const entryIds = new Set(recipe.versions.map((v) => v.id));
+  const fromEntry = typeof snapshot.from_entry_id === "string" && entryIds.has(snapshot.from_entry_id) ? snapshot.from_entry_id : null;
+  const fromCook = typeof snapshot.from_cook_log_id === "string"
+    && (await sql`SELECT 1 FROM cook_logs WHERE id = ${snapshot.from_cook_log_id} AND branch_id = ${recipe.branch.id}`).length
+    ? snapshot.from_cook_log_id : null;
   await sql`
     UPDATE entries SET cooklang_text = ${text}, tags = ${tags},
                         parent_version = ${lineage(snapshot.parent_version)},
-                        current_beta_version = ${lineage(snapshot.current_beta_version)}
+                        current_beta_version = ${lineage(snapshot.current_beta_version)},
+                        changelog = ${typeof snapshot.testing === "string" ? snapshot.testing : ""},
+                        from_entry_id = ${fromEntry}, from_cook_log_id = ${fromCook}
     WHERE id = ${recipe.draft.id}
   `;
   await syncReferencesForEntry(recipe.draft.id, text);
@@ -701,88 +852,75 @@ export async function deleteCookLog(slug: string, id: string, branchSlug = MAIN_
   await sql`DELETE FROM cook_logs WHERE id = ${id}`;
 }
 
-export async function forkCookLogToDraft(slug: string, logId: string, branchSlug = MAIN_BRANCH_SLUG) {
+// "New test from this cook": the working copy becomes the cook as cooked,
+// back at 1×.
+export async function forkCookLogToDraft(slug: string, logId: string, branchSlug = MAIN_BRANCH_SLUG, options: { testing?: string } = {}) {
   const recipe = await requireRecipe(slug, branchSlug);
   const log = await getCookLog(slug, logId, branchSlug);
   if (!log) throw new Error("cook log not found");
   if (!log.cooklang_text.trim()) throw new Error("cook log has no recipe text to fork");
-  const resolvedText = cookLogTextAtRecipeScale(log);
-  const branchId = recipe.branch.id;
-  let draftId: string;
-  if (recipe.draft) {
-    draftId = recipe.draft.id;
-    await sql`
-      UPDATE entries SET cooklang_text = ${resolvedText}, tags = ${log.tags},
-                          parent_version = ${log.source_version_string}, current_beta_version = NULL
-      WHERE id = ${draftId}
-    `;
-  } else {
-    draftId = generateId();
-    await sql`
-      INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, parent_version, tags)
-      VALUES (${draftId}, ${branchId}, NULL, 'draft', ${resolvedText},
-              ${log.source_version_string}, ${log.tags})
-    `;
-  }
-  await syncReferencesForEntry(draftId, resolvedText);
+  const sheet = recipe.versions.find((v) => v.version_string === log.source_version_string) || null;
+  await writeDraft(recipe, {
+    text: cookLogTextAtRecipeScale(log),
+    tags: log.tags,
+    parent_version: log.source_version_string,
+    from_entry_id: sheet?.kind === "test" ? sheet.id : null,
+    from_cook_log_id: log.id,
+    testing: String(options.testing || "").trim(),
+  });
   return { ok: true };
+}
+
+// Adopt a cook: the sheet it was cooked from plus what was done differently
+// (all of it, or the cherry-picked text), merged into the current version.
+async function adoptCook(
+  slug: string,
+  logId: string,
+  text: string,
+  release: { version_string: string; status?: string; changelog?: string },
+  branchSlug: string,
+) {
+  if (release.status && release.status !== "released") throw new Error("only versions can be made from a cook");
+  const recipe = await requireRecipe(slug, branchSlug);
+  const log = await getCookLog(slug, logId, branchSlug);
+  if (!log) throw new Error("cook log not found");
+  if (!text.trim()) throw new Error("cook log has no recipe text to promote");
+  const sheet = recipe.versions.find((v) => v.version_string === log.source_version_string && log.source_kind === "version") || null;
+  const baseText = sheet ? baseTextFor(recipe, sheet) : (log.source_cooklang_text || null);
+  const { text: finalText, mode } = adoptedText(baseText, recipe.current_version?.cooklang_text ?? null, text);
+  await insertVersion(recipe, {
+    version_string: release.version_string,
+    changelog: release.changelog,
+    text: finalText,
+    tags: log.tags,
+    from_entry_id: sheet?.kind === "test" ? sheet.id : null,
+    from_cook_log_id: log.id,
+    close_test_id: sheet?.kind === "test" && sheet.open ? sheet.id : null,
+  });
+  return { ok: true, version_string: release.version_string.trim(), merged: mode === "merged" };
 }
 
 export async function promoteCookLog(
   slug: string,
   logId: string,
-  release: { version_string: string; status: "released" | "beta" | "archived"; changelog?: string },
+  release: { version_string: string; status?: string; changelog?: string },
   branchSlug = MAIN_BRANCH_SLUG,
 ) {
-  const recipe = await requireRecipe(slug, branchSlug);
   const log = await getCookLog(slug, logId, branchSlug);
   if (!log) throw new Error("cook log not found");
-  if (!log.cooklang_text.trim()) throw new Error("cook log has no recipe text to promote");
-  if (recipe.versions.some((v) => v.version_string === release.version_string)) {
-    throw new Error("version already exists");
-  }
-  const resolvedText = cookLogTextAtRecipeScale(log);
-  const previous = latestComparableVersion(recipe.versions);
-  const branchId = recipe.branch.id;
-  const id = generateId();
-  await sql`
-    INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, changelog, parent_version, tags)
-    VALUES (${id}, ${branchId}, ${release.version_string}, ${release.status},
-            ${resolvedText}, ${release.changelog || ""},
-            ${previous?.version_string || log.source_version_string || null}, ${log.tags})
-  `;
-  await syncReferencesForEntry(id, resolvedText);
-  return { ok: true, version_string: release.version_string };
+  return adoptCook(slug, logId, log.cooklang_text.trim() ? cookLogTextAtRecipeScale(log) : "", release, branchSlug);
 }
 
-// Cherry-pick promote: caller (route handler) has already synthesized the new
-// recipe text from source + selected changes. We just persist it as a new
-// version and link it back to the cook log via parent_version.
+// Cherry-pick: the route has already built the text from the sheet plus the
+// picked changes.
 export async function promoteCookLogWithText(
   slug: string,
   logId: string,
   cooklangText: string,
-  release: { version_string: string; status: "released" | "beta" | "archived"; changelog?: string },
+  release: { version_string: string; status?: string; changelog?: string },
   branchSlug = MAIN_BRANCH_SLUG,
 ) {
-  const recipe = await requireRecipe(slug, branchSlug);
-  const log = await getCookLog(slug, logId, branchSlug);
-  if (!log) throw new Error("cook log not found");
-  if (!cooklangText.trim()) throw new Error("synthesized recipe text is empty");
-  if (recipe.versions.some((v) => v.version_string === release.version_string)) {
-    throw new Error("version already exists");
-  }
-  const previous = latestComparableVersion(recipe.versions);
-  const branchId = recipe.branch.id;
-  const id = generateId();
-  await sql`
-    INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, changelog, parent_version, tags)
-    VALUES (${id}, ${branchId}, ${release.version_string}, ${release.status},
-            ${cooklangText}, ${release.changelog || ""},
-            ${previous?.version_string || log.source_version_string || null}, ${log.tags})
-  `;
-  await syncReferencesForEntry(id, cooklangText);
-  return { ok: true, version_string: release.version_string };
+  return adoptCook(slug, logId, cooklangText, release, branchSlug);
 }
 
 // ── Branch sync (3-way merge wrappers) ───────────────────────────────────────
@@ -794,7 +932,8 @@ async function findEntryById(id: string): Promise<VersionRecord | null> {
     SELECT e.id, e.branch_id, b.slug AS branch_slug, b.recipe_id,
            e.version_string, e.status, e.cooklang_text, e.changelog,
            e.parent_version, e.current_beta_version, e.tags,
-           e.created_at, e.updated_at
+           e.created_at, e.updated_at,
+           e.test_number, e.closed_as, e.closed_at, e.from_entry_id, e.from_cook_log_id
     FROM entries e JOIN branches b ON b.id = e.branch_id
     WHERE e.id = ${id}
   `;

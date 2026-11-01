@@ -1,65 +1,47 @@
-// ── Overview tab — primary banner, sidebar cards, release modal ───────────────
+// ── Overview tab — the sheet on screen, open tests, adopt / new test ─────────
+// The recipe opens on its current version. Above it, the open tests and how
+// their cooks went. A test is adopted into the next version; a new test
+// starts from the working copy (docs/VERSIONING-DESIGN.md).
 Object.assign(RecipeView, {
 
   async renderOverviewTab(body) {
     const recipe = this.recipe;
-    const expt = recipe.active_experiment;
-    const best = recipe.current_best_release;
-    if (!this.explicitVersionRequest) {
-      const desired = this.defaultActiveVersion();
-      if (desired && desired !== this.activeVersion) {
+    // The working copy is edited in the Editor, not cooked or printed, so the
+    // Overview shows a version or test unless there's nothing else.
+    const showingWorkingCopy = this.activeVersion?.is_draft;
+    if (!this.explicitVersionRequest || (showingWorkingCopy && this.explicitVersionRequest === 'draft')) {
+      const desired = (showingWorkingCopy && entryByKey(this.recipe, this.lastSheetKey)) || this.defaultActiveVersion();
+      if (desired && desired !== this.activeVersion && !(desired.is_draft && showingWorkingCopy)) {
         this.activeVersion = desired;
+        this.explicitVersionRequest = null;
         await this.loadParsed();
         await this.loadImages();
+        this.refreshStatusRow();
+        this.syncVersionUrl(true);
       }
     }
     const primary = this.activeVersion;
-    const hasRealPrimary = !!(expt || best || (primary && primary.cooklang_text && primary.cooklang_text.trim()));
-    if (!primary || !hasRealPrimary) {
+    if (!primary || !(primary.cooklang_text || '').trim()) {
       body.innerHTML = `
         <div class="tab-content">
           <div class="empty-state" style="padding:48px 0">
-            <h2>No releases yet</h2>
-            <p>Start a fresh draft and release v1.0 to begin the improvement loop.</p>
-            <button class="btn btn-primary mt12" onclick="RecipeView.startFreshDraft()">Start a draft</button>
+            <h2>No version yet</h2>
+            <p>Write the recipe in the Editor, then save it as a test to cook from, or release it as v1.0.</p>
+            <button class="btn btn-primary mt12" onclick="RecipeView.startFreshDraft()">Start writing</button>
           </div>
         </div>`;
       return;
     }
-    // Compare by version_string / draft flag, not object identity. switchVersion
-    // re-fetches the version which produces a new object even when it represents
-    // the same release.
-    const sameVersion = (a, b) => {
-      if (!a || !b) return false;
-      if (a === b) return true;
-      if (a.is_draft && b.is_draft) return true;
-      return !!a.version_string && a.version_string === b.version_string;
-    };
-    const isExperimentPrimary = sameVersion(expt, primary);
-    const isCurrentBest = sameVersion(best, primary);
-    let primaryLabel;
-    if (isExperimentPrimary) {
-      primaryLabel = primary.is_draft
-        ? 'Latest · Draft'
-        : `Latest · ${escHtml(primary.version_string || '')} (${escHtml(primary.status)})`;
-    } else if (isCurrentBest) {
-      primaryLabel = `Current best · ${escHtml(primary.version_string)} (${escHtml(primary.status)})`;
-    } else if (primary.version_string) {
-      primaryLabel = `Viewing · ${escHtml(primary.version_string)} (${escHtml(primary.status)})`;
-    } else {
-      primaryLabel = primary.is_draft ? 'Viewing · Draft (unreleased)' : 'Viewing';
-    }
-    const primaryBanner = this.overviewPrimaryBannerHtml(primary, primaryLabel, isExperimentPrimary, best);
-    const sidebarHtml = this.overviewSidebarHtml();
     body.innerHTML = `
       <div class="tab-content overview-tab">
         <div class="overview-grid">
           <div class="overview-primary">
-            ${primaryBanner}
+            ${this.openTestsStripHtml(primary)}
+            ${this.overviewPrimaryBannerHtml(primary)}
             ${this.recipeBodyHtml()}
           </div>
           <aside class="overview-sidebar">
-            ${sidebarHtml}
+            ${this.overviewSidebarHtml()}
           </aside>
         </div>
       </div>`;
@@ -67,58 +49,117 @@ Object.assign(RecipeView, {
     this.renderImageManager();
   },
 
-  // Cooking comes first: "Log this cook" is the one filled button and logs the
-  // version (and scale) on screen; Print sits beside it. Releasing is a
-  // deliberate step, so Promote/Release is outlined.
-  overviewPrimaryBannerHtml(primary, primaryLabel, isExperimentPrimary, best) {
-    const badgeClass = primary.is_draft ? 'draft' : primary.status;
-    const versionName = primary.is_draft ? 'the draft' : (primary.version_string || 'this version');
-    const scaleNote = this.scale && this.scale !== 1 ? ` at ${formatEditableQuantity(this.scale)}×` : '';
-    const actions = [
-      `<button class="btn btn-sm btn-primary" onclick="RecipeView.logThisCook()" title="Log a cook of ${escHtml(versionName)}${escHtml(scaleNote)}">Log this cook</button>`,
-      `<button class="btn btn-sm" onclick="RecipeView.openPrintView()" title="Print ${escHtml(versionName)}${escHtml(scaleNote)} (Ctrl+P)">Print</button>`,
-    ];
-    if (isExperimentPrimary) {
-      const releaseLabel = primary.is_draft ? 'Release…' : 'Promote…';
-      const releaseTitle = primary.is_draft
-        ? 'Release the draft as a new version'
-        : `Promote ${primary.version_string || 'this beta'} to a release`;
-      actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openReleaseModal()" title="${escHtml(releaseTitle)}">${releaseLabel}</button>`);
-      if (best) {
-        actions.push(`<button class="btn btn-sm btn-ghost" onclick="RecipeView.setTab('editor')">Open Editor</button>`);
-      }
-    } else if (primary.is_draft) {
-      actions.push(`<button class="btn btn-sm btn-ghost" onclick="RecipeView.setTab('editor')">Open Editor</button>`);
-    }
-    return `<div class="overview-primary-banner">
-      <span class="badge badge-${badgeClass}">${primaryLabel}</span>
-      <div class="overview-primary-banner-actions">${actions.join('')}</div>
+  // "Testing: Test 4 · more water · 2 cooks · latest Nov 5: Better flavor".
+  openTestsStripHtml(primary) {
+    const tests = this.recipe.open_tests || [];
+    const current = this.recipe.current_version;
+    const changes = this.recipe.draft_change_label;
+    const workingCopyLine = changes && !primary.is_draft
+      ? `<div class="tests-strip-note">${escHtml(changes)} · <button type="button" class="link-btn" onclick="RecipeView.setTab('editor')">Open editor</button></div>`
+      : '';
+    if (!tests.length) return workingCopyLine ? `<div class="tests-strip">${workingCopyLine}</div>` : '';
+    const rows = tests.map((t) => {
+      const evidence = t.cook_count
+        ? `${t.cook_count} cook${t.cook_count === 1 ? '' : 's'} · latest ${shortDate(t.last_cooked_at)}${t.last_outcome ? `: ${t.last_outcome}` : ''}`
+        : 'not cooked yet';
+      const stale = current && t.base_version && t.base_version !== current.version_string
+        ? ` · based on ${t.base_version}` : '';
+      const onScreen = primary.version_string === t.version_string;
+      return `<li><button type="button" class="tests-strip-item${onScreen ? ' is-on-screen' : ''}" onclick="RecipeView.switchVersion('${escJs(t.version_string)}')"${onScreen ? ' aria-current="true"' : ''}>
+        <span class="tests-strip-name">${escHtml(entryTitle(t))}</span><span class="tests-strip-evidence">${escHtml(`${stale} · ${evidence}`.replace(/^ · /, ''))}</span>
+      </button></li>`;
+    }).join('');
+    return `<div class="tests-strip">
+      <div class="tests-strip-head">Testing</div>
+      <ul class="tests-strip-list">${rows}</ul>
+      ${workingCopyLine}
     </div>`;
   },
 
-  // New cook log for the version on screen, at the scale on screen.
+  // "v1.1 · current version", "v1.0 · not current (current is v1.1)",
+  // "Test 4 · more water · based on v1.0 · open".
+  bannerLabel(entry) {
+    const current = this.recipe.current_version;
+    if (entry.is_draft) {
+      return `Working copy${entry.base_version ? ` · based on ${entry.base_version}` : ''}`;
+    }
+    if (entry.kind === 'test') {
+      let base = '';
+      if (entry.base_version) {
+        base = current && current.version_string !== entry.base_version
+          ? ` · based on ${entry.base_version} (current is ${current.version_string})`
+          : ` · based on ${entry.base_version}`;
+      }
+      return `${entryTitle(entry)}${base} · ${testStateText(entry)}`;
+    }
+    if (entry.is_current) return `${entry.label} · current version`;
+    return current ? `${entry.label} · not current (current is ${current.label})` : entry.label;
+  },
+
+  // Cooking comes first: "Record a cook" is the one filled button and records
+  // the sheet (and scale) on screen; Print sits beside it.
+  overviewPrimaryBannerHtml(primary) {
+    const recipe = this.recipe;
+    const badgeClass = primary.is_draft ? 'badge-draft' : (primary.kind === 'test' ? 'badge-beta' : 'badge-released');
+    const scaleNote = this.scale && this.scale !== 1 ? ` at ${formatEditableQuantity(this.scale)}×` : '';
+    const name = primary.is_draft ? 'the working copy' : primary.label;
+    const key = primary.version_string;
+    const actions = [];
+    let note = '';
+    if (primary.is_draft) {
+      actions.push(`<button class="btn btn-sm btn-primary" onclick="RecipeView.setTab('editor')">Open editor</button>`);
+      actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openSaveTestModal()">Save as Test ${recipe.next_test_number}…</button>`);
+      note = 'The working copy is where the next test is set up. Save it as a test to print and cook it.';
+    } else {
+      actions.push(`<button class="btn btn-sm btn-primary" onclick="RecipeView.logThisCook()" title="Record a cook of ${escHtml(name)}${escHtml(scaleNote)}">Record a cook</button>`);
+      actions.push(`<button class="btn btn-sm" onclick="RecipeView.openPrintView()" title="Print ${escHtml(name)}${escHtml(scaleNote)} (Ctrl+P)">Print</button>`);
+      if (primary.kind === 'test') {
+        if (primary.open) {
+          actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openReleaseModal()" title="Make ${escHtml(recipe.next_version_string)} from ${escHtml(primary.label)}">Adopt as ${escHtml(recipe.next_version_string)}…</button>`);
+        }
+        if (!recipe.current_version) note = `No version yet. Adopt this test to make ${recipe.next_version_string}.`;
+        if (primary.closed_as === 'superseded') note = `${recipe.current_version?.label || 'A newer version'} came after this test. Reopen it to keep testing it.`;
+      } else {
+        actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openNewTestModal('${escJs(key)}')">${primary.is_current ? 'New test…' : `New test from ${escHtml(primary.label)}…`}</button>`);
+      }
+      actions.push(`<button class="btn btn-sm btn-ghost overview-more-btn" onclick="RecipeView.openSheetMenu(event, this, '${escJs(key)}')" aria-label="More actions for ${escHtml(primary.label)}" title="More actions">⋯</button>`);
+    }
+    const from = !primary.is_draft && primary.kind === 'version' && primary.from_label ? ` · from ${primary.from_label}` : '';
+    return `<div class="overview-primary-banner">
+      <span class="badge ${badgeClass}">${escHtml(this.bannerLabel(primary) + from)}</span>
+      <div class="overview-primary-banner-actions">${actions.join('')}</div>
+      ${note ? `<p class="overview-banner-note">${escHtml(note)}</p>` : ''}
+    </div>`;
+  },
+
+  openSheetMenu(event, btn, versionString) {
+    const entry = entryByKey(this.recipe, versionString);
+    if (!entry) return;
+    const items = [];
+    if (entry.kind === 'test') {
+      items.push({ label: entry.testing ? 'Change what it’s testing…' : 'Say what it’s testing…', onClick: () => this.openTestingModal(versionString) });
+      items.push({ label: `New test from ${entry.label}…`, onClick: () => this.openNewTestModal(versionString) });
+      if (entry.open) items.push({ label: 'Stop testing', onClick: () => this.setTestOpen(versionString, false) });
+      else if (entry.closed_as === 'stopped' || entry.closed_as === 'superseded') {
+        items.push({ label: 'Reopen', onClick: () => this.setTestOpen(versionString, true) });
+      }
+    } else {
+      items.push({
+        label: `Fix a typo in ${entry.label}…`,
+        title: `Edit ${entry.label} in place. For a real change, start a new test.`,
+        onClick: () => this.fixTypo(versionString),
+      });
+    }
+    openActionMenu(event, btn, items);
+  },
+
+  // A cook of the sheet on screen, at the scale on screen.
   logThisCook() {
     this.openCookLogModal(undefined, { scale: this.scale });
   },
 
   overviewSidebarHtml() {
-    const recipe = this.recipe;
-    const bestEmpty = !recipe.current_best_release;
-    const logEmpty = !recipe.latest_cook_log;
-    const backlinksCard = this.overviewBacklinksCardHtml();
-    if (bestEmpty && logEmpty) {
-      const expt = recipe.active_experiment;
-      const quiet = `<div class="overview-sidebar-card overview-sidebar-card-quiet">
-        <div class="overview-sidebar-card-title">Set a baseline</div>
-        <p class="text-muted" style="font-size:0.85rem;margin:0">Release this version to set a current best. Cook it to log feedback.</p>
-        <div class="overview-sidebar-card-actions">
-          ${expt ? `<button class="btn btn-sm" onclick="RecipeView.openReleaseModal()">Release…</button>` : ''}
-          <button class="btn btn-sm btn-ghost" onclick="RecipeView.setTab('cook-logs')">Cook Logs →</button>
-        </div>
-      </div>`;
-      return `${quiet}${backlinksCard}`;
-    }
-    return `${bestEmpty ? '' : this.overviewBestCardHtml()}${logEmpty ? '' : this.overviewCookCardHtml()}${backlinksCard}`;
+    return `${this.overviewCookCardHtml()}${this.overviewBacklinksCardHtml()}`;
   },
 
   overviewBacklinksCardHtml() {
@@ -138,94 +179,166 @@ Object.assign(RecipeView, {
     </div>`;
   },
 
-  overviewBestCardHtml() {
-    const recipe = this.recipe;
-    const best = recipe.current_best_release;
-    const expt = recipe.active_experiment;
-    if (!best) {
-      return `<div class="overview-sidebar-card">
-        <div class="overview-sidebar-card-title">Current Best</div>
-        <p class="text-muted" style="font-size:0.86rem">No releases yet. Open the Editor to start writing and release this recipe.</p>
-        ${expt ? `<button class="btn btn-sm" onclick="RecipeView.setTab('editor')">Open Editor</button>` : ''}
-      </div>`;
-    }
-    const changelogSnippet = (best.changelog || '').trim().slice(0, 140);
-    const showOpen = expt;
-    return `<div class="overview-sidebar-card">
-      <div class="overview-sidebar-card-title">Current Best</div>
-      <div class="overview-best-line"><span class="badge badge-released">${escHtml(best.version_string || '')}</span><span class="text-muted" style="font-size:0.82rem">${fmtDate(best.created_at)}</span></div>
-      ${changelogSnippet ? `<p class="overview-best-changelog">${escHtml(changelogSnippet)}${(best.changelog || '').length > 140 ? '…' : ''}</p>` : ''}
-      <div class="overview-sidebar-card-actions">
-        ${showOpen ? `<button class="btn btn-sm" onclick="RecipeView.focusVersion('${escJs(best.version_string)}')">Open in Versions →</button>` : ''}
-        <button class="btn btn-sm" onclick="RecipeView.startNextBetaFrom('${escJs(best.version_string)}')" title="Load ${escHtml(best.version_string)} into the draft to keep working on it">${escHtml(this.draftFromVersionLabel(best.version_string))}</button>
-      </div>
-    </div>`;
-  },
-
   overviewCookCardHtml() {
     const log = this.recipe.latest_cook_log;
     if (!log) {
-      return `<div class="overview-sidebar-card">
-        <div class="overview-sidebar-card-title">Latest Cook Log</div>
-        <p class="text-muted" style="font-size:0.86rem">No cook logs yet.</p>
-        <div class="overview-sidebar-card-actions">
-          <button class="btn btn-sm" onclick="RecipeView.setTab('cook-logs')">Open Cook Logs →</button>
-        </div>
+      return `<div class="overview-sidebar-card overview-sidebar-card-quiet">
+        <div class="overview-sidebar-card-title">Latest cook</div>
+        <p class="text-muted" style="font-size:0.86rem;margin:0">Not cooked yet. Print it, cook from the sheet, then record how it went.</p>
       </div>`;
     }
+    const sheet = log.source_kind === 'draft' ? 'working copy' : entryLabelFor(this.recipe, log.version_string);
     return `<div class="overview-sidebar-card">
-      <div class="overview-sidebar-card-title">Latest Cook Log</div>
+      <div class="overview-sidebar-card-title">Latest cook</div>
       <div class="overview-cook-outcome">${escHtml(log.outcome || '(no outcome)')}</div>
-      <div class="text-muted" style="font-size:0.82rem">${fmtDate(log.cooked_at)} · <span class="badge ${versionBadgeClass(this.recipe, log.version_string)}">${escHtml(log.version_string || 'draft')}</span>${cookLogScaleBadge(log)}</div>
+      <div class="text-muted" style="font-size:0.82rem">${fmtDate(log.cooked_at)} · <span class="badge ${versionBadgeClass(this.recipe, log.version_string)}">${escHtml(sheet)}</span>${cookLogScaleBadge(log)}</div>
       ${(log.changes_to_try_next || '').trim() ? `<div class="overview-cook-next"><span class="overview-cook-next-label">Try next:</span> ${escHtml(log.changes_to_try_next.trim())}</div>` : ''}
       <div class="overview-sidebar-card-actions">
-        <button class="btn btn-sm" onclick="RecipeView.setTab('cook-logs')">View all →</button>
+        <button class="btn btn-sm" onclick="RecipeView.setTab('cook-logs')">All cooks →</button>
       </div>
     </div>`;
   },
 
-  // ── Release modal ────────────────────────────────────────────────────────────
+  // ── New test / Testing line / stop & reopen / fix a typo ────────────────────
 
-  openReleaseModal() {
-    const versions = (this.recipe.versions || []).filter((entry) => !entry.is_draft);
-    const lastVersion = versions[0]?.version_string;
-    const sourceVersion = this.releaseSourceVersionKey();
-    const sourceLabel = sourceVersion === 'draft' ? 'Draft' : sourceVersion;
+  // "New test…": ask what's being tested, reset the working copy to the sheet
+  // it starts from, and open the Editor.
+  openNewTestModal(fromKey = this.recipe.current_version?.version_string) {
+    const from = entryByKey(this.recipe, fromKey);
+    if (!from) { showToast('Nothing to start a test from yet'); return; }
     showModal(`
-      <div class="modal-title">${sourceVersion === 'draft' ? 'Release version' : `Promote ${escHtml(sourceLabel)}`}</div>
+      <div class="modal-title">New test${from.is_current ? '' : ` from ${escHtml(from.label)}`}</div>
       <div class="field-group mt8">
-        <label class="field-label">Version number</label>
-        <input id="rel-version" class="field-input" placeholder="e.g. v1.0, v1.1, v2.0-beta.1" value="${lastVersion ? suggestNextVersion(lastVersion) : 'v1.0'}" />
-        ${lastVersion ? `<small style="color:var(--ink3);font-size:0.78rem;margin-top:4px">Previous: ${escHtml(lastVersion)}</small>` : ''}
+        <label class="field-label" for="new-test-testing">What are you testing?</label>
+        <input id="new-test-testing" class="field-input" placeholder="e.g. more water" maxlength="120" />
+        <small style="color:var(--ink2);font-size:0.78rem">One short phrase. It goes on the printout.</small>
       </div>
-      <div class="field-group mt12">
-        <label class="field-label">Status</label>
-        <select id="rel-status" class="field-input">
-          <option value="released">Released (stable)</option>
-          <option value="beta">Beta</option>
-          <option value="archived">Archived</option>
-        </select>
-      </div>
-      <div class="field-group mt12">
-        <label class="field-label">Changelog</label>
-        <textarea id="rel-changelog" class="field-input" placeholder="What changed in this version?"></textarea>
-      </div>
-      <div class="text-muted" style="font-size:0.82rem;margin-top:10px">Source: ${escHtml(sourceLabel)}</div>
-      ${sourceVersion === 'draft' ? '' : `<div id="rel-evidence" class="release-evidence" aria-live="polite"></div>`}
+      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">The working copy resets to ${escHtml(from.label)} and the Editor opens. Make the change, then save it as Test ${this.recipe.next_test_number}.</p>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="RecipeView.release()">Release</button>
+        <button class="btn btn-primary" id="new-test-go">Start test</button>
       </div>`);
-    setTimeout(() => document.getElementById('rel-version')?.select(), 100);
-    if (sourceVersion !== 'draft') this.loadReleaseEvidence(sourceVersion);
+    const input = document.getElementById('new-test-testing');
+    const go = () => this.startNewTest(fromKey, input?.value.trim() || '');
+    document.getElementById('new-test-go')?.addEventListener('click', go);
+    input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    setTimeout(() => input?.focus(), 60);
   },
 
-  // How much cooking backs this version: promoting something nobody has
-  // cooked should be a conscious choice.
+  async startNewTest(fromKey, testing) {
+    closeModal();
+    const from = entryByKey(this.recipe, fromKey);
+    await this.replaceDraft({
+      sourceLabel: from?.label || fromKey,
+      targetText: from?.cooklang_text ?? null,
+      request: () => API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(fromKey)}/fork`, { testing }),
+      message: `Working copy reset to ${from?.label || fromKey}. Make your change, then save it as Test ${this.recipe.next_test_number}.`,
+    });
+  },
+
+  openTestingModal(versionString) {
+    const test = entryByKey(this.recipe, versionString);
+    if (!test) return;
+    showModal(`
+      <div class="modal-title">What is ${escHtml(test.label)} testing?</div>
+      <div class="field-group mt8">
+        <label class="field-label" for="testing-line">Testing</label>
+        <input id="testing-line" class="field-input" placeholder="e.g. more water" maxlength="120" value="${escHtml(test.testing || '')}" />
+        <small style="color:var(--ink2);font-size:0.78rem">A label only; the sheet itself doesn't change.</small>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" id="testing-save">Save</button>
+      </div>`);
+    const input = document.getElementById('testing-line');
+    const save = async () => {
+      try {
+        await API.put(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(versionString)}/testing`, { testing: input?.value || '' });
+        closeModal();
+        await this.refreshRecipe();
+        await this.renderDetail(document.getElementById('view-container'), versionString, { syncUrl: true, replaceUrl: true });
+      } catch (e) {
+        showToast('Error: ' + e.message);
+      }
+    };
+    document.getElementById('testing-save')?.addEventListener('click', save);
+    input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
+    setTimeout(() => input?.select(), 60);
+  },
+
+  async setTestOpen(versionString, open) {
+    const test = entryByKey(this.recipe, versionString);
+    try {
+      await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(versionString)}/open`, { open });
+      await this.refreshRecipe();
+      await this.renderDetail(document.getElementById('view-container'), versionString, { syncUrl: true, replaceUrl: true });
+      if (open) showToast(`${test?.label || 'Test'} reopened`);
+      else showToast(`Stopped testing ${test?.label || ''}`.trim(), { action: { label: 'Undo', onClick: () => this.setTestOpen(versionString, true) } });
+    } catch (e) {
+      showToast('Error: ' + e.message);
+    }
+  },
+
+  // In-place edit of a version, with the warning. The Editor goes back to the
+  // working copy when you leave it.
+  fixTypo(versionString) {
+    const entry = entryByKey(this.recipe, versionString);
+    if (!entry || entry.kind !== 'version') return;
+    this.fixingVersion = versionString;
+    this.activeVersion = entry;
+    this.explicitVersionRequest = versionString;
+    this.setTab('editor');
+  },
+
+  // ── Adopt / Release without testing ─────────────────────────────────────────
+  // From a test on screen: "Adopt Test 4 as v1.2". From the working copy:
+  // "Release without testing". Either way the next version; a test made from
+  // an older version is merged into the current one.
+
+  openReleaseModal() {
+    const recipe = this.recipe;
+    const sourceKey = this.releaseSourceVersionKey();
+    const source = entryByKey(recipe, sourceKey);
+    const current = recipe.current_version;
+    const fromTest = sourceKey !== 'draft';
+    const title = fromTest ? `Adopt ${source?.label || 'this test'}` : 'Release without testing';
+    const base = source?.base_version;
+    const mergeNote = current && base && base !== current.version_string
+      ? `${fromTest ? source.label : 'The working copy'} is based on ${base}. Its changes will be merged into ${current.label}, so nothing adopted since is lost.`
+      : '';
+    const intro = fromTest
+      ? `Makes the next version from ${source?.label}${source?.testing ? ` (${source.testing})` : ''}, as written.`
+      : `Makes the next version straight from the working copy, without cooking it as a test first. For an obvious fix.`;
+    showModal(`
+      <div class="modal-title">${escHtml(title)}</div>
+      <p class="text-muted" style="font-size:0.85rem;margin:4px 0 0">${escHtml(intro)}</p>
+      <div class="field-group mt12">
+        <label class="field-label" for="rel-version">Version number</label>
+        <input id="rel-version" class="field-input" placeholder="e.g. v1.1" value="${escHtml(recipe.next_version_string || 'v1.0')}" />
+        ${current ? `<small style="color:var(--ink3);font-size:0.78rem;margin-top:4px">Current: ${escHtml(current.label)}</small>` : ''}
+      </div>
+      <div class="field-group mt12">
+        <label class="field-label" for="rel-changelog">What changed</label>
+        <textarea id="rel-changelog" class="field-input" placeholder="e.g. water 350 → 380 g">${escHtml(fromTest ? (source?.testing || '') : (recipe.draft?.testing || ''))}</textarea>
+      </div>
+      ${mergeNote ? `<div id="rel-merge" class="release-evidence">${escHtml(mergeNote)}</div>` : ''}
+      ${fromTest ? `<div id="rel-evidence" class="release-evidence" aria-live="polite"></div>` : ''}
+      <div id="rel-conflict" class="release-evidence release-evidence-warn" hidden></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="RecipeView.release()">${fromTest ? 'Adopt' : 'Release'}</button>
+      </div>`);
+    setTimeout(() => document.getElementById('rel-version')?.select(), 100);
+    if (fromTest) this.loadReleaseEvidence(sourceKey);
+  },
+
+  // How much cooking backs this test: adopting something nobody has cooked
+  // should be a conscious choice.
   async loadReleaseEvidence(versionString) {
     const el = document.getElementById('rel-evidence');
     if (!el) return;
-    el.textContent = 'Checking cook logs…';
+    const label = entryLabelFor(this.recipe, versionString);
+    el.textContent = 'Checking cooks…';
     let logs;
     try {
       logs = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(versionString)}/cook-logs`);
@@ -235,25 +348,28 @@ Object.assign(RecipeView, {
     }
     if (document.getElementById('rel-evidence') !== el) return; // modal changed
     const list = Array.isArray(logs) ? logs : [];
-    const best = this.recipe.current_best_release?.version_string;
-    const compareLink = best && best !== versionString
-      ? ` <button type="button" class="link-btn" onclick="RecipeView.showCompare('${escJs(best)}', '${escJs(versionString)}')">See changes from ${escHtml(best)}</button>`
+    // What the test changes: against its own base, not the current version
+    // (which may have moved on).
+    const test = entryByKey(this.recipe, versionString);
+    const from = test?.base_version || this.recipe.current_version?.version_string;
+    const compareLink = from && from !== versionString
+      ? ` <button type="button" class="link-btn" onclick="RecipeView.showCompare('${escJs(from)}', '${escJs(versionString)}')">See what it changes from ${escHtml(from)}</button>`
       : '';
     if (!list.length) {
       el.className = 'release-evidence release-evidence-warn';
-      el.innerHTML = `<strong>No cooks logged on ${escHtml(versionString)} yet.</strong> Consider cooking it before promoting.${compareLink}`;
+      el.innerHTML = `<strong>${escHtml(label)} hasn't been cooked yet.</strong> Consider cooking it before adopting it.${compareLink}`;
       return;
     }
     const latest = list.reduce((a, b) => (new Date(a.cooked_at) > new Date(b.cooked_at) ? a : b));
-    // "1 cooked at 2×": cooks at another scale back the version too, but say so.
+    // "1 at 2×": cooks at another scale back the test too, but say so.
     const byScale = new Map();
     for (const log of list) {
       const scale = Number(log.scale) || 1;
       if (scale !== 1) byScale.set(scale, (byScale.get(scale) || 0) + 1);
     }
-    const scaleNote = Array.from(byScale, ([scale, n]) => `${n} cooked at ${formatEditableQuantity(scale)}×`).join(', ');
+    const scaleNote = Array.from(byScale, ([scale, n]) => `${n} at ${formatEditableQuantity(scale)}×`).join(', ');
     el.className = 'release-evidence';
-    el.innerHTML = `${list.length} cook${list.length === 1 ? '' : 's'} logged on ${escHtml(versionString)}${scaleNote ? ` (${escHtml(scaleNote)})` : ''} · latest ${escHtml(fmtDate(latest.cooked_at))}${latest.outcome ? `: “${escHtml(latest.outcome)}”` : ''}.${compareLink}`;
+    el.innerHTML = `${list.length} cook${list.length === 1 ? '' : 's'}${scaleNote ? ` (${escHtml(scaleNote)})` : ''} · latest ${escHtml(fmtDate(latest.cooked_at))}${latest.outcome ? `: “${escHtml(latest.outcome)}”` : ''}.${compareLink}`;
   },
 
   // Open the Versions tab's compare on a given pair.
@@ -263,21 +379,37 @@ Object.assign(RecipeView, {
     this.setTab('versions');
   },
 
+  // A refused merge: say where, and offer the way through (a new test from
+  // the current version).
+  showAdoptConflict(sourceLabel) {
+    const el = document.getElementById('rel-conflict');
+    const current = this.recipe.current_version;
+    if (!el) { showToast(`${sourceLabel} and ${current?.label || 'the current version'} change the same line`); return; }
+    el.hidden = false;
+    const mergeNote = document.getElementById('rel-merge');
+    if (mergeNote) mergeNote.hidden = true;
+    el.innerHTML = `<strong>${escHtml(sourceLabel)} and ${escHtml(current?.label || 'the current version')} change the same line</strong>, so they can't be combined automatically.
+      ${current ? `Start a new test from ${escHtml(current.label)} and make the change there. <button type="button" class="link-btn" onclick="closeModal(); RecipeView.openNewTestModal('${escJs(current.version_string)}')">New test from ${escHtml(current.label)}…</button>` : ''}`;
+  },
+
   async release() {
     const sourceVersion = this.releaseSourceVersionKey();
     if (sourceVersion === 'draft') await this.saveDraft({ silent: true, advanceBeta: false });
     const versionString = document.getElementById('rel-version')?.value.trim();
-    const status = document.getElementById('rel-status')?.value;
     const changelog = document.getElementById('rel-changelog')?.value.trim();
     if (!versionString) { showToast('Version number required'); return; }
+    const sourceLabel = entryLabelFor(this.recipe, sourceVersion);
     try {
-      const response = await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/release`, { version_string: versionString, status, changelog, source_version: sourceVersion });
+      const response = await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/release`, { version_string: versionString, changelog, source_version: sourceVersion });
       closeModal();
+      this.fixingVersion = null;
+      this.activeTab = 'overview';
       await this.refreshRecipe();
       await this.renderDetail(document.getElementById('view-container'), versionString, { syncUrl: true, replaceUrl: true });
-      showToast(`Released ${versionString}`);
+      showToast(`${versionString} is now the current version${response?.merged ? ` (merged with the previous one)` : ''}`);
       this.maybeShowUnresolvedWarning(response, false);
     } catch (e) {
+      if (e.message === 'conflict') { this.showAdoptConflict(sourceLabel); return; }
       showToast('Error: ' + e.message);
     }
   },

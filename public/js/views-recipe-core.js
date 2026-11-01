@@ -23,6 +23,9 @@ const RecipeView = {
   cookLogsFilterVersion: null,
   focusedVersion: null,
   explicitVersionRequest: null,
+  // "Fix a typo in v1.1…": the version the Editor edits in place. Otherwise
+  // the Editor always edits the working copy.
+  fixingVersion: null,
   backlinks: [],
 
   async render(container, slug, opts = {}) {
@@ -51,6 +54,7 @@ const RecipeView = {
     this.cookLogsFilterVersion = null;
     this.focusedVersion = null;
     this.explicitVersionRequest = opts.version || null;
+    this.fixingVersion = null;
     this.backlinks = [];
     container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
     try {
@@ -59,7 +63,23 @@ const RecipeView = {
       container.innerHTML = `<div class="empty-state"><p>Recipe not found.</p></div>`;
       return;
     }
-    await this.renderDetail(container, opts.version || null);
+    // /tests/4 → the test's internal name.
+    let versionKey = opts.version || null;
+    if (opts.testNumber) {
+      const test = (this.recipe.versions || []).find((v) => v.test_number === opts.testNumber);
+      if (!test) {
+        container.innerHTML = `<div class="empty-state"><p>Test ${escHtml(String(opts.testNumber))} not found.</p></div>`;
+        return;
+      }
+      versionKey = test.version_string;
+      this.explicitVersionRequest = versionKey;
+    }
+    await this.renderDetail(container, versionKey);
+    // An old beta link (/versions/v1.1-beta.1) becomes /tests/4.
+    if (versionKey) {
+      const path = new URL(this.recipePathFor(versionKey), location.origin).pathname;
+      if (path !== location.pathname) history.replaceState({}, '', path + location.search);
+    }
   },
 
   async refreshRecipe() {
@@ -73,14 +93,18 @@ const RecipeView = {
   },
 
   selectedVersionKey() {
-    if (!this.activeVersion) return this.recipe?.latest_released || this.recipe?.latest_beta || 'draft';
+    if (!this.activeVersion) {
+      return this.recipe?.current_version?.version_string || this.recipe?.open_tests?.[0]?.version_string || 'draft';
+    }
     return this.activeVersion.is_draft ? 'draft' : this.activeVersion.version_string;
   },
 
+  // /recipe/x (current version), /recipe/x/versions/v1.0, /recipe/x/tests/4
   recipePathFor(versionKey = this.selectedVersionKey()) {
-    const base = versionKey && versionKey !== 'draft'
-      ? `/recipe/${this.slug}/versions/${encodeURIComponent(versionKey)}`
-      : `/recipe/${this.slug}`;
+    const entry = entryByKey(this.recipe, versionKey);
+    let base = `/recipe/${this.slug}`;
+    if (entry?.kind === 'test' && entry.test_number) base = `/recipe/${this.slug}/tests/${entry.test_number}`;
+    else if (versionKey && versionKey !== 'draft' && !entry?.is_current) base = `/recipe/${this.slug}/versions/${encodeURIComponent(versionKey)}`;
     const params = new URLSearchParams();
     if (this.branchSlug && this.branchSlug !== 'main') params.set('branch', this.branchSlug);
     if (this.scale && this.scale !== 1) params.set('scale', String(this.scale));
@@ -113,14 +137,17 @@ const RecipeView = {
     return this.defaultActiveVersion();
   },
 
+  // The recipe opens on its current version, always. With no version yet:
+  // the newest open test, then any test, then the working copy.
   defaultActiveVersion() {
-    if (this.activeTab === 'editor') {
-      return this.recipe.active_experiment || this.recipe.draft || this.recipe.current_best_release || (this.recipe.source_version ? { ...this.recipe.source_version, is_inherited_source: true } : null);
-    }
-    return this.recipe.active_experiment
-      || this.recipe.current_best_release
-      || this.recipe.draft
-      || (this.recipe.source_version ? { ...this.recipe.source_version, is_inherited_source: true } : null);
+    const recipe = this.recipe;
+    const inherited = recipe.source_version ? { ...recipe.source_version, is_inherited_source: true } : null;
+    if (this.activeTab === 'editor') return recipe.draft || recipe.current_version || inherited;
+    return recipe.current_version
+      || recipe.open_tests?.[0]
+      || (recipe.versions || []).find((v) => v.kind === 'test')
+      || recipe.draft
+      || inherited;
   },
 
   async loadParsed() {
@@ -157,8 +184,9 @@ const RecipeView = {
     this.renderTab();
   },
 
-  renderScaffold(container) {
-    this.destroyDraftEditor();
+  // The picker and badges under the title; re-rendered on its own when the
+  // sheet on screen changes without a full re-render (Editor ↔ Overview).
+  statusRowHtml() {
     const recipe = this.recipe;
     const branches = recipe.branches || [];
     const branchOptions = branches.map((entry) => `
@@ -168,36 +196,41 @@ const RecipeView = {
     const branchSelect = branches.length > 1
       ? `<select class="version-select" onchange="RecipeView.switchBranch(this.value)">${branchOptions}</select>`
       : '';
-
-    // Version selector: shows the currently selected version, with all versions
-    // (and the draft when present) as options. Changing it calls switchVersion,
-    // which keeps activeVersion + URL + explicitVersionRequest in sync.
-    const versionList = [
-      ...(recipe.draft ? [{ val: 'draft', label: 'Draft' }] : []),
-      ...(recipe.versions || []).filter((v) => !v.is_draft).map((v) => ({
-        val: v.version_string,
-        label: `${v.version_string} (${v.status})`,
-      })),
-    ];
+    // Picker: Versions ("v1.1 · current") and Tests ("Test 4 · more water ·
+    // open"). The working copy isn't a sheet; it shows only while it's on
+    // screen. Changing it calls switchVersion, which keeps activeVersion + URL
+    // + explicitVersionRequest in sync.
     const selectedKey = this.selectedVersionKey();
+    const groups = sheetOptionGroups(recipe);
     // When editing a cook log, the version selector is misleading — show a
     // non-interactive label that names the log's source instead.
     let versionSelect;
     if (this.cookLogEditingId) {
       const log = (this.cookLogs || []).find((l) => l.id === this.cookLogEditingId);
       const sourceLabel = log
-        ? (log.source_kind === 'draft' ? 'Cook log · from draft' : `Cook log · from ${log.source_version_string || 'unknown'}`)
-        : 'Cook log';
+        ? (log.source_kind === 'draft' ? 'Cook · from the working copy' : `Cook · from ${entryLabelFor(recipe, log.source_version_string)}`)
+        : 'Cook';
       versionSelect = `<span class="badge" style="font-weight:500;cursor:default">${escHtml(sourceLabel)}</span>`;
     } else {
-      versionSelect = versionList.length > 0
-        ? `<select class="version-select" onchange="RecipeView.switchVersion(this.value)" aria-label="Select version">
-            ${versionList.map((opt) => `<option value="${escHtml(opt.val)}" ${opt.val === selectedKey ? 'selected' : ''}>${escHtml(opt.label)}</option>`).join('')}
+      const workingCopyOption = selectedKey === 'draft' ? '<option value="draft" selected>Working copy</option>' : '';
+      versionSelect = groups.length > 0
+        ? `<select class="version-select" onchange="RecipeView.switchVersion(this.value)" aria-label="Version or test">
+            ${workingCopyOption}${sheetOptionsHtml(groups, selectedKey)}
           </select>`
         : '';
     }
 
-    const statusBits = this.headerStatusBits();
+    return `${this.headerStatusBits()}${versionSelect}${branchSelect}`;
+  },
+
+  refreshStatusRow() {
+    const row = document.querySelector('.recipe-status-row');
+    if (row) row.innerHTML = this.statusRowHtml();
+  },
+
+  renderScaffold(container) {
+    this.destroyDraftEditor();
+    const recipe = this.recipe;
     const tabCount = (n) => n > 0 ? `<span class="tab-count">· ${n}</span>` : '';
     const versionsCount = recipe.counts ? (recipe.counts.releases_count + recipe.counts.betas_count) : 0;
     const cookLogsCount = recipe.counts?.cook_logs_count || 0;
@@ -205,7 +238,7 @@ const RecipeView = {
       { id: 'overview', label: 'Overview' },
       { id: 'editor', label: 'Editor' },
       { id: 'versions', label: `Versions${tabCount(versionsCount)}` },
-      { id: 'cook-logs', label: `Cook Logs${tabCount(cookLogsCount)}` },
+      { id: 'cook-logs', label: `Cooks${tabCount(cookLogsCount)}` },
     ];
 
     container.innerHTML = `
@@ -214,11 +247,7 @@ const RecipeView = {
           <div id="header-thumb-slot" class="header-thumb-slot"></div>
           <div class="recipe-header-copy">
             <h1 class="recipe-title-lg">${escHtml(recipe.title)}</h1>
-            <div class="recipe-status-row">
-              ${statusBits}
-              ${versionSelect}
-              ${branchSelect}
-            </div>
+            <div class="recipe-status-row">${this.statusRowHtml()}</div>
           </div>
           <div class="recipe-header-actions">
             <button class="header-gear-btn" onclick="RecipeView.openSettingsModal()" aria-label="Recipe menu" title="Recipe menu">
@@ -238,17 +267,9 @@ const RecipeView = {
       <div id="tab-body"></div>`;
   },
 
+  // The picker already says "v1.1 · current"; only the absence needs saying.
   headerStatusBits() {
-    const recipe = this.recipe;
-    const bits = [];
-    const best = recipe.current_best_release;
-    if (best) {
-      bits.push(`<span class="badge badge-released">Best: ${escHtml(best.version_string || '')}</span>`);
-    }
-    if (!best && !recipe.active_experiment) {
-      bits.push('<span class="badge badge-draft">No releases yet</span>');
-    }
-    return bits.join('');
+    return this.recipe.current_version ? '' : '<span class="badge badge-draft">No version yet</span>';
   },
 
   setTab(tab) {
@@ -256,6 +277,7 @@ const RecipeView = {
       this.cookLogEditingId = null;
       this.activeVersion = null;
     }
+    if (tab !== 'editor') this.fixingVersion = null;
     // A real switch to the editor lands exactly on the panes, from any scroll.
     this.editorScrollForce = tab === 'editor' && this.activeTab !== 'editor';
     this.activeTab = tab;
@@ -304,13 +326,15 @@ const RecipeView = {
 
   // ── Editor / cook-log bridge methods ────────────────────────────────────────
 
+  // What the Editor edits: a cook's recipe (Mark differences), a version
+  // being fixed in place ("Fix a typo in v1.1…"), or else the working copy.
+  // Tests are never edited: they're fixed so printouts match them.
   getEditableVersion() {
     if (this.activeVersion?._cookLogId) return this.activeVersion;
-    if (this.activeVersion?.is_draft) return this.activeVersion;
-    // Released / beta / archived versions can be edited in place (releases come
-    // with a warning in the editor). Inherited source from a parent branch is
-    // not editable here, so fall back to the draft for that.
-    if (this.activeVersion?.version_string && !this.activeVersion?.is_inherited_source) return this.activeVersion;
+    if (this.fixingVersion) {
+      const version = (this.recipe?.versions || []).find((v) => v.version_string === this.fixingVersion && v.kind === 'version');
+      if (version) return version;
+    }
     return this.recipe?.draft || null;
   },
 
@@ -320,13 +344,16 @@ const RecipeView = {
     if (editable._cookLogId) {
       const log = editable._cookLog;
       const sourceLabel = log?.source_kind === 'draft'
-        ? 'draft'
-        : (log?.source_version_string || 'unknown source');
-      return `Editing cook log${log?.outcome ? ` — ${log.outcome}` : ''} (from ${sourceLabel})`;
+        ? 'the working copy'
+        : entryLabelFor(this.recipe, log?.source_version_string);
+      return `Editing a cook${log?.outcome ? ` — ${log.outcome}` : ''} (from ${sourceLabel})`;
     }
-    if (editable.is_draft) return 'Editing Draft';
-    if (editable.status === 'beta') return `Editing ${editable.version_string}`;
-    return `Editing ${editable.version_string || 'version'}`;
+    if (editable.is_draft) {
+      const base = editable.base_version ? ` · based on ${editable.base_version}` : '';
+      const from = editable.from_label ? ` · from ${editable.from_label}` : '';
+      return `Working copy${base}${from}`;
+    }
+    return `Fixing ${editable.label || editable.version_string} in place`;
   },
 
   cookLogToEditableTarget(log) {
@@ -360,8 +387,9 @@ const RecipeView = {
     this.setTab('cook-logs');
   },
 
+  // What "Adopt…" / "Release without testing…" makes the next version from.
   releaseSourceVersionKey() {
-    if (this.activeVersion?.status === 'beta' && this.activeVersion?.version_string) {
+    if (this.activeVersion?.kind === 'test' && this.activeVersion?.version_string) {
       return this.activeVersion.version_string;
     }
     return 'draft';
@@ -370,7 +398,7 @@ const RecipeView = {
   imageTargetLabel() {
     const target = this.activeVersion;
     if (!target) return 'this version';
-    if (target.is_draft) return 'Draft';
-    return `${target.version_string} (${target.status})`;
+    if (target.is_draft) return 'Working copy';
+    return entryTitle(target);
   },
 };

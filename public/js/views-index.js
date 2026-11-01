@@ -9,7 +9,7 @@ const IndexView = {
     return false;
   },
 
-  // "Edited today · last cooked May 24 · 4 logs"
+  // "Edited today · last cooked May 24 · 4 cooks"
   activityLine(r) {
     const parts = [];
     const kind = r.last_activity_kind;
@@ -19,7 +19,7 @@ const IndexView = {
     else parts.push(`Created ${shortDate(r.created_at)}`);
     if (kind !== 'cooked') parts.push(r.last_cooked_at ? `last cooked ${shortDate(r.last_cooked_at)}` : 'not cooked yet');
     const logs = r.cook_logs_total || 0;
-    if (logs) parts.push(`${logs} log${logs === 1 ? '' : 's'}`);
+    if (logs) parts.push(`${logs} cook${logs === 1 ? '' : 's'}`);
     return parts.join(' · ');
   },
 
@@ -114,11 +114,20 @@ const IndexView = {
         return;
       }
       list.innerHTML = recipes.map(r => {
+        // "v1.1" + "Testing: more water" (or "2 open tests"); no version yet
+        // says so.
         const badges = [];
-        if (r.latest_released) badges.push(`<span class="badge badge-released">${escHtml(r.latest_released)}</span>`);
-        if (r.latest_beta) badges.push(`<span class="badge badge-beta">${escHtml(r.latest_beta)} beta</span>`);
-        // Never released: one draft badge, not "Draft" + "Draft in progress".
-        if (!r.latest_released && !r.latest_beta && !r.draft_change_label) badges.push(`<span class="badge badge-draft">Draft</span>`);
+        const current = r.current_version?.label || r.latest_released;
+        badges.push(current
+          ? `<span class="badge badge-released">${escHtml(current)}</span>`
+          : '<span class="badge badge-draft">No version yet</span>');
+        const tests = r.open_tests || [];
+        if (tests.length === 1) {
+          const t = tests[0];
+          badges.push(`<span class="badge badge-beta">${escHtml(t.testing ? `Testing: ${t.testing}` : `${t.label} open`)}</span>`);
+        } else if (tests.length > 1) {
+          badges.push(`<span class="badge badge-beta">${tests.length} open tests</span>`);
+        }
         if (r.draft_change_label) badges.push(`<span class="badge badge-in-progress">${escHtml(r.draft_change_label)}</span>`);
         const thumb = r.thumbnail_image_id
           ? `<img src="/api/images/${r.thumbnail_image_id}" alt="${escHtml(r.title)}" loading="lazy" />`

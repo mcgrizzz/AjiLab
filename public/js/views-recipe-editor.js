@@ -11,34 +11,27 @@ Object.assign(RecipeView, {
     if (cookLogTarget) {
       this.activeVersion = cookLogTarget;
     } else {
-      // Drafts, betas, and now released/archived versions are all editable in
-      // place (releases get a warning + an easy "new beta" path below). Only an
-      // empty selection or an inherited source from a parent branch can't be
-      // edited here, so bounce just those to the editable target.
-      const isCurrentEditable = !!(this.activeVersion?._cookLogId
-        || this.activeVersion?.is_draft
-        || (this.activeVersion?.version_string && !this.activeVersion?.is_inherited_source));
-      if (!isCurrentEditable) {
-        const experimentTarget = this.recipe.active_experiment || this.recipe.draft || null;
-        if (experimentTarget && experimentTarget !== this.activeVersion) {
-          this.activeVersion = experimentTarget;
-          // Sync URL + explicit request so the address bar matches what we're editing.
-          this.explicitVersionRequest = experimentTarget.is_draft
-            ? 'draft'
-            : (experimentTarget.version_string || null);
-          this.syncVersionUrl(true);
-        }
+      // Always the working copy, unless "Fix a typo in v1.1…" asked for that
+      // version. Tests are never edited.
+      const target = this.getEditableVersion();
+      if (target && target !== this.activeVersion) {
+        // Back on the Overview, show the sheet that was there before.
+        if (this.activeVersion?.version_string && !this.activeVersion._cookLogId) this.lastSheetKey = this.activeVersion.version_string;
+        this.activeVersion = target;
+        this.explicitVersionRequest = target.is_draft ? 'draft' : target.version_string;
+        this.syncVersionUrl(true);
+        this.refreshStatusRow();
       }
     }
     const editable = this.getEditableVersion();
     if (!editable) {
-      const best = this.recipe.current_best_release;
+      const current = this.recipe.current_version;
       body.innerHTML = `
         <div class="tab-content">
           <div class="empty-state" style="padding:32px 0">
             <h2>Nothing to edit yet</h2>
-            <p>${best ? `Continue from <strong>${escHtml(best.version_string)}</strong>.` : 'Start writing this recipe.'}</p>
-            <button class="btn btn-primary" onclick="RecipeView.${best ? 'forkCurrentBranchHead' : 'startFreshDraft'}()">${best ? 'Start from current best' : 'Start writing'}</button>
+            <p>${current ? `Start the working copy from <strong>${escHtml(current.label)}</strong>.` : 'Start writing this recipe.'}</p>
+            <button class="btn btn-primary" onclick="RecipeView.${current ? 'forkCurrentBranchHead' : 'startFreshDraft'}()">${current ? `Start from ${escHtml(current.label)}` : 'Start writing'}</button>
           </div>
         </div>`;
       return;
@@ -52,34 +45,32 @@ Object.assign(RecipeView, {
     this.draftPreviewState = null;
     this.draftQuantityAnchor = null;
     const isEditingCookLog = !!editable?._cookLogId;
-    // Editing a published release in place (typo/note fixes). Distinct from
-    // draft/beta editing, which is the normal iterative flow.
-    const isEditingReleased = !isEditingCookLog
-      && (editable?.status === 'released' || editable?.status === 'archived');
-    const canRelease = !isEditingCookLog && (isEditingDraft || editable?.status === 'beta');
-    const releaseButton = canRelease
-      ? `<button class="btn btn-sm btn-outline" onclick="RecipeView.openReleaseModal()" title="${escHtml(isEditingDraft ? 'Release the draft as a new version' : `Promote ${editable.version_string || 'this beta'} to a release`)}">${isEditingDraft ? 'Release…' : 'Promote…'}</button>`
-      : '';
-    // Autosave keeps the draft saved; this button takes a beta snapshot.
+    // Fixing a version in place (typo/note fixes), with the warning.
+    const isFixingVersion = !isEditingCookLog && !isEditingDraft;
     const actions = isEditingCookLog
-      ? `<button class="btn btn-sm" onclick="RecipeView.exitCookLogEdit()">← Back to cook logs</button>
-         <button class="btn btn-sm btn-outline" onclick="RecipeView.openPromoteLogModal('${escJs(editable._cookLogId)}')">Promote…</button>`
-      : isEditingReleased
-        ? `<button class="btn btn-sm btn-primary" onclick="RecipeView.saveDraft({ advanceBeta: false })">Save changes</button>`
-        : `${isEditingDraft ? `<button id="editor-beta-btn" class="btn btn-sm" onclick="RecipeView.saveDraftAsBeta()">${escHtml(this.recipe.next_beta_version ? `Save as ${this.recipe.next_beta_version}` : 'Save as new beta')}</button>` : ''}${releaseButton}`;
+      ? `<button class="btn btn-sm" onclick="RecipeView.exitCookLogEdit()">← Back to cooks</button>
+         <button class="btn btn-sm btn-outline" onclick="RecipeView.openPromoteLogModal('${escJs(editable._cookLogId)}')">Adopt changes…</button>`
+      : isFixingVersion
+        ? `<button class="btn btn-sm btn-primary" onclick="RecipeView.saveDraft({ advanceBeta: false })">Save changes</button>
+           <button class="btn btn-sm" onclick="RecipeView.finishFixingVersion()">Done</button>`
+        : `<button id="editor-test-btn" class="btn btn-sm btn-primary" onclick="RecipeView.openSaveTestModal()">Save as Test ${this.recipe.next_test_number}…</button>
+           <button class="btn btn-sm btn-ghost" onclick="RecipeView.openWorkingCopyMenu(event, this)" aria-label="More actions for the working copy" title="More actions">⋯</button>`;
     const targetTitle = isEditingCookLog
-      ? 'Edits save to this cook log only — not the draft or any release.'
+      ? 'Edits save to this cook only, not to the working copy or any version.'
       : '';
+    const testingLine = isEditingDraft && editable.testing
+      ? `<span class="editor-testing">Testing: ${escHtml(editable.testing)}</span>` : '';
     body.innerHTML = `
       <div class="editor-wrap">
-        ${isEditingReleased ? `
+        ${isFixingVersion ? `
         <div class="editor-release-warning">
-          <span>⚠ You're editing <strong>${escHtml(editable.version_string || 'this release')}</strong> (${escHtml(editable.status)}) in place — saving overwrites the published version. Good for a quick typo or note fix; for real changes, start a new beta so the release history stays intact.</span>
-          <button class="btn btn-sm" onclick="RecipeView.startNextBetaFrom('${escJs(editable.version_string || '')}')">Start a new beta from ${escHtml(editable.version_string || 'this release')}</button>
+          <span>⚠ You're fixing <strong>${escHtml(editable.label || editable.version_string)}</strong> in place: saving overwrites it, and printouts of it won't match any more. Good for a typo or a note; for a real change, start a new test.</span>
+          <button class="btn btn-sm" onclick="RecipeView.openNewTestModal('${escJs(editable.version_string || '')}')">New test from ${escHtml(editable.label || 'this version')}…</button>
         </div>` : ''}
         <div class="editor-head">
           <div class="editor-toolbar">
             <span class="editor-target"${targetTitle ? ` title="${escHtml(targetTitle)}"` : ''}>${escHtml(this.editTargetLabel())}</span>
+            ${testingLine}
             <span id="editor-save-pill" class="save-pill" data-state="saved" role="status" aria-live="polite"></span>
             ${isEditingCookLog ? '' : '<span id="editor-title-notice" class="title-check" hidden></span>'}
             <span class="editor-toolbar-spacer"></span>
@@ -202,7 +193,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       key: JSON.stringify([slug, branch, kind, target]),
       initial: { text: editable.cooklang_text || '', tags: JSON.parse(editable.tags || '[]') },
       storage,
-      autosave: editable.status !== 'released' && editable.status !== 'archived',
+      autosave: !!editable.is_draft || !!editable._cookLogId,
       write: (value, options) => API.put(endpoint, {
         cooklang_text: value.text, tags: value.tags,
         ...(kind === 'draft' ? { advance_beta: options.advanceBeta === true } : {}),
@@ -234,52 +225,109 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     pill.innerHTML = `<span class="save-pill-dot" aria-hidden="true"></span><span class="save-pill-text">${escHtml(view.text)}${warn ? ' ⚠' : ''}</span>${view.action
       ? `<button type="button" class="save-pill-action" onclick="RecipeView.saveDraft({ advanceBeta: false })">${escHtml(view.action)}</button>`
       : ''}`;
-    this.renderBetaButton(session);
+    this.renderSaveTestButton(session);
   },
 
-  // "Save as v1.1-beta.2": names the snapshot it takes, and is off while the
-  // draft still matches the last one.
-  renderBetaButton(session = this.editorSaveSession) {
-    const button = document.getElementById('editor-beta-btn');
+  // "Save as Test 5…" is off while the working copy still matches the last
+  // test saved from it, or what it started from.
+  renderSaveTestButton(session = this.editorSaveSession) {
+    const button = document.getElementById('editor-test-btn');
     if (!button || !session) return;
-    const draft = this.recipe?.draft;
-    const current = draft?.current_beta_version
-      ? (this.recipe.versions || []).find((v) => v.version_string === draft.current_beta_version)
-      : null;
-    const unchanged = !!current && current.cooklang_text === session.value.text
-      && JSON.stringify(JSON.parse(current.tags || '[]')) === JSON.stringify(session.value.tags);
-    const empty = !session.value.text.trim();
-    button.disabled = unchanged || empty;
-    const next = this.recipe?.next_beta_version;
-    button.title = empty ? 'Write something first.'
-      : unchanged ? `No changes since ${current.version_string}.`
-        : `Save the draft as ${next || 'a new beta'}: a fixed version you can cook and log against. You keep editing the draft; it saves automatically.`;
+    const reason = this.saveTestBlockedReason(session.value);
+    button.disabled = !!reason;
+    button.title = reason || `Save the working copy as Test ${this.recipe?.next_test_number}: a fixed sheet you can print and cook. You keep editing the working copy.`;
   },
 
-  // One click takes the next beta snapshot; offer Undo, since it's a version.
-  async saveDraftAsBeta() {
+  saveTestBlockedReason(value) {
+    if (!value.text.trim()) return 'Write something first.';
+    const draft = this.recipe?.draft;
+    const same = (entry) => entry && entry.cooklang_text === value.text;
+    const last = draft?.current_beta_version ? entryByKey(this.recipe, draft.current_beta_version) : null;
+    if (same(last)) return `No changes since ${last.label}.`;
+    const startedFrom = draft?.parent_version ? entryByKey(this.recipe, draft.parent_version) : null;
+    if (same(startedFrom)) return `Nothing changed from ${startedFrom.label} yet.`;
+    return '';
+  },
+
+  openWorkingCopyMenu(event, btn) {
+    const draft = this.recipe?.draft;
+    const current = this.recipe?.current_version;
+    openActionMenu(event, btn, [
+      {
+        label: 'Release without testing…',
+        title: `Make ${this.recipe?.next_version_string} straight from the working copy, without cooking it first`,
+        onClick: () => this.openReleaseModal(),
+      },
+      draft?.base_version && entryByKey(this.recipe, draft.base_version)
+        ? { label: `Reset to ${draft.base_version}…`, onClick: () => this.startNextBetaFrom(draft.base_version) }
+        : (current ? { label: `Reset to ${current.label}…`, onClick: () => this.startNextBetaFrom(current.version_string) } : null),
+    ]);
+  },
+
+  finishFixingVersion() {
+    const key = this.fixingVersion;
+    this.fixingVersion = null;
+    this.activeTab = 'overview';
+    this.renderDetail(document.getElementById('view-container'), key, { syncUrl: true, replaceUrl: true });
+  },
+
+  // "Save as Test 5…": asks what's being tested (prefilled from "New test…"),
+  // saves the working copy as a fixed test, and opens it, ready to print.
+  openSaveTestModal() {
+    const draft = this.recipe?.draft;
+    const reason = this.editorSaveSession ? this.saveTestBlockedReason(this.editorSaveSession.value) : '';
+    if (reason) { showToast(reason); return; }
+    const number = this.recipe.next_test_number;
+    showModal(`
+      <div class="modal-title">Save as Test ${number}</div>
+      <div class="field-group mt8">
+        <label class="field-label" for="save-test-testing">What are you testing?</label>
+        <input id="save-test-testing" class="field-input" placeholder="e.g. more water" maxlength="120" value="${escHtml(draft?.testing || '')}" />
+        <small style="color:var(--ink2);font-size:0.78rem">One short phrase. It goes on the printout.</small>
+      </div>
+      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">Test ${number} is fixed once saved, so a printout always matches it. You can keep editing the working copy.</p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" id="save-test-go">Save Test ${number}</button>
+      </div>`);
+    const input = document.getElementById('save-test-testing');
+    const go = () => this.saveAsTest(input?.value.trim() || '');
+    document.getElementById('save-test-go')?.addEventListener('click', go);
+    input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    setTimeout(() => input?.select(), 60);
+  },
+
+  async saveAsTest(testing) {
     const previous = this.recipe?.draft?.current_beta_version || null;
-    const button = document.getElementById('editor-beta-btn');
-    if (button) button.disabled = true;
-    this.lastCreatedBeta = null;
-    await this.saveDraft({ advanceBeta: true });
-    const version = this.lastCreatedBeta;
-    this.lastCreatedBeta = null;
-    if (!version) {
-      this.renderBetaButton();
+    if (this.editorSaveSession && !(await this.saveDraft({ silent: true, advanceBeta: false }))) {
+      showToast("Couldn't save the working copy first. Nothing was saved as a test.");
       return;
     }
-    showToast(`Saved ${version}`, { action: { label: 'Undo', onClick: () => this.undoDraftBeta(version, previous) } });
+    let saved;
+    try {
+      saved = await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/tests`, { testing });
+    } catch (e) {
+      showToast('Error: ' + e.message);
+      return;
+    }
+    closeModal();
+    await this.refreshRecipe();
+    this.activeTab = 'overview';
+    await this.renderDetail(document.getElementById('view-container'), saved.version_string, { syncUrl: true });
+    if (!saved.created) { showToast(`No changes since Test ${saved.test_number}`); return; }
+    showToast(`Saved Test ${saved.test_number}`, { action: { label: 'Undo', onClick: () => this.undoDraftBeta(saved.version_string, previous) } });
   },
 
   async undoDraftBeta(version, previous) {
+    const label = entryLabelFor(this.recipe, version);
     try {
       await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/draft/undo-beta`, {
         version_string: version, previous_beta_version: previous,
       });
       await this.refreshRecipe();
-      await this.renderDetail(document.getElementById('view-container'), this.activeVersion?.is_draft ? 'draft' : (this.activeVersion?.version_string || 'draft'), { syncUrl: true, replaceUrl: true });
-      showToast(`Removed ${version}`);
+      this.activeTab = 'editor';
+      await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
+      showToast(`Removed ${label}`);
     } catch (e) {
       showToast(`Couldn't undo: ${e.message}`);
     }
@@ -629,8 +677,6 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     // A delayed response belongs to the captured target, not the current screen.
     if (session.target.slug !== this.slug || session.target.branch !== this.branchSlug || session.dirty) return true;
     const { response, value } = result;
-    // Read by saveDraftAsBeta even if the screen moved on meanwhile.
-    if (advanceBeta) this.lastCreatedBeta = response?.created_beta || null;
     const text = value.text;
     const tags = value.tags;
     const target = session.target;
@@ -645,7 +691,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
         }
         if (session !== this.editorSaveSession || this.activeTab !== 'editor') return true;
         if (silent) return true;
-        showToast('Cook log saved');
+        showToast('Cook saved');
         return true;
       }
       const nextTags = JSON.stringify(tags);
@@ -678,7 +724,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
         this.maybeShowUnresolvedWarning(response, false);
         return true;
       }
-      if (!silent) showToast(target.kind === 'draft' ? 'Draft saved' : 'Version saved');
+      if (!silent) showToast(target.kind === 'draft' ? 'Working copy saved' : 'Version saved');
       this.maybeShowUnresolvedWarning(response, false);
       return true;
     } catch (e) {

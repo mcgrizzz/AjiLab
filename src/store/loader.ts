@@ -31,6 +31,13 @@ import {
   latestComparableVersion,
   nextBetaForDraft,
 } from "./version-string.ts";
+import {
+  decorateEntries,
+  nextTestNumber,
+  nextVersionString,
+  workingCopyChanged,
+  type CookSummary,
+} from "./lineage.ts";
 
 export function sameDraftState(version: VersionRecord | null | undefined, nextText: string, nextTags: string[]): boolean {
   if (!version) return false;
@@ -48,10 +55,7 @@ export function hasDraftChanges(draft: VersionRecord | null, versions: VersionRe
 }
 
 export function draftChangeLabel(draft: VersionRecord | null, versions: VersionRecord[]): string | null {
-  if (!hasDraftChanges(draft, versions)) return null;
-  const latestStableOrBeta = latestComparableVersion(versions);
-  if (!latestStableOrBeta?.version_string) return "Draft in progress";
-  return `Draft differs from ${latestStableOrBeta.version_string}`;
+  return workingCopyChanged(draft, versions) ? "Working copy has changes" : null;
 }
 
 export function selectActiveExperiment(
@@ -98,12 +102,13 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
 
   const branchIds = branchRows.map((r) => r.id);
   // Parallel: these three queries are independent.
-  const [entryRows, cookLogCounts, latestCookLogs] = await Promise.all([
+  const [entryRows, cookLogCounts, latestCookLogs, cooksPerEntry] = await Promise.all([
     sql<EntryRow[]>`
       SELECT e.id, e.branch_id, b.slug AS branch_slug, b.recipe_id,
              e.version_string, e.status, e.cooklang_text, e.changelog,
              e.parent_version, e.current_beta_version, e.tags,
-             e.created_at, e.updated_at
+             e.created_at, e.updated_at,
+             e.test_number, e.closed_as, e.closed_at, e.from_entry_id, e.from_cook_log_id
       FROM entries e
       JOIN branches b ON b.id = e.branch_id
       WHERE e.branch_id IN ${sql(branchIds)}
@@ -124,7 +129,19 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
       WHERE cl.branch_id IN ${sql(branchIds)}
       ORDER BY cl.branch_id, cl.cooked_at DESC, cl.created_at DESC
     `,
+    // Per sheet: how many cooks, and the latest one's outcome.
+    sql<{ source_entry_id: string; n: number; cooked_at: Date; outcome: string }[]>`
+      SELECT DISTINCT ON (source_entry_id) source_entry_id, outcome, cooked_at,
+             (COUNT(*) OVER (PARTITION BY source_entry_id))::int AS n
+      FROM cook_logs
+      WHERE branch_id IN ${sql(branchIds)} AND source_entry_id IS NOT NULL
+      ORDER BY source_entry_id, cooked_at DESC, created_at DESC
+    `,
   ]);
+  const cooks = new Map<string, CookSummary>(cooksPerEntry.map((row) => [
+    row.source_entry_id,
+    { n: row.n, cooked_at: row.cooked_at.toISOString(), outcome: row.outcome },
+  ]));
 
   const branches: RecipeBranchRecord[] = branchRows.map((branchRow) => {
     const branchMeta = branchRowToMeta(branchRow);
@@ -133,6 +150,7 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
     const versions = sortVersions(allBranchEntries.filter((e) => e.version_string !== null));
     const latestReleased = latestVersionByStatus(versions, "released");
     const latestBeta = latestVersionByStatus(versions, "beta");
+    const { current, openTests } = decorateEntries(versions, draft, cooks);
 
     // Resolve source_version (the entry the branch was forked from)
     let sourceVersion: VersionRecord | null = null;
@@ -151,15 +169,22 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
       source_version: sourceVersion,
       latest_released: latestReleased?.version_string || null,
       latest_beta: latestBeta?.version_string || null,
-      has_unreleased_changes: hasDraftChanges(draft, versions),
+      has_unreleased_changes: workingCopyChanged(draft, versions),
       draft_change_label: draftChangeLabel(draft, versions),
-      next_beta_version: nextBetaForDraft(versions, draft, latestReleased?.version_string || null, latestBeta?.version_string || null),
-      current_best_release: latestReleased,
+      next_beta_version: `Test ${nextTestNumber(versions)}`,
+      // Kept one phase for old clients: the current version, and what used to
+      // open by default.
+      current_best_release: current,
       active_experiment: selectActiveExperiment(draft, versions, latestReleased, latestBeta),
+      current_version: current,
+      open_tests: openTests,
+      next_test_number: nextTestNumber(versions),
+      next_version_string: nextVersionString(versions, current),
       latest_cook_log: logRow ? cookLogRowToRecord(logRow) : null,
       counts: {
-        releases_count: versions.filter((v) => v.status === "released").length,
-        betas_count: versions.filter((v) => v.status === "beta").length,
+        releases_count: versions.filter((v) => v.kind === "version").length,
+        betas_count: versions.filter((v) => v.kind === "test").length,
+        open_tests_count: openTests.length,
         cook_logs_count: countsRow?.n || 0,
       },
     };
@@ -188,6 +213,10 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
     next_beta_version: branch.next_beta_version,
     current_best_release: branch.current_best_release,
     active_experiment: branch.active_experiment,
+    current_version: branch.current_version,
+    open_tests: branch.open_tests,
+    next_test_number: branch.next_test_number,
+    next_version_string: branch.next_version_string,
     latest_cook_log: branch.latest_cook_log,
     counts: branch.counts,
   };

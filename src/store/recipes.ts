@@ -62,7 +62,7 @@ export function recipeActivity(recipe: RecipeRecord) {
     lastCooked = later(lastCooked, branch.latest_cook_log?.cooked_at);
     for (const v of branch.versions || []) {
       if (v.is_draft || !v.version_string) continue;
-      if (!lastVersion || v.created_at > lastVersion.at) lastVersion = { at: v.created_at, version: v.version_string };
+      if (!lastVersion || v.created_at > lastVersion.at) lastVersion = { at: v.created_at, version: v.label || v.version_string };
     }
     if (branch.draft?.cooklang_text?.trim()) lastEdit = later(lastEdit, branch.draft.updated_at);
   }
@@ -122,6 +122,12 @@ export async function listRecipes(search?: string) {
         created_at: recipe.current_best_release.created_at,
         changelog: recipe.current_best_release.changelog || "",
       } : null,
+      current_version: recipe.current_version ? {
+        version_string: recipe.current_version.version_string,
+        label: recipe.current_version.label,
+        created_at: recipe.current_version.created_at,
+      } : null,
+      open_tests: recipe.open_tests.map((t) => ({ label: t.label, testing: t.testing, version_string: t.version_string })),
       latest_cook_log: recipe.latest_cook_log ? {
         id: recipe.latest_cook_log.id,
         version_string: recipe.latest_cook_log.version_string,

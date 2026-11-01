@@ -3,6 +3,7 @@ const Router = {
   routes: [
     { pattern: /^\/$/, view: 'index' },
     { pattern: /^\/recipe\/([^/]+)\/versions\/([^/]+)$/, view: 'recipe-version' },
+    { pattern: /^\/recipe\/([^/]+)\/tests\/(\d+)$/, view: 'recipe-test' },
     { pattern: /^\/recipe\/([^/]+)\/print$/, view: 'recipe-print' },
     { pattern: /^\/recipe\/([^/]+)$/, view: 'recipe' },
   ],
@@ -46,6 +47,17 @@ const Router = {
           addBtn.classList.remove('hidden');
           await RecipeView.render(container, m[1], {
             version: m[2],
+            branch: url.searchParams.get('branch') || 'main',
+            tab: url.searchParams.get('tab') || 'overview',
+            scale: url.searchParams.get('scale'),
+          });
+          return;
+        }
+        if (route.view === 'recipe-test') {
+          backBtn.classList.remove('hidden');
+          addBtn.classList.remove('hidden');
+          await RecipeView.render(container, m[1], {
+            testNumber: Number(m[2]),
             branch: url.searchParams.get('branch') || 'main',
             tab: url.searchParams.get('tab') || 'overview',
             scale: url.searchParams.get('scale'),
@@ -151,7 +163,7 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'p' && e.key !== 'P') return;
   if (!(e.ctrlKey || e.metaKey)) return;
   if (e.shiftKey || e.altKey) return;
-  const onRecipePage = /^\/recipe\/[^/]+(?:\/versions\/[^/]+)?\/?$/.test(location.pathname);
+  const onRecipePage = /^\/recipe\/[^/]+(?:\/(?:versions|tests)\/[^/]+)?\/?$/.test(location.pathname);
   if (!onRecipePage) return;
   if (typeof RecipeView === 'undefined' || typeof RecipeView.openPrintView !== 'function') return;
   e.preventDefault();

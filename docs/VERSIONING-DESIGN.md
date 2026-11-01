@@ -1,7 +1,7 @@
 # Versions and tests: design
 
-Status: **proposal, waiting for Andrew's go-ahead.** Nothing below is built yet
-except the P1 promote fix (commit `9252466`).
+Status: **approved.** Built so far: the P1 promote fix (`9252466`) and phase 1
+(names, default view, safe adopt). Phases 2–5 are next.
 
 ## 1. Summary
 
@@ -346,11 +346,18 @@ exactly as they are.
 Sakadane will open on **v1.0** instead of v1.1-beta.1, with "Testing: Test 4 ·
 more water" in the strip.
 
-**The five recipes with only betas** open on their newest test, with "No version
-yet. Adopt this test to make v1.0". I won't auto-create versions, because that
-would be inventing decisions. Before phase 1 ships I'll list those recipes
-read-only from live, so Andrew can say which test should become v1.0 for each,
-or leave them.
+Correction after running the migration on a copy of live: Sakadane's working
+copy is **not** "has changes". It was saved as Test 4 in the same click, and
+Test 4 was edited in place later, so the working copy is older than Test 4.
+The rule stays the one live already used: a working copy older than what it's
+compared with has no changes of its own. To keep that rule honest,
+`entries.updated_at` now moves only when the text or tags change, so renaming
+or closing a test can't hide real changes.
+
+**The four recipes with only betas** (cultured-butter, koji-cultured-butter,
+sakadane-shokupan, soyashimizu-sakadane-starter) open on their newest test,
+with "No version yet. Adopt this test to make v1.0". No versions are created
+automatically, because that would be inventing decisions.
 
 ## 10. Phases
 
@@ -362,8 +369,7 @@ includes:
   contrast sweep;
 - a short live check limited to `audit-sandbox-claude`.
 
-**P1: promote fix, shipped** (`9252466`; the deploy is waiting on Tailscale
-re-auth).
+**P1: promote fix, shipped** (`9252466`).
 - Promoting now copies the beta to a new row, and the beta keeps its id and
   cook logs. Store tests cover beta → release, re-release, a duplicate version
   string, and releasing the draft.
@@ -373,7 +379,10 @@ re-auth).
   v1.2's text will then be v1.0-beta.1's, which is a fine thing to see on the
   sandbox.)
 
-**Phase 1: names, default view, safe adopt.**
+**Phase 1: names, default view, safe adopt.** Built. Also in it: the 3-way
+merge now works per run of changed lines (it used to treat everything between
+the first and last change as one edit, so two changes far apart always
+collided), and an edit made on both sides is applied once instead of twice.
 - Schema columns and migration steps 1–3 and 6; derived API fields.
 - Interface wording across all screens (§6).
 - The Overview always lands on the current version, and Print and "Log this

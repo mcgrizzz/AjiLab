@@ -116,16 +116,18 @@ const RecipeEditState = (() => {
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
 
+  // The sheet a new cook defaults to: the version or test on screen. The
+  // working copy is never cooked, so it falls back to the current version
+  // (or, with no version yet, the newest open test).
   function cookLogSourceKey(recipe, selected) {
-    if (selected?.is_draft && recipe.draft) return '__draft__';
     if (selected?.version_string && !selected._cookLogId
         && recipe.versions?.some(v => !v.is_draft && v.version_string === selected.version_string)) {
       return selected.version_string;
     }
-    return recipe.current_best_release?.version_string
-      || recipe.active_experiment?.version_string
+    return recipe.current_version?.version_string
+      || recipe.open_tests?.[0]?.version_string
       || recipe.versions?.find(v => !v.is_draft)?.version_string
-      || '__draft__';
+      || null;
   }
 
   function cookLogTimestamp(local, existing) {

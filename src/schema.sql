@@ -141,10 +141,114 @@ DROP TRIGGER IF EXISTS touch_branches ON branches;
 CREATE TRIGGER touch_branches BEFORE UPDATE ON branches
   FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
 
+-- An entry's updated_at is when its sheet last changed (text or tags), not
+-- bookkeeping like a test's Testing line or being closed: the working copy's
+-- "has changes" compares against it.
+CREATE OR REPLACE FUNCTION touch_entry_content() RETURNS trigger AS $$
+BEGIN
+  IF NEW.cooklang_text IS DISTINCT FROM OLD.cooklang_text OR NEW.tags IS DISTINCT FROM OLD.tags THEN
+    NEW.updated_at = now();
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 DROP TRIGGER IF EXISTS touch_entries ON entries;
 CREATE TRIGGER touch_entries BEFORE UPDATE ON entries
-  FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+  FOR EACH ROW EXECUTE FUNCTION touch_entry_content();
 
 DROP TRIGGER IF EXISTS touch_cook_logs ON cook_logs;
 CREATE TRIGGER touch_cook_logs BEFORE UPDATE ON cook_logs
   FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+
+-- ── Versions and tests (docs/VERSIONING-DESIGN.md) ───────────────────────────
+-- A test is an entry with a test_number: stored status 'beta' (or 'archived'
+-- for an old archived beta). Its "Testing:" line is its changelog. It's open
+-- until closed_as is set. Tests made from now on get the internal
+-- version_string 'test-N'; older betas keep theirs.
+ALTER TABLE entries ADD COLUMN IF NOT EXISTS test_number INTEGER;
+ALTER TABLE entries ADD COLUMN IF NOT EXISTS closed_as TEXT;
+ALTER TABLE entries ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;
+-- Lineage: a version adopted from a test (and/or a cook), or a test made from
+-- another test or a cook.
+ALTER TABLE entries ADD COLUMN IF NOT EXISTS from_entry_id UUID;
+ALTER TABLE entries ADD COLUMN IF NOT EXISTS from_cook_log_id UUID;
+
+ALTER TABLE entries DROP CONSTRAINT IF EXISTS entries_closed_as_check;
+ALTER TABLE entries ADD CONSTRAINT entries_closed_as_check
+  CHECK (closed_as IS NULL OR closed_as IN ('adopted', 'stopped', 'rebased', 'superseded'));
+ALTER TABLE entries DROP CONSTRAINT IF EXISTS fk_entries_from_entry;
+ALTER TABLE entries ADD CONSTRAINT fk_entries_from_entry
+  FOREIGN KEY (from_entry_id) REFERENCES entries(id) ON DELETE SET NULL;
+ALTER TABLE entries DROP CONSTRAINT IF EXISTS fk_entries_from_cook_log;
+ALTER TABLE entries ADD CONSTRAINT fk_entries_from_cook_log
+  FOREIGN KEY (from_cook_log_id) REFERENCES cook_logs(id) ON DELETE SET NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS entries_test_number_unique
+  ON entries(branch_id, test_number) WHERE test_number IS NOT NULL;
+
+-- Data steps, recorded by name when they run.
+CREATE TABLE IF NOT EXISTS app_migrations (
+  name       TEXT PRIMARY KEY,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Betas → tests. Runs whenever there's an old-style beta without a number
+-- (first boot, or after restoring an older backup) and touches only those,
+-- so a test reopened since is never closed again.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM entries
+    WHERE version_string IS NOT NULL AND version_string NOT LIKE 'test-%' AND test_number IS NULL
+      AND (status = 'beta' OR (status = 'archived' AND version_string LIKE '%-beta%'))
+  ) THEN
+    RETURN;
+  END IF;
+
+  -- Only old-style betas are touched: tests saved since are named 'test-N'
+  -- and already numbered.
+  CREATE TEMP TABLE old_betas ON COMMIT DROP AS
+    SELECT id, branch_id, created_at FROM entries
+    WHERE version_string IS NOT NULL AND version_string NOT LIKE 'test-%' AND test_number IS NULL
+      AND (status = 'beta' OR (status = 'archived' AND version_string LIKE '%-beta%'));
+
+  -- 1. Number the betas (archived ones too) per branch, oldest first.
+  WITH numbered AS (
+    SELECT id, branch_id, ROW_NUMBER() OVER (PARTITION BY branch_id ORDER BY created_at, id) AS n
+    FROM old_betas
+  )
+  UPDATE entries e
+  SET test_number = numbered.n + COALESCE((SELECT MAX(x.test_number) FROM entries x WHERE x.branch_id = numbered.branch_id), 0)
+  FROM numbered WHERE e.id = numbered.id;
+
+  -- 2a. A beta whose text a later release has word for word was adopted.
+  WITH match AS (
+    SELECT DISTINCT ON (t.id) t.id AS test_id, r.id AS release_id, r.created_at
+    FROM entries t
+    JOIN entries r ON r.branch_id = t.branch_id AND r.status = 'released'
+                  AND r.created_at > t.created_at AND r.cooklang_text = t.cooklang_text
+    WHERE t.id IN (SELECT id FROM old_betas)
+    ORDER BY t.id, r.created_at
+  ), closed AS (
+    UPDATE entries t SET closed_as = 'adopted', closed_at = match.created_at
+    FROM match WHERE t.id = match.test_id
+    RETURNING match.release_id, t.id AS test_id
+  )
+  UPDATE entries r SET from_entry_id = closed.test_id
+  FROM closed WHERE r.id = closed.release_id AND r.from_entry_id IS NULL;
+
+  -- 2b. Other betas older than the branch's newest release were overtaken by
+  -- it: superseded (reopenable). Newer ones stay open.
+  UPDATE entries t SET closed_as = 'superseded', closed_at = newest.created_at
+  FROM (SELECT branch_id, MAX(created_at) AS created_at FROM entries
+        WHERE status = 'released' GROUP BY branch_id) newest
+  WHERE t.branch_id = newest.branch_id AND t.id IN (SELECT id FROM old_betas)
+    AND t.status = 'beta' AND t.closed_as IS NULL AND t.created_at < newest.created_at;
+
+  -- 3. An archived beta is a stopped test.
+  UPDATE entries SET closed_as = 'stopped', closed_at = updated_at
+  WHERE status = 'archived' AND id IN (SELECT id FROM old_betas) AND closed_as IS NULL;
+
+  INSERT INTO app_migrations (name) VALUES ('betas-to-tests') ON CONFLICT (name) DO NOTHING;
+END $$;

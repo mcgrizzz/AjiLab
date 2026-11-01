@@ -19,14 +19,18 @@ function storage() {
 }
 const initial = { text: '@water{100%g}', tags: ['bread'] };
 
-test('cook logs follow selected beta, release, and draft; inherited selections fall back', () => {
+test('a cook follows the selected test or version; the working copy falls back to the current version', () => {
   const { state } = setup();
-  const recipe = { draft: {}, versions: [{ version_string: 'v1.0' }, { version_string: 'v1.1-beta.1' }],
-    current_best_release: { version_string: 'v1.0' } };
-  assert.equal(state.cookLogSourceKey(recipe, { version_string: 'v1.1-beta.1' }), 'v1.1-beta.1');
+  const recipe = { draft: {}, versions: [{ version_string: 'v1.0' }, { version_string: 'test-1' }],
+    current_version: { version_string: 'v1.0' }, open_tests: [{ version_string: 'test-1' }] };
+  assert.equal(state.cookLogSourceKey(recipe, { version_string: 'test-1' }), 'test-1');
   assert.equal(state.cookLogSourceKey(recipe, { version_string: 'v1.0' }), 'v1.0');
-  assert.equal(state.cookLogSourceKey(recipe, { is_draft: true }), '__draft__');
+  assert.equal(state.cookLogSourceKey(recipe, { is_draft: true }), 'v1.0');
   assert.equal(state.cookLogSourceKey(recipe, { version_string: 'missing' }), 'v1.0');
+  // No version yet: the newest open test.
+  const testsOnly = { draft: {}, versions: [{ version_string: 'test-1' }], current_version: null, open_tests: [{ version_string: 'test-1' }] };
+  assert.equal(state.cookLogSourceKey(testsOnly, { is_draft: true }), 'test-1');
+  assert.equal(state.cookLogSourceKey({ draft: {}, versions: [], open_tests: [] }, { is_draft: true }), null);
 });
 
 test('failed saves survive navigation and a new page session, then retry clears recovery', async () => {

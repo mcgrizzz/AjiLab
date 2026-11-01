@@ -32,6 +32,17 @@
   white-space: nowrap;
 }
 
+/* The working copy's pending "Testing:" line, from "New test…". */
+.editor-testing {
+  font-size: 0.82rem;
+  color: var(--badge-beta-fg);
+  min-width: 0;
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .editor-toolbar-spacer { flex: 1; }
 
 .editor-toolbar-actions { display: flex; gap: 6px; flex-wrap: wrap; }

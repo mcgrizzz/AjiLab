@@ -8,11 +8,21 @@ Object.assign(RecipeView, {
 
   renderVersionsTab(body) {
     const variants = (this.recipe.branches || []).filter((branch) => branch.kind === 'variant');
+    const all = (this.recipe.versions || []).filter((entry) => !entry.is_draft);
+    const versions = all.filter((v) => v.kind === 'version');
+    const tests = all.filter((v) => v.kind === 'test')
+      .sort((a, b) => (b.open - a.open) || ((b.test_number || 0) - (a.test_number || 0)));
     body.innerHTML = `
       <div class="tab-content versions-tab">
         <div class="versions-section">
-          <div class="versions-section-title">Releases &amp; betas</div>
-          ${this.renderVersionsListHtml()}
+          <div class="versions-section-title">Versions</div>
+          ${versions.length ? `<div class="versions-list">${versions.map((v) => this.versionRowHtml(v)).join('')}</div>`
+            : `<p class="text-muted versions-empty">No version yet. Adopt a test, or release the working copy, to make v1.0.</p>`}
+        </div>
+        <div class="versions-section">
+          <div class="versions-section-title">Tests</div>
+          ${tests.length ? `<div class="versions-list">${tests.map((v) => this.versionRowHtml(v)).join('')}</div>`
+            : `<p class="text-muted versions-empty">No tests yet. Use “New test…” on the Overview to try a change.</p>`}
         </div>
         ${variants.length ? `
         <div class="versions-section">
@@ -29,7 +39,7 @@ Object.assign(RecipeView, {
           </div>
         </div>` : ''}
         <details class="versions-section versions-compare-section">
-          <summary>Compare versions</summary>
+          <summary>Compare</summary>
           <div class="versions-compare-body">${this.compareSectionHtml()}</div>
         </details>
       </div>`;
@@ -44,117 +54,89 @@ Object.assign(RecipeView, {
     }
   },
 
-  renderVersionsListHtml() {
-    const versions = (this.recipe.versions || []).filter((entry) => !entry.is_draft);
-    if (versions.length === 0) {
-      return `<div class="empty-state" style="padding:40px 0">
-        <p>No released versions yet. Open the Editor to start writing.</p>
-        <button class="btn mt12" onclick="RecipeView.setTab('editor')">Open Editor</button>
-      </div>`;
+  // A version: "v1.1 · current", date, "from Test 4", what changed.
+  // A test: "Test 4 · more water", "based on v1.0 · 2 cooks · adopted as v1.1".
+  versionRowHtml(v) {
+    const isTest = v.kind === 'test';
+    const facts = [fmtDate(v.created_at)];
+    if (isTest) {
+      if (v.base_version) facts.push(`based on ${v.base_version}`);
+      facts.push(v.cook_count ? `${v.cook_count} cook${v.cook_count === 1 ? '' : 's'}` : 'not cooked');
+    } else if (v.from_label) {
+      facts.push(`from ${v.from_label}`);
     }
-    return `<div id="versions-list">${versions.map((version) => `
-      <div class="version-item${this.focusedVersion === version.version_string ? ' version-item-focus' : ''}" data-version="${escHtml(version.version_string)}">
-        <div class="version-dot ${version.status}"></div>
+    const state = isTest
+      ? `<span class="badge ${v.open ? 'badge-beta' : 'badge-draft'}">${escHtml(testStateText(v))}</span>`
+      : (v.is_current ? '<span class="badge badge-released">current</span>' : '');
+    const note = isTest ? (v.last_outcome ? `Latest cook: ${v.last_outcome}` : '') : v.changelog;
+    const key = v.version_string;
+    return `
+      <div class="version-item${this.focusedVersion === key ? ' version-item-focus' : ''}" data-version="${escHtml(key)}">
+        <div class="version-dot ${isTest ? (v.open ? 'beta' : 'archived') : 'released'}"></div>
         <div style="flex:1">
-          <div class="version-label">${escHtml(version.version_string)}</div>
-          <div class="version-date">${fmtDate(version.created_at)} · <span class="badge badge-${version.status}">${version.status}</span></div>
-          ${version.changelog ? `<div class="version-changelog">${escHtml(version.changelog)}</div>` : ''}
+          <div class="version-label">${escHtml(entryTitle(v))} ${state}</div>
+          <div class="version-date">${escHtml(facts.join(' · '))}</div>
+          ${note ? `<div class="version-changelog">${escHtml(note)}</div>` : ''}
         </div>
         <div class="version-actions">
-          <button class="btn btn-sm" onclick="RecipeView.viewVersion('${escJs(version.version_string)}')">View</button>
-          <button class="btn btn-sm" onclick="RecipeView.startNextBetaFrom('${escJs(version.version_string)}')" title="Load ${escHtml(version.version_string)} into the draft to keep working on it">${this.draftAtRisk(version.cooklang_text) ? 'Replace draft…' : 'Start draft'}</button>
-          <button class="btn btn-sm version-more-btn" data-version="${escHtml(version.version_string)}" onclick="RecipeView.openVersionMoreMenu(event, this)" aria-label="More actions for ${escHtml(version.version_string)}" title="More actions">⋯</button>
+          <button class="btn btn-sm" onclick="RecipeView.viewVersion('${escJs(key)}')">View</button>
+          <button class="btn btn-sm version-more-btn" data-version="${escHtml(key)}" onclick="RecipeView.openVersionMoreMenu(event, this)" aria-label="More actions for ${escHtml(v.label)}" title="More actions">⋯</button>
         </div>
-      </div>`).join('')}</div>`;
+      </div>`;
   },
 
-  // Overflow menu per version row; keeps the destructive Delete away from
-  // everyday buttons.
+  // Overflow menu per row; keeps the destructive Delete away from everyday
+  // buttons.
   openVersionMoreMenu(event, btn) {
-    event.stopPropagation();
     const versionString = btn.dataset.version;
-    if (!versionString) return;
-    closeStepActionMenu();
-    const menu = document.createElement('div');
-    menu.className = 'step-action-menu';
-    menu.innerHTML = `<button class="step-action-item step-action-danger" data-act="delete">✕ Delete ${escHtml(versionString)}…</button>`;
-    document.body.appendChild(menu);
-    const r = btn.getBoundingClientRect();
-    menu.style.top = `${r.bottom + window.scrollY + 4}px`;
-    menu.style.left = `${Math.max(8, r.right + window.scrollX - menu.offsetWidth)}px`;
-    menu.addEventListener('click', (e) => {
-      const item = e.target.closest('.step-action-item');
-      if (!item) return;
-      closeStepActionMenu();
-      if (item.dataset.act === 'delete') this.openDeleteVersionModal(versionString);
-    });
-    setTimeout(() => document.addEventListener('click', closeStepActionMenu, { once: true }), 0);
+    const entry = entryByKey(this.recipe, versionString);
+    if (!entry) return;
+    const isTest = entry.kind === 'test';
+    openActionMenu(event, btn, [
+      { label: `New test from ${entry.label}…`, onClick: () => this.openNewTestModal(versionString) },
+      isTest
+        ? (entry.open
+          ? { label: 'Stop testing', onClick: () => this.setTestOpen(versionString, false) }
+          : ((entry.closed_as === 'stopped' || entry.closed_as === 'superseded') ? { label: 'Reopen', onClick: () => this.setTestOpen(versionString, true) } : null))
+        : { label: `Fix a typo in ${entry.label}…`, onClick: () => this.fixTypo(versionString) },
+      'sep',
+      { label: `Delete ${entry.label}…`, danger: true, onClick: () => this.openDeleteVersionModal(versionString) },
+    ]);
   },
 
   openDeleteVersionModal(versionString) {
+    const label = entryLabelFor(this.recipe, versionString);
     showModal(`
-      <div class="modal-title">Delete ${escHtml(versionString)}</div>
+      <div class="modal-title">Delete ${escHtml(label)}</div>
       <p class="text-muted" style="font-size:0.85rem">
-        This removes the stored snapshot for ${escHtml(versionString)}. Type the exact version string to enable deletion.
+        This removes ${escHtml(label)} for good. Cooks recorded from it keep their own copy of the sheet. Type <strong>${escHtml(label)}</strong> to enable deletion.
       </p>
       <div class="field-group mt12">
-        <label class="field-label">Confirm version string</label>
-        <input id="delete-version-confirm" class="field-input" placeholder="${escHtml(versionString)}" oninput="RecipeView.toggleDeleteVersionConfirm('${escJs(versionString)}')" />
+        <label class="field-label" for="delete-version-confirm">Confirm</label>
+        <input id="delete-version-confirm" class="field-input" placeholder="${escHtml(label)}" autocomplete="off" oninput="RecipeView.toggleDeleteVersionConfirm('${escJs(label)}')" />
       </div>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-        <button id="delete-version-btn" class="btn btn-danger-solid" onclick="RecipeView.confirmDeleteVersion('${escJs(versionString)}')" disabled>Delete version</button>
+        <button id="delete-version-btn" class="btn btn-danger-solid" onclick="RecipeView.confirmDeleteVersion('${escJs(versionString)}')" disabled>Delete ${escHtml(label)}</button>
       </div>`);
   },
 
-  toggleDeleteVersionConfirm(versionString) {
+  toggleDeleteVersionConfirm(label) {
     const input = document.getElementById('delete-version-confirm');
     const button = document.getElementById('delete-version-btn');
     if (!input || !button) return;
-    button.disabled = input.value !== versionString;
+    button.disabled = input.value.trim() !== label;
   },
 
   async confirmDeleteVersion(versionString) {
     const wasSelected = this.selectedVersionKey() === versionString;
+    const label = entryLabelFor(this.recipe, versionString);
     try {
       await API.delete(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(versionString)}`);
       closeModal();
-      const previousFallback = this.recipe.draft ? 'draft' : null;
       await this.refreshRecipe();
-      const fallback = wasSelected
-        ? (this.recipe.draft ? 'draft' : (this.recipe.latest_released || this.recipe.latest_beta || this.recipe.versions?.[0]?.version_string || null))
-        : this.selectedVersionKey();
-      await this.renderDetail(document.getElementById('view-container'), fallback || previousFallback, { syncUrl: true, replaceUrl: true });
-      showToast('Version deleted');
-    } catch (e) {
-      showToast('Error: ' + e.message);
-    }
-  },
-
-  async editVersion() {
-    const version = this.activeVersion;
-    if (!version || version.is_draft) return;
-    showModal(`
-      <div class="modal-title">Edit ${escHtml(version.version_string)}</div>
-      <p class="text-muted" style="font-size:0.85rem;margin-bottom:12px">
-        This will permanently modify the released version. This cannot be undone.
-      </p>
-      <textarea id="edit-ver-text" class="editor-textarea" style="min-height:200px">${escHtml(version.cooklang_text)}</textarea>
-      <div class="modal-actions">
-        <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-danger" onclick="RecipeView.saveVersion()">Save changes</button>
-      </div>`);
-  },
-
-  async saveVersion() {
-    const text = document.getElementById('edit-ver-text')?.value;
-    if (text === undefined) return;
-    try {
-      await API.put(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(this.activeVersion.version_string)}`, { cooklang_text: text });
-      closeModal();
-      await this.refreshRecipe();
-      await this.renderDetail(document.getElementById('view-container'), this.activeVersion.version_string, { syncUrl: true, replaceUrl: true });
-      showToast('Version updated');
+      await this.renderDetail(document.getElementById('view-container'), wasSelected ? null : this.selectedVersionKey(), { syncUrl: true, replaceUrl: true });
+      showToast(`${label} deleted`);
     } catch (e) {
       showToast('Error: ' + e.message);
     }
@@ -163,17 +145,17 @@ Object.assign(RecipeView, {
   // ── Compare ──────────────────────────────────────────────────────────────────
 
   compareSectionHtml() {
-    const versions = (this.recipe.versions || []).filter((entry) => !entry.is_draft);
-    const options = [
-      ...(this.recipe.draft ? [{ val: 'draft', label: 'Draft' }] : []),
-      ...versions.map((version) => ({ val: version.version_string, label: `${version.version_string} (${version.status})` })),
-    ];
-    if (options.length < 2) {
-      return `<div class="text-muted" style="padding:12px 0;font-size:0.88rem">Need at least 2 versions to compare.</div>`;
+    // Versions, tests, and the working copy (it can be compared, just not
+    // cooked or printed).
+    const groups = sheetOptionGroups(this.recipe);
+    if (this.recipe.draft?.cooklang_text?.trim()) {
+      groups.push({ label: 'Working copy', options: [{ val: 'draft', label: 'Working copy' }] });
     }
-    const opts = (selected) => options.map((option) => `
-      <option value="${escHtml(option.val)}" ${option.val === selected ? 'selected' : ''}>${escHtml(option.label)}</option>`).join('');
-    const keys = options.map((option) => option.val);
+    const keys = groups.flatMap((group) => group.options.map((option) => option.val));
+    if (keys.length < 2) {
+      return `<div class="text-muted" style="padding:12px 0;font-size:0.88rem">Need at least two versions or tests to compare.</div>`;
+    }
+    const opts = (selected) => sheetOptionsHtml(groups, selected);
     const pending = this.pendingCompare;
     const { from, to } = pending && keys.includes(pending.from) && keys.includes(pending.to)
       ? pending
@@ -187,13 +169,15 @@ Object.assign(RecipeView, {
       <div id="compare-result"></div>`;
   },
 
-  // Default: what you'd cook today (the current best release) → the version
-  // you're looking at. When those are the same, compare against the version
+  // Default: the current version → what you're looking at. A test compares
+  // with what it's based on. When those are the same, compare against the one
   // before it instead.
   defaultComparePair(keys) {
     const to = keys.includes(this.selectedVersionKey()) ? this.selectedVersionKey() : keys[0];
-    const best = this.recipe.current_best_release?.version_string || this.recipe.latest_released || null;
-    if (best && best !== to && keys.includes(best)) return { from: best, to };
+    const toEntry = entryByKey(this.recipe, to);
+    const base = toEntry?.kind === 'test' && toEntry.base_version ? toEntry.base_version : null;
+    const current = base || this.recipe.current_version?.version_string || null;
+    if (current && current !== to && keys.includes(current)) return { from: current, to };
     const idx = keys.indexOf(to);
     return { from: keys[idx + 1] || keys[idx - 1], to };
   },
@@ -224,7 +208,7 @@ Object.assign(RecipeView, {
     const result = document.getElementById('compare-result');
     if (!from || !to || !result) return;
     if (from === to) {
-      result.innerHTML = '<p class="text-muted compare-empty">Pick two different versions to compare.</p>';
+      result.innerHTML = '<p class="text-muted compare-empty">Pick two different ones to compare.</p>';
       return;
     }
     const requestId = (this.compareRequestId = (this.compareRequestId || 0) + 1);

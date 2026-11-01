@@ -11,11 +11,11 @@ Object.assign(RecipeView, {
     const servings = parsed?.metadata?.servings || parsed?.metadata?.Servings || parsed?.metadata?.yield || '';
     const notes = normalizeNotes(parsed?.metadata?.notes || parsed?.metadata?.Notes || version?.notes || '');
     const notesLabel = version?.is_draft
-      ? 'Draft notes'
-      : `Notes for ${version?.version_string} (${version?.status})`;
+      ? 'Working copy notes'
+      : `Notes for ${version?.label || version?.version_string}`;
     const photosLabel = version?.is_draft
-      ? 'Draft photos'
-      : `Photos for ${version?.version_string}`;
+      ? 'Working copy photos'
+      : `Photos for ${version?.label || version?.version_string}`;
     const ingredientToggle = renderIngredientSummaryToggle(parsed, this.ingredientSummaryMode);
     const sidebarHtml = hasSidebar ? `
       <div class="recipe-sidebar">
@@ -379,28 +379,26 @@ Object.assign(RecipeView, {
     this.setTab('overview');
   },
 
-  // ── Replacing the draft (fork a version / branch head / cook log) ──
-  // These actions overwrite the one draft. Work is at risk when the draft (or
-  // the editor's unsaved buffer) holds text that isn't saved in any version;
-  // then we ask first. Either way the old draft is kept for an Undo toast.
+  // ── Resetting the working copy (new test from a version / test / cook) ──
+  // These actions overwrite the one working copy (stored as the draft). Work
+  // is at risk when it (or the editor's unsaved buffer) holds text that isn't
+  // saved in any version or test; then we ask first. Either way the old one
+  // is kept for an Undo toast.
 
   versionText(versionString) {
     return (this.recipe?.versions || []).find((v) => !v.is_draft && v.version_string === versionString)?.cooklang_text ?? null;
   },
 
-  // Label for buttons that load a version into the draft.
-  draftFromVersionLabel(versionString) {
-    return this.draftAtRisk(this.versionText(versionString))
-      ? `Replace draft with ${versionString}…`
-      : `Start draft from ${versionString}`;
-  },
-
+  // Would resetting the working copy lose work? Yes when the editor holds
+  // unsaved text, or the server says the working copy has changes of its own
+  // (a stale one, older than what it's compared with, has none).
   draftAtRisk(targetText = null) {
     let storage = null;
     try { storage = window.localStorage; } catch {}
     const local = RecipeEditState.unsavedValue(RecipeEditState.draftKey(this.slug, this.branchSlug), storage);
     const text = local ? local.text : (this.recipe?.draft?.cooklang_text || '');
     if (!text.trim() || text === targetText) return false;
+    if (!local && !this.recipe?.has_unreleased_changes) return false;
     return !(this.recipe?.versions || []).some((v) => !v.is_draft && v.cooklang_text === text);
   },
 
@@ -417,7 +415,7 @@ Object.assign(RecipeView, {
     try {
       await request();
     } catch (e) {
-      showToast(`Couldn't replace the draft: ${e.message}. Nothing was changed.`);
+      showToast(`Couldn't reset the working copy: ${e.message}. Nothing was changed.`);
       return false;
     }
     RecipeEditState.discard(key, storage);
@@ -442,16 +440,19 @@ Object.assign(RecipeView, {
       tags: local ? local.tags : draft?.tags,
       parent_version: draft?.parent_version || null,
       current_beta_version: draft?.current_beta_version || null,
+      testing: draft?.testing || '',
+      from_entry_id: draft?.from_entry_id || null,
+      from_cook_log_id: draft?.from_cook_log_id || null,
     };
     if (this.draftAtRisk(targetText)) {
       const diff = targetText != null ? RecipeEditState.lineChangeSummary(text, targetText) : null;
-      const basedOn = draft?.parent_version ? ` (based on ${escHtml(draft.parent_version)})` : '';
+      const basedOn = draft?.base_version ? ` (based on ${escHtml(draft.base_version)})` : '';
       const ok = await confirmModal({
-        title: `Replace the draft with ${sourceLabel}?`,
-        bodyHtml: `<p>The current draft${basedOn} has edits that aren't saved in any version${local ? ', including changes the editor hasn\'t saved yet' : ''}.</p>
-          ${diff ? `<p class="text-muted">${diff.removed} line${diff.removed === 1 ? '' : 's'} of the draft would be replaced; ${escHtml(sourceLabel)} brings ${diff.added} line${diff.added === 1 ? '' : 's'} the draft doesn't have.</p>` : ''}
+        title: `Reset the working copy to ${sourceLabel}?`,
+        bodyHtml: `<p>The working copy${basedOn} has edits that aren't saved in any version or test${local ? ', including changes the editor hasn\'t saved yet' : ''}.</p>
+          ${diff ? `<p class="text-muted">${diff.removed} line${diff.removed === 1 ? '' : 's'} of the working copy would be replaced; ${escHtml(sourceLabel)} brings ${diff.added} line${diff.added === 1 ? '' : 's'} it doesn't have.</p>` : ''}
           <p class="text-muted">You can undo this from the notice that appears afterwards.</p>`,
-        confirmLabel: 'Replace draft',
+        confirmLabel: 'Reset working copy',
         danger: true,
       });
       if (!ok) return false;
@@ -482,7 +483,7 @@ Object.assign(RecipeView, {
       if (replacedText !== null && current !== replacedText) {
         const ok = await confirmModal({
           title: 'Undo and lose your newer edits?',
-          bodyHtml: '<p>You\'ve edited the draft since it was replaced. Undoing brings back the previous draft and discards those edits.</p>',
+          bodyHtml: '<p>You\'ve edited the working copy since it was reset. Undoing brings back the previous one and discards those edits.</p>',
           confirmLabel: 'Undo anyway',
           danger: true,
         });
@@ -496,7 +497,7 @@ Object.assign(RecipeView, {
       await this.refreshRecipe();
       this.activeTab = 'editor';
       await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
-      showToast('Previous draft restored');
+      showToast('Previous working copy restored');
     } catch (e) {
       showToast(`Couldn't undo: ${e.message}`);
       // The editor may have been torn down above; bring it back with whatever
@@ -510,12 +511,13 @@ Object.assign(RecipeView, {
   async forkVersionAndEdit(versionString) {
     try {
       const target = versionString || this.activeVersion?.version_string;
-      if (!target) { showToast('No version to fork'); return; }
+      if (!target) { showToast('Nothing to start from'); return; }
+      const label = entryLabelFor(this.recipe, target);
       await this.replaceDraft({
-        sourceLabel: target,
+        sourceLabel: label,
         targetText: this.versionText(target),
         request: () => API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(target)}/fork`, {}),
-        message: `Draft now starts from ${target}`,
+        message: `Working copy reset to ${label}`,
       });
     } catch (e) {
       showToast('Error: ' + e.message);
@@ -537,9 +539,9 @@ Object.assign(RecipeView, {
         return;
       }
       await this.replaceDraft({
-        sourceLabel: 'the current best',
+        sourceLabel: 'the current version',
         request: () => API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/draft/fork`, {}),
-        message: 'Draft now starts from the current best',
+        message: 'Working copy reset to the current version',
       });
     } catch (e) {
       showToast('Error: ' + e.message);
@@ -547,7 +549,7 @@ Object.assign(RecipeView, {
   },
 
   async startFreshDraft() {
-    if (this.recipe.current_best_release) { await this.forkCurrentBranchHead(); return; }
+    if (this.recipe.current_version) { await this.forkCurrentBranchHead(); return; }
     this.activeTab = 'editor';
     this.activeVersion = this.recipe.draft;
     await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
@@ -623,12 +625,11 @@ Object.assign(RecipeView, {
   deleteRecipe() {
     const title = this.recipe.title;
     const counts = this.recipe.counts || {};
-    const versionCount = (counts.releases_count || 0) + (counts.betas_count || 0);
     showModal(`
       <div class="modal-title">Delete “${escHtml(title)}”</div>
       <p class="text-muted" style="font-size:0.88rem">
-        This permanently removes the recipe with its draft, ${versionCount} version${versionCount === 1 ? '' : 's'},
-        ${counts.cook_logs_count || 0} cook log${counts.cook_logs_count === 1 ? '' : 's'} and all photos. It can't be undone.
+        This permanently removes the recipe with its working copy, ${counts.releases_count || 0} version${counts.releases_count === 1 ? '' : 's'},
+        ${counts.betas_count || 0} test${counts.betas_count === 1 ? '' : 's'}, ${counts.cook_logs_count || 0} cook${counts.cook_logs_count === 1 ? '' : 's'} and all photos. It can't be undone.
         Type the recipe name to confirm.
       </p>
       <div class="field-group mt12">

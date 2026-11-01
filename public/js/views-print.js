@@ -51,12 +51,7 @@ const PrintView = {
           version = await API.get(`/recipes/${slug}/branches/${encodeURIComponent(branch)}/versions/${opts.version}`);
         } catch {}
       }
-      if (!version) {
-        const fallback = recipe.latest_released || recipe.latest_beta;
-        version = fallback
-          ? await API.get(`/recipes/${slug}/branches/${encodeURIComponent(branch)}/versions/${fallback}`)
-          : (recipe.draft || recipe.source_version);
-      }
+      if (!version) version = recipe.current_version || recipe.open_tests?.[0] || recipe.draft || recipe.source_version;
       const parsed = version?.cooklang_text
         ? await API.post(`/recipes/${slug}/draft/parse`, { cooklang_text: version.cooklang_text })
         : { ingredients: [], ingredient_summary: emptyIngredientSummary(), steps: [], cookwares: [], metadata: {} };
@@ -65,15 +60,20 @@ const PrintView = {
       const images = await API.get(`/recipes/${slug}/branches/${encodeURIComponent(branch)}/images`);
       const notes = normalizeNotes(parsed?.metadata?.notes || parsed?.metadata?.Notes || version?.notes || '');
       const servings = parsed?.metadata?.servings || parsed?.metadata?.Servings || parsed?.metadata?.yield || '';
-      // "v1.1-beta.1 · beta · 2× · Oct 31, 2026": ties a printed sheet to
-      // the version (and cook log) it was cooked from.
+      // "Test 4 — more water · based on v1.0 · 2× · Oct 31, 2026": ties a
+      // printed sheet to the version or test it was cooked from.
+      const sheet = version?.is_draft
+        ? 'Working copy (not a saved test)'
+        : version?.kind === 'test'
+          ? `${version.label}${version.testing ? ` — ${version.testing}` : ''}`
+          : `${version?.label || version?.version_string}${version?.is_current || !recipe.current_version ? '' : ' (not current)'}`;
       const meta = [
-        version?.is_draft ? 'Draft' : version.version_string,
-        version?.is_draft ? null : version.status,
+        sheet,
+        version?.kind === 'test' && version.base_version ? `based on ${version.base_version}` : null,
         scale !== 1 ? `${roundScale(scale)}×` : null,
         branch !== 'main' ? `branch ${branch}` : null,
-        // A version's date is when it was made, as in the Versions list; a
-        // draft has no such date, so it shows its last edit.
+        // A version's date is when it was made, as in the Versions list; the
+        // working copy has no such date, so it shows its last edit.
         version?.is_draft ? `edited ${fmtDate(version.updated_at)}` : fmtDate(version?.created_at),
       ].filter(Boolean);
       const classes = ['print-view'];
