@@ -177,6 +177,7 @@ Object.assign(RecipeView, {
       <div class="overview-sidebar-card-title">Latest Cook Log</div>
       <div class="overview-cook-outcome">${escHtml(log.outcome || '(no outcome)')}</div>
       <div class="text-muted" style="font-size:0.82rem">${fmtDate(log.cooked_at)} · <span class="badge badge-released">${escHtml(log.version_string || 'draft')}</span>${cookLogScaleBadge(log)}</div>
+      ${(log.changes_to_try_next || '').trim() ? `<div class="overview-cook-next"><span class="overview-cook-next-label">Try next:</span> ${escHtml(log.changes_to_try_next.trim())}</div>` : ''}
       <div class="overview-sidebar-card-actions">
         <button class="btn btn-sm" onclick="RecipeView.setTab('cook-logs')">View all →</button>
       </div>

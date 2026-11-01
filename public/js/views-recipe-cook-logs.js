@@ -130,11 +130,16 @@ Object.assign(RecipeView, {
   },
 
   cookLogCardHtml(log) {
+    // "Changes to try next" is the input for the next cook, so it's shown on
+    // the card; the rest sits under Details.
     const fields = [
       { key: 'what_worked', label: 'What worked' },
       { key: 'problems_found', label: 'Problems found' },
-      { key: 'changes_to_try_next', label: 'Changes to try next' },
     ];
+    const nextChanges = (log.changes_to_try_next || '').trim();
+    const nextHtml = nextChanges
+      ? `<div class="cook-log-next"><div class="cook-log-next-label">Changes to try next</div><div class="cook-log-next-text">${formatMultilineText(nextChanges)}</div></div>`
+      : '';
     const filledFields = fields.filter((f) => (log[f.key] || '').trim());
     const detailHtml = filledFields.length || (log.freeform_notes || '').trim()
       ? `<details class="cook-log-details">
@@ -154,8 +159,10 @@ Object.assign(RecipeView, {
           <summary>Recipe as cooked</summary>
           <div class="cook-log-recipe-body">
             ${CL.renderMetrics(parsed.metrics)}
-            ${parsed.ingredients?.length ? `<div class="section-head">Ingredients</div>${CL.renderIngredientSummary(parsed.ingredient_summary, 1, { mode: this.ingredientSummaryMode, disableScale: true })}` : ''}
-            ${parsed.steps?.length ? `<div class="section-head mt12">Steps</div>${CL.renderSteps(parsed.steps, 1, parsed.metadata, true, { cookLogId: log.id })}` : ''}
+            <div class="cook-log-recipe-grid">
+              ${parsed.ingredients?.length ? `<div class="cook-log-recipe-ingredients"><div class="section-head">Ingredients</div>${CL.renderIngredientSummary(parsed.ingredient_summary, 1, { mode: this.ingredientSummaryMode, disableScale: true })}</div>` : ''}
+              ${parsed.steps?.length ? `<div class="cook-log-recipe-steps"><div class="section-head">Steps</div>${CL.renderSteps(parsed.steps, 1, parsed.metadata, true, { cookLogId: log.id })}</div>` : ''}
+            </div>
             <div class="cook-log-recipe-extras">
               <button class="btn btn-sm" onclick="RecipeView.addRecipeNoteToLog('${escJs(log.id)}')">＋ Add recipe note</button>
               <button class="btn btn-sm btn-ghost" onclick="RecipeView.editCookLogRecipe('${escJs(log.id)}')">Open full editor →</button>
@@ -168,6 +175,7 @@ Object.assign(RecipeView, {
         <div class="cook-log-outcome">${escHtml(log.outcome || '(no outcome)')}</div>
         <div class="cook-log-meta">${fmtDate(log.cooked_at)} · <span class="badge badge-released">${escHtml(this.cookLogSourceLabel(log))}</span>${cookLogScaleBadge(log)}</div>
       </div>
+      ${nextHtml}
       ${recipeHtml}
       ${detailHtml}
       <div class="cook-log-actions">
