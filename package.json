@@ -22,6 +22,7 @@
     "tsx": "4.22.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.14",
     "@types/diff": "7.0.2",
     "@types/node": "22.19.19",
     "esbuild": "0.28.0"

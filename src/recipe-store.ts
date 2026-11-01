@@ -314,32 +314,23 @@ async function releaseSource(
   }
   const previousComparable = latestComparableVersion(recipe.versions);
   const branchId = recipe.branch.id;
-  const newId = source.is_draft ? generateId() : source.id;
+  // Always a new row. Promoting a beta copies it: the beta keeps its id and
+  // version string, so its cook logs and printouts still match it.
+  const newId = generateId();
 
   await sql.begin(async (tx) => {
+    await tx`
+      INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, changelog, parent_version, tags)
+      VALUES (${newId}, ${branchId}, ${release.version_string}, ${release.status},
+              ${source.cooklang_text}, ${release.changelog || ""},
+              ${previousComparable?.version_string || source.parent_version || null},
+              ${JSON.parse(source.tags || "[]")})
+    `;
     if (source.is_draft) {
-      // Persist the released entry as a new row; reset the draft to empty so a
-      // fresh one is created on demand.
-      await tx`
-        INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, changelog, parent_version, tags)
-        VALUES (${newId}, ${branchId}, ${release.version_string}, ${release.status},
-                ${source.cooklang_text}, ${release.changelog || ""},
-                ${previousComparable?.version_string || source.parent_version || null},
-                ${JSON.parse(source.tags || "[]")})
-      `;
-      // Delete images on the draft (entry_id = draft.id) — they don't carry over
+      // The draft's images don't carry over; the draft itself is recreated
+      // lazily by ensureDraft.
       await tx`DELETE FROM images WHERE entry_id = ${source.id}`;
-      // Delete the draft entry; a new one is recreated lazily by ensureDraft.
       await tx`DELETE FROM entries WHERE id = ${source.id}`;
-    } else {
-      // Re-release an existing version: insert a new row at the new version_string.
-      await tx`
-        INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, changelog, parent_version, tags)
-        VALUES (${newId}, ${branchId}, ${release.version_string}, ${release.status},
-                ${source.cooklang_text}, ${release.changelog || ""},
-                ${previousComparable?.version_string || source.parent_version || null},
-                ${JSON.parse(source.tags || "[]")})
-      `;
     }
   });
 
