@@ -93,6 +93,7 @@ export type CookLogRow = {
   cooklang_text: string;
   source_cooklang_text: string;
   tags: string[];
+  scale: number | null;
   cooked_at: Date;
   outcome: string;
   what_worked: string;
@@ -114,6 +115,7 @@ export function cookLogRowToRecord(row: CookLogRow): CookLogRecord {
     cooklang_text: row.cooklang_text || "",
     source_cooklang_text: row.source_cooklang_text || "",
     tags: row.tags || [],
+    scale: Number(row.scale) > 0 ? Number(row.scale) : 1,
     cooked_at: row.cooked_at.toISOString(),
     outcome: row.outcome || "",
     what_worked: row.what_worked || "",

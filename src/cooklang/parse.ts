@@ -57,6 +57,8 @@ function toParsedIngredient(ingredient: any): ParsedIngredient {
     units: getQuantityUnit(ingredient.quantity) || "",
     range: extractRange(ingredient.quantity),
     note: ingredientNote(ingredient),
+    // Only present when set, so the summary shape doesn't change for the rest.
+    ...(ingredient.quantity?.scalable === false ? { fixed: true } : {}),
   };
 }
 
@@ -516,6 +518,7 @@ export function parseCooklang(text: string): ParsedRecipe {
                   name: ingredient_display_name(ing),
                   note: ingredientNote(ing),
                   optional: annotation?.optional || false,
+                  fixed: ing.quantity?.scalable === false,
                   intermediate: isIntermediate,
                   quantity: extractQty(ing.quantity),
                   units: getQuantityUnit(ing.quantity) || "",

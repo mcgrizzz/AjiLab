@@ -102,6 +102,11 @@ CREATE TABLE IF NOT EXISTS cook_logs (
   updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- A cook log's amounts are what was cooked: at 2× they're the source × 2.
+-- Set once at creation; logs from before this column read as 1×.
+ALTER TABLE cook_logs
+  ADD COLUMN IF NOT EXISTS scale DOUBLE PRECISION NOT NULL DEFAULT 1 CHECK (scale > 0);
+
 -- Cross-recipe references. Populated whenever an entry's cooklang_text is saved.
 CREATE TABLE IF NOT EXISTS recipe_references (
   from_entry_id UUID NOT NULL REFERENCES entries(id) ON DELETE CASCADE,

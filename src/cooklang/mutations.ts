@@ -88,7 +88,7 @@ const DEVIATION_MARKERS = {
   skipped: "!- ",
 } as const;
 
-interface AnnotationMatch {
+export interface AnnotationMatch {
   kind: "ingredient" | "timer" | "inlineQuantity";
   // Offsets relative to the slice we scanned (the step's joined line text).
   sigil_start: number;       // position of `@` / `~` / `%` / `^`
@@ -106,7 +106,7 @@ interface AnnotationMatch {
 // symbol is required, matching what the parser turns into editable tokens.
 const PROSE_TEMP_RE = /(\d+(?:\.\d+)?)(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*[°º]\s*[FCfc]\b/g;
 
-function scanAnnotations(text: string): AnnotationMatch[] {
+export function scanAnnotations(text: string): AnnotationMatch[] {
   const out: AnnotationMatch[] = [];
   let i = 0;
   while (i < text.length) {
@@ -242,7 +242,7 @@ export function updateStepQuantity(
 
 // Find the start of the ingredient's display name — i.e. the position after
 // `@`, any modifier chars (`?&+-@`), and any path prefix (`./` or `/`).
-function findIngredientNameStart(text: string, sigilStart: number): number {
+export function findIngredientNameStart(text: string, sigilStart: number): number {
   let j = sigilStart + 1;
   while (j < text.length && "?&+-@".includes(text[j])) j++;
   if (text[j] === "." && text[j + 1] === "/") j += 2;

@@ -206,6 +206,8 @@ body {
 .badge-draft     { background: var(--bg3); color: var(--ink3); }
 .badge-archived  { background: var(--bg3); color: var(--ink3); }
 .badge-in-progress { background: var(--bg3); color: var(--ink2); }
+/* A cook log made at another scale: its amounts are that many times the source. */
+.badge-scale { background: none; border: 1px solid var(--border2); color: var(--ink2); margin-left: 4px; font-variant-numeric: tabular-nums; }
 @media (prefers-color-scheme: dark) {
   .badge-released { background: #1a3d22; color: #7dd890; }
   .badge-beta     { background: #3d2e00; color: #e8b84e; }
@@ -1103,10 +1105,10 @@ button.ing-qty {
 /* Important but not the main action (Promote on Overview). */
 .btn-outline {
   background: none;
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border2));
-  color: color-mix(in srgb, var(--accent) 85%, var(--ink));
+  border-color: var(--border2);
+  color: var(--ink2);
 }
-.btn-outline:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--accent); }
+.btn-outline:hover { background: var(--bg3); color: var(--ink); }
 .btn-ghost {
   background: none;
   border-color: transparent;
@@ -2508,11 +2510,17 @@ body.print-route header {
 }
 .cook-log-modal-row {
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 0 12px;
 }
 .cook-log-modal-row > .field-group {
   min-width: 0;
 }
+.cook-log-modal-row > .field-group:not(.cl-scale-field) { min-width: 180px; }
+.cl-scale-field { flex: 0 0 120px; }
+.cl-scale-input { display: flex; align-items: center; gap: 6px; }
+.cl-scale-input .field-input { width: 80px; font-variant-numeric: tabular-nums; }
+.cl-scale-fixed { padding: 8px 0; font-weight: 600; color: var(--ink2); font-variant-numeric: tabular-nums; }
 .btn-link {
   background: transparent;
   border: 0;

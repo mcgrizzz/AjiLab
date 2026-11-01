@@ -25,6 +25,8 @@ export interface ParsedIngredient {
   range?: QuantityRange | null;
   note?: string | null;
   optional?: boolean;
+  // `{=…}`: a fixed amount that doesn't change when the recipe is scaled.
+  fixed?: boolean;
   recipe_reference?: boolean;
   intermediate?: boolean;
   reference_path?: string | null;
@@ -54,6 +56,7 @@ export interface ParsedStep {
   name?: string;
   note?: string | null;
   optional?: boolean;
+  fixed?: boolean;
   intermediate?: boolean;
   quantity?: string | number;
   units?: string;
@@ -165,3 +168,5 @@ export {
   splitTextIntoParsedSteps,
   scaleIngredient,
 } from "./cooklang/token-extract.ts";
+
+export { scaleCooklangText, unscaleCooklangText, normalizeScale } from "./cooklang/scale.ts";

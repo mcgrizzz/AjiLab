@@ -115,7 +115,7 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
       SELECT DISTINCT ON (cl.branch_id)
              cl.id, cl.branch_id, b.slug AS branch_slug, b.recipe_id,
              cl.source_entry_id, cl.source_kind, cl.source_version,
-             cl.cooklang_text, cl.source_cooklang_text, cl.tags,
+             cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
              cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
              cl.changes_to_try_next, cl.freeform_notes, cl.created_at, cl.updated_at
       FROM cook_logs cl

@@ -153,7 +153,7 @@ async function main() {
     ["id", "branch_id", "source_entry_id", "source_kind", "source_version",
      "cooklang_text", "source_cooklang_text", "tags", "cooked_at",
      "outcome", "what_worked", "problems_found", "changes_to_try_next",
-     "freeform_notes", "created_at", "updated_at"]);
+     "freeform_notes", "scale", "created_at", "updated_at"]);
 
   // 7. Recipe references (no id column — use composite PK)
   const refs = await src<{ from_entry_id: string; to_recipe_id: string; pinned_version: string | null }[]>`

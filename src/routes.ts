@@ -4,13 +4,15 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { Hono } from "hono";
-import { parseCooklang, annotateCookLogDiff, annotateIngredientSummaryDiff, applyStepDeviation, updateStepQuantity, insertNoteAfterStep, deleteStep as deleteCooklangStep, insertStepAfterStep, insertStepInSection, insertSectionNote, renameSection, insertRecipeNote, resolveDeviationMarkers } from "./cooklang.ts";
+import { parseCooklang, annotateCookLogDiff, annotateIngredientSummaryDiff, applyStepDeviation, updateStepQuantity, insertNoteAfterStep, deleteStep as deleteCooklangStep, insertStepAfterStep, insertStepInSection, insertSectionNote, renameSection, insertRecipeNote, resolveDeviationMarkers, scaleCooklangText, normalizeScale } from "./cooklang.ts";
 import { buildInlineDiffLines, diffStepBlocks, diffMetadata, diffMetrics, classifyCookLogVsSource, synthesizePromotedRecipe, diffIngredients } from "./compare.ts";
 import {
   applyBranchSync,
   attachRecipeImage,
   collectUnresolvedReferences,
   createCookLog,
+  cookLogSourceAtLogScale,
+  cookLogTextAtRecipeScale,
   createRecipe,
   createRecipeBranch,
   deleteCookLog,
@@ -71,12 +73,13 @@ async function resolveCompareOperand(recipe: any, branch: string, key: string): 
   if (key.startsWith("cooklog-source:")) {
     const log = await getCookLog(recipe.slug, key.slice("cooklog-source:".length), branch);
     if (!log) return null;
-    return { cooklang_text: log.source_cooklang_text || "", status: "cook-log-source" };
+    // At the log's scale, so a 2× cook compares against the source × 2.
+    return { cooklang_text: cookLogSourceAtLogScale(log), status: "cook-log-source", scale: log.scale };
   }
   if (key.startsWith("cooklog:")) {
     const log = await getCookLog(recipe.slug, key.slice("cooklog:".length), branch);
     if (!log) return null;
-    return { cooklang_text: log.cooklang_text || "", status: "cook-log" };
+    return { cooklang_text: log.cooklang_text || "", status: "cook-log", scale: log.scale };
   }
   if (key === "draft") return recipe.draft || null;
   return recipe.versions.find((version: any) => version.version_string === key) || null;
@@ -220,7 +223,8 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     // recipe text, walk paired steps and mutate per-token diff fields onto
     // `parsed.steps` so the renderer can show "was X" chips.
     if (typeof body.source_cooklang_text === "string" && body.source_cooklang_text) {
-      const sourceParsed = parseCooklang(body.source_cooklang_text);
+      // A log cooked at 2× is compared with the source × 2.
+      const sourceParsed = parseCooklang(scaleCooklangText(body.source_cooklang_text, normalizeScale(body.source_scale ?? 1)));
       annotateCookLogDiff(parsed.steps, sourceParsed.steps);
       annotateIngredientSummaryDiff(parsed.ingredient_summary, sourceParsed.ingredient_summary);
     }
@@ -394,6 +398,7 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
         freeform_notes: body.freeform_notes,
         cooklang_text: body.cooklang_text,
         tags: Array.isArray(body.tags) ? body.tags : undefined,
+        scale: body.scale,
       }, activeBranch(c)), 201);
     } catch (error: any) {
       return c.json({ error: error?.message || "cook log create failed" }, 400);
@@ -414,6 +419,7 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
         freeform_notes: body.freeform_notes,
         cooklang_text: body.cooklang_text,
         tags: Array.isArray(body.tags) ? body.tags : undefined,
+        scale: body.scale,
       }, activeBranch(c)), 201);
     } catch (error: any) {
       return c.json({ error: error?.message || "cook log create failed" }, 400);
@@ -592,7 +598,7 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     // produce different step numbering, so the change IDs the client checks would
     // not match the ones synthesis applies — and every selection would be dropped.
     const logParsed = parseCooklang(resolveDeviationMarkers(log.cooklang_text || ""));
-    const sourceParsed = parseCooklang(log.source_cooklang_text || "");
+    const sourceParsed = parseCooklang(cookLogSourceAtLogScale(log));
     return c.json(classifyCookLogVsSource(logParsed, sourceParsed));
   });
 
@@ -610,11 +616,13 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     if (!log.source_cooklang_text?.trim()) {
       return c.json({ error: "cook log has no source snapshot to cherry-pick from" }, 400);
     }
-    const synthesized = synthesizePromotedRecipe(
-      log.source_cooklang_text,
+    // Pick changes at the log's scale (as classify showed them), then bring
+    // the result back to the recipe's 1×.
+    const synthesized = cookLogTextAtRecipeScale(log, synthesizePromotedRecipe(
+      cookLogSourceAtLogScale(log),
       log.cooklang_text || "",
       new Set<string>(selectionsArr),
-    );
+    ));
     try {
       return c.json(await promoteCookLogWithText(recipe.slug, c.req.param("id"), synthesized, {
         version_string: versionString, status, changelog: body?.changelog || "",

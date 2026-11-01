@@ -7,7 +7,10 @@ const CL = {
     if (!ingredients || ingredients.length === 0) {
       return '<p class="text-muted">No ingredients listed.</p>';
     }
+    const recipeScale = scale;
     const items = ingredients.map(ing => {
+      // `{=…}` amounts are fixed: they read the same at any scale.
+      const scale = ing.fixed ? 1 : recipeScale;
       const rawQty = ing.quantity !== '' && ing.quantity !== null && ing.quantity !== undefined;
       const isFrac = rawQty && /[\/⅛¼⅓⅜½⅝⅔¾⅞]/.test(String(ing.quantity));
       const qty = rawQty ? scaleQty(ing.quantity, scale, isFrac) : '';
@@ -129,7 +132,7 @@ const CL = {
             const hasQty = token.quantity !== '' && token.quantity != null;
             const editAttrs = hasQty ? cookLogEditAttrs('ingredient', ingEditIdx, token.units) : '';
             if (hasQty) ingEditIdx++;
-            const amtHtml = ingredientAmountHtml(token, scale, showAmounts, editAttrs, options.units);
+            const amtHtml = ingredientAmountHtml(token, token.fixed ? 1 : scale, showAmounts, editAttrs, options.units);
             const noteHtml = token.note ? ` <span class="s-component-note">(${escHtml(token.note)})</span>` : '';
             const optHtml = token.optional ? ' <span class="s-component-optional">(optional)</span>' : '';
             if (token.recipe_reference) {

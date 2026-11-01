@@ -43,7 +43,7 @@ The draft is the mutable working copy on a branch. Exactly one per branch, enfor
 | `PUT` | `…/draft/notes` | Update notes in the cooklang frontmatter |
 | `POST` | `…/draft/fork` | Replace draft contents with the branch head (latest released/beta) |
 | `POST` | `…/draft/restore` | Undo a draft replacement. Body: `{ cooklang_text, tags?, parent_version?, current_beta_version? }` (lineage kept only if the version exists) |
-| `POST` | `…/draft/parse` | Parse cooklang text → structured JSON. Stateless. Body: `{ cooklang_text }` |
+| `POST` | `…/draft/parse` | Parse cooklang text → structured JSON. Stateless. Body: `{ cooklang_text }`. Optional `source_cooklang_text` (+ `source_scale`) annotates "was X" diffs against that source, scaled first |
 
 `advance_beta: true` on a draft save also creates (or updates) an auto-numbered beta snapshot version (`v1.1-beta.1`, `v1.1-beta.2`, …) so you have a stable anchor to share or compare against.
 
@@ -108,8 +108,10 @@ A cook log records one cooking session. It captures both the recipe text as it w
 | `GET` | `…/versions/:v/cook-logs` | Cook logs filtered to a specific version |
 | `PUT` | `…/cook-logs/:id` | Update fields |
 | `DELETE` | `…/cook-logs/:id` | Delete |
-| `POST` | `…/cook-logs/:id/fork-to-draft` | Copy this log's cooklang into the draft |
-| `POST` | `…/cook-logs/:id/promote` | Promote directly to a released version. Body: `{ version_string, status?, changelog? }` |
+| `POST` | `…/cook-logs/:id/fork-to-draft` | Copy this log's cooklang into the draft (at 1×) |
+| `POST` | `…/cook-logs/:id/promote` | Promote directly to a released version (at 1×). Body: `{ version_string, status?, changelog? }` |
+| `GET` | `…/cook-logs/:id/classify` | Log vs source (at the log's scale), classified per change |
+| `POST` | `…/cook-logs/:id/promote-cherry-pick` | Promote the source plus selected changes (at 1×). Body: `{ version_string, status?, changelog?, selections: [change ids] }` |
 
 ### POST body
 
@@ -125,11 +127,16 @@ A cook log records one cooking session. It captures both the recipe text as it w
   "changes_to_try_next": "...",
   "freeform_notes": "...",
   "cooklang_text": "(optional override of the snapshot from `source`)",
-  "tags": ["weeknight", "kids-approved"]
+  "tags": ["weeknight", "kids-approved"],
+  "scale": 2
 }
 ```
 
 `outcome` is required. `cooked_at` defaults to now.
+
+**Scale.** `scale` (default 1, max 100) is the scale the cook was made at. The log's `cooklang_text` starts as the source × scale, so it records what was actually in the bowl. Only ingredient amounts scale; fixed amounts (`{=…}`), timers, temperatures and inline `%{…}` amounts stay as written. The scale is set at creation and `PUT` ignores it; to change it, delete the log and create it again. Logs from before this field read as 1×.
+
+Everything that compares a log with its source (`classify`, the `cooklog-source:` compare operand, `draft/parse` with `source_scale`) uses the source × scale, so an unchanged 2× cook shows no differences. Fork-to-draft and both promotes divide by the scale first: an amount still equal to the scaled source comes back exactly as the source wrote it, and a changed one is rounded to the source's precision for that ingredient (366.67 g → 367 g when the source wrote 375 g).
 
 ---
 

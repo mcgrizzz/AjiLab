@@ -65,6 +65,9 @@ export interface CookLogRecord {
   cooklang_text: string;
   source_cooklang_text: string;
   tags: string[];
+  // Amounts in cooklang_text are at this scale of source_cooklang_text (2 =
+  // cooked at 2×). Fixed at creation.
+  scale: number;
   cooked_at: string;
   outcome: string;
   what_worked: string;

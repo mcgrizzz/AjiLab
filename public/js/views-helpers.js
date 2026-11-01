@@ -86,6 +86,13 @@ function formatEditableQuantity(value) {
   return rounded.toFixed(2).replace(/\.?0+$/, '');
 }
 
+// "2×" badge for a cook log made at another scale; '' at 1×.
+function cookLogScaleBadge(log) {
+  const scale = Number(log?.scale) || 1;
+  if (scale === 1) return '';
+  return ` <span class="badge badge-scale" title="Cooked at ${formatEditableQuantity(scale)}× — amounts are as cooked">${formatEditableQuantity(scale)}×</span>`;
+}
+
 function makeDraftTokenResolver(tokens) {
   const ordered = [...tokens];
   let index = 0;

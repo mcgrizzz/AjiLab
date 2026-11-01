@@ -70,12 +70,15 @@ Object.assign(RecipeView, {
       const cached = this.cookLogParsed[log.id];
       // Cache key includes source text so a source change invalidates the diff.
       const sourceText = log.source_cooklang_text || '';
+      // Scale is fixed per log, so the text pair is a complete cache key.
       if (cached && cached.text === log.cooklang_text && cached.sourceText === sourceText) return;
       if (!log.cooklang_text) { this.cookLogParsed[log.id] = { text: '', sourceText, parsed: null }; return; }
       try {
         const parsed = await API.post(`/recipes/${this.slug}/draft/parse`, {
           cooklang_text: log.cooklang_text,
           source_cooklang_text: sourceText,
+          // A 2× log is compared with the source × 2.
+          source_scale: Number(log.scale) || 1,
         });
         this.cookLogParsed[log.id] = { text: log.cooklang_text, sourceText, parsed };
       } catch {
@@ -163,12 +166,12 @@ Object.assign(RecipeView, {
     return `<div class="cook-log-card" data-id="${escHtml(log.id)}">
       <div class="cook-log-head">
         <div class="cook-log-outcome">${escHtml(log.outcome || '(no outcome)')}</div>
-        <div class="cook-log-meta">${fmtDate(log.cooked_at)} · <span class="badge badge-released">${escHtml(this.cookLogSourceLabel(log))}</span></div>
+        <div class="cook-log-meta">${fmtDate(log.cooked_at)} · <span class="badge badge-released">${escHtml(this.cookLogSourceLabel(log))}</span>${cookLogScaleBadge(log)}</div>
       </div>
       ${recipeHtml}
       ${detailHtml}
       <div class="cook-log-actions">
-        <button class="btn btn-sm btn-primary" onclick="RecipeView.markDifferences('${escJs(log.id)}')">Mark differences</button>
+        <button class="btn btn-sm" onclick="RecipeView.markDifferences('${escJs(log.id)}')">Mark differences</button>
         <button class="btn btn-sm" onclick="RecipeView.openPromoteLogModal('${escJs(log.id)}')">Promote to release</button>
         <button class="btn btn-sm cook-log-more-btn" data-log-id="${escJs(log.id)}" onclick="RecipeView.openCookLogMoreMenu(event, this)" aria-label="More actions" title="More actions">⋯</button>
       </div>
@@ -187,7 +190,9 @@ Object.assign(RecipeView, {
     try {
       await this.replaceDraft({
         sourceLabel: `the ${fmtDate(log.cooked_at)} cook log`,
-        targetText: log.cooklang_text || null,
+        // At another scale the draft gets the log brought back to 1×, which
+        // only the server computes; skip the "already matches" shortcut.
+        targetText: (Number(log.scale) || 1) === 1 ? (log.cooklang_text || null) : null,
         request: async () => {
           await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/fork-to-draft`, {});
           this.cookLogEditingId = null;
@@ -202,9 +207,11 @@ Object.assign(RecipeView, {
   async compareCookLogToSource(logId) {
     const log = (this.cookLogs || []).find((entry) => entry.id === logId);
     if (!log) return;
+    const scale = Number(log.scale) || 1;
+    const atScale = scale === 1 ? '' : ` at ${formatEditableQuantity(scale)}×`;
     const fromLabel = log.source_kind === 'draft'
-      ? 'Source snapshot (draft at log creation)'
-      : `Source snapshot (${log.source_version_string})`;
+      ? `Source snapshot (draft at log creation)${atScale}`
+      : `Source snapshot (${log.source_version_string})${atScale}`;
     showModal(`
       <div class="modal-title">Compare cook log to source</div>
       <div class="text-muted" style="font-size:0.85rem;margin-bottom:10px">
@@ -227,6 +234,8 @@ Object.assign(RecipeView, {
   },
 
   // options.scale: the scale the cook used (from Overview's "Log this cook").
+  // A new log's amounts start at the source × scale; the scale can't change
+  // afterwards, since that would silently reinterpret every amount.
   openCookLogModal(existingId, options = {}) {
     const existing = existingId ? (this.cookLogs || []).find((log) => log.id === existingId) : null;
     const versions = (this.recipe.versions || []).filter((v) => !v.is_draft && v.version_string);
@@ -237,6 +246,19 @@ Object.assign(RecipeView, {
       .concat(versions.map((v) => `<option value="${escHtml(v.version_string)}" ${v.version_string === defaultSourceKey ? 'selected' : ''}>${escHtml(v.version_string)} (${escHtml(v.status)})</option>`))
       .join('');
     const cookedAtDefault = RecipeEditState.localDateTimeInput(existing?.cooked_at || new Date());
+    const startScale = Number(options.scale) > 0 ? Number(options.scale) : 1;
+    const existingScale = Number(existing?.scale) || 1;
+    const scaleField = existing
+      ? `<div class="field-group mt8 cl-scale-field">
+          <span class="field-label">Scale</span>
+          <div class="cl-scale-fixed">${formatEditableQuantity(existingScale)}×</div>
+          <small style="color:var(--ink2);font-size:0.78rem">Fixed. To change it, delete this log and log the cook again.</small>
+        </div>`
+      : `<div class="field-group mt8 cl-scale-field">
+          <label class="field-label" for="cl-scale">Scale</label>
+          <div class="cl-scale-input"><input id="cl-scale" class="field-input" type="number" min="0.05" max="100" step="any" inputmode="decimal" value="${escHtml(formatEditableQuantity(startScale))}" /><span aria-hidden="true">×</span></div>
+          <small style="color:var(--ink2);font-size:0.78rem">Log amounts as cooked. Can't be changed later.</small>
+        </div>`;
     showModal(`
       <div class="modal-title">${existing ? 'Edit cook log notes' : 'New cook log'}</div>
       <div class="cook-log-modal-row">
@@ -250,6 +272,7 @@ Object.assign(RecipeView, {
           <input id="cl-cooked-at" class="field-input" type="datetime-local" value="${escHtml(cookedAtDefault)}" />
           <small style="color:var(--ink2);font-size:0.78rem">Local time (${escHtml(Intl.DateTimeFormat().resolvedOptions().timeZone)})</small>
         </div>
+        ${scaleField}
       </div>
       <div class="field-group mt12">
         <label class="field-label" for="cl-outcome">Outcome (one line)</label>
@@ -279,12 +302,7 @@ Object.assign(RecipeView, {
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
         <button class="btn btn-primary" onclick="RecipeView.saveCookLog('${escJs(existingId || '')}')">${existing ? 'Save notes' : 'Create cook log'}</button>
       </div>`);
-    if (!existing) this.trackUnsentCookLog();
-    // Cook logs record amounts at 1×; note a different scale so it isn't lost.
-    const notes = document.getElementById('cl-notes');
-    if (!existing && notes && !notes.value && options.scale && options.scale !== 1) {
-      notes.value = `Cooked at ${formatEditableQuantity(options.scale)}× scale.`;
-    }
+    if (!existing) this.trackUnsentCookLog({ keepScale: options.scale != null });
     setTimeout(() => document.getElementById('cl-outcome')?.focus(), 80);
   },
 
@@ -294,13 +312,15 @@ Object.assign(RecipeView, {
     try { return window.sessionStorage; } catch { return null; }
   },
 
-  trackUnsentCookLog() {
+  // keepScale: the scale came from the Overview; a restored draft keeps it.
+  trackUnsentCookLog({ keepScale = false } = {}) {
     const storage = this.unsentCookLogStorage();
-    const fields = { source: 'cl-source', cooked_at: 'cl-cooked-at', outcome: 'cl-outcome', what_worked: 'cl-worked',
+    const fields = { source: 'cl-source', cooked_at: 'cl-cooked-at', scale: 'cl-scale', outcome: 'cl-outcome', what_worked: 'cl-worked',
       problems_found: 'cl-problems', changes_to_try_next: 'cl-changes', freeform_notes: 'cl-notes' };
     const saved = RecipeEditState.loadUnsentCookLog(storage, this.slug, this.branchSlug);
     if (saved) {
       for (const [name, id] of Object.entries(fields)) {
+        if (name === 'scale' && keepScale) continue;
         const el = document.getElementById(id);
         if (el && typeof saved[name] === 'string' && saved[name] !== '') el.value = saved[name];
       }
@@ -334,6 +354,9 @@ Object.assign(RecipeView, {
     const cookedAt = RecipeEditState.cookLogTimestamp(cookedAtLocal, existing?.cooked_at);
     const outcome = (document.getElementById('cl-outcome')?.value || '').trim();
     if (!outcome) { showToast('Outcome is required'); return; }
+    const scaleInput = document.getElementById('cl-scale');
+    const scale = scaleInput ? Number(scaleInput.value) : 1;
+    if (!existingId && !(scale > 0 && scale <= 100)) { showToast('Scale must be between 0 and 100'); return; }
     const body = {
       cooked_at: cookedAt,
       outcome,
@@ -348,7 +371,7 @@ Object.assign(RecipeView, {
         await API.put(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(existingId)}`, body);
       } else {
         const source = sourceKey === '__draft__' ? { kind: 'draft' } : { kind: 'version', version_string: sourceKey };
-        created = await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs`, { ...body, source });
+        created = await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs`, { ...body, source, scale });
         RecipeEditState.clearUnsentCookLog(this.unsentCookLogStorage(), this.slug, this.branchSlug);
       }
       closeModal();
@@ -401,7 +424,7 @@ Object.assign(RecipeView, {
         <textarea id="rel-changelog" class="field-input" placeholder="What changed in this version?">${escHtml((log.outcome || ''))}</textarea>
       </div>
       <div id="cherry-pick-panel" class="mt12"><div class="loading"><div class="spinner"></div></div></div>
-      <div class="text-muted" style="font-size:0.82rem;margin-top:10px">Source: cook log "${escHtml(log.outcome || log.id)}" (${escHtml(this.cookLogSourceLabel(log))})</div>
+      <div class="text-muted" style="font-size:0.82rem;margin-top:10px">Source: cook log "${escHtml(log.outcome || log.id)}" (${escHtml(this.cookLogSourceLabel(log))}${(Number(log.scale) || 1) !== 1 ? `, cooked at ${formatEditableQuantity(Number(log.scale))}×` : ''})${(Number(log.scale) || 1) !== 1 ? `<br>Changes are shown as cooked; the new version is saved at 1×, with amounts divided by ${formatEditableQuantity(Number(log.scale))}.` : ''}</div>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
         <button class="btn btn-primary" onclick="RecipeView.promoteLog('${escJs(logId)}')">Promote</button>

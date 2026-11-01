@@ -1,5 +1,5 @@
 import { sql, generateId, slugify } from "./db.ts";
-import { parseCooklang, parseReferencePath, resolveDeviationMarkers } from "./cooklang.ts";
+import { parseCooklang, parseReferencePath, resolveDeviationMarkers, scaleCooklangText, unscaleCooklangText, normalizeScale } from "./cooklang.ts";
 import type { ParsedRecipe, RecipeReferenceResolution } from "./cooklang.ts";
 import { parseVersionMetadata, upsertNotesInCooklang } from "./store/frontmatter.ts";
 import {
@@ -542,6 +542,20 @@ interface CookLogInput {
   freeform_notes?: string;
   cooklang_text?: string;
   tags?: string[];
+  // Only read on create: the log's amounts are at this scale of the source.
+  scale?: number;
+}
+
+// The source as it read at the log's scale — what a log is compared with, so
+// an unchanged 2× cook shows no differences.
+export function cookLogSourceAtLogScale(log: Pick<CookLogRecord, "source_cooklang_text" | "scale">): string {
+  return scaleCooklangText(log.source_cooklang_text || "", log.scale || 1);
+}
+
+// The log's recipe back at the recipe's own scale, deviation markers
+// resolved — what goes into a draft or a promoted version.
+export function cookLogTextAtRecipeScale(log: Pick<CookLogRecord, "cooklang_text" | "source_cooklang_text" | "scale">, text = log.cooklang_text): string {
+  return unscaleCooklangText(resolveDeviationMarkers(text || ""), log.scale || 1, log.source_cooklang_text || "");
 }
 
 export type CookLogSourceSpec =
@@ -553,7 +567,7 @@ async function loadCookLogsForBranch(branchId: string, filter?: { version: strin
     return sql<CookLogRow[]>`
       SELECT cl.id, cl.branch_id, b.slug AS branch_slug, b.recipe_id,
              cl.source_entry_id, cl.source_kind, cl.source_version,
-             cl.cooklang_text, cl.source_cooklang_text, cl.tags,
+             cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
              cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
              cl.changes_to_try_next, cl.freeform_notes, cl.created_at, cl.updated_at
       FROM cook_logs cl
@@ -565,7 +579,7 @@ async function loadCookLogsForBranch(branchId: string, filter?: { version: strin
   return sql<CookLogRow[]>`
     SELECT cl.id, cl.branch_id, b.slug AS branch_slug, b.recipe_id,
            cl.source_entry_id, cl.source_kind, cl.source_version,
-           cl.cooklang_text, cl.source_cooklang_text, cl.tags,
+           cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
            cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
            cl.changes_to_try_next, cl.freeform_notes, cl.created_at, cl.updated_at
     FROM cook_logs cl
@@ -595,7 +609,7 @@ export async function getCookLog(slug: string, id: string, branchSlug = MAIN_BRA
   const rows = await sql<CookLogRow[]>`
     SELECT cl.id, cl.branch_id, b.slug AS branch_slug, b.recipe_id,
            cl.source_entry_id, cl.source_kind, cl.source_version,
-           cl.cooklang_text, cl.source_cooklang_text, cl.tags,
+           cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
            cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
            cl.changes_to_try_next, cl.freeform_notes, cl.created_at, cl.updated_at
     FROM cook_logs cl
@@ -628,19 +642,20 @@ export async function createCookLog(
 
   const cookedAt = validateCookedAt(input.cooked_at);
   const sourceText = sourceEntry.cooklang_text || "";
-  const cooklangText = typeof input.cooklang_text === "string" ? input.cooklang_text : sourceText;
+  const scale = normalizeScale(input.scale ?? 1);
+  const cooklangText = typeof input.cooklang_text === "string" ? input.cooklang_text : scaleCooklangText(sourceText, scale);
   const tags = Array.isArray(input.tags) ? input.tags.map(String) : JSON.parse(sourceEntry.tags || "[]");
   const id = generateId();
 
   await sql`
     INSERT INTO cook_logs (
       id, branch_id, source_entry_id, source_kind, source_version,
-      cooklang_text, source_cooklang_text, tags, cooked_at,
+      cooklang_text, source_cooklang_text, tags, scale, cooked_at,
       outcome, what_worked, problems_found, changes_to_try_next, freeform_notes
     ) VALUES (
       ${id}, ${branchId}, ${sourceEntry.id}, ${source.kind},
       ${source.kind === "version" ? sourceEntry.version_string : null},
-      ${cooklangText}, ${sourceText}, ${tags}, ${cookedAt},
+      ${cooklangText}, ${sourceText}, ${tags}, ${scale}, ${cookedAt},
       ${outcome}, ${String(input.what_worked || "")},
       ${String(input.problems_found || "")},
       ${String(input.changes_to_try_next || "")},
@@ -694,7 +709,7 @@ export async function forkCookLogToDraft(slug: string, logId: string, branchSlug
   const log = await getCookLog(slug, logId, branchSlug);
   if (!log) throw new Error("cook log not found");
   if (!log.cooklang_text.trim()) throw new Error("cook log has no recipe text to fork");
-  const resolvedText = resolveDeviationMarkers(log.cooklang_text);
+  const resolvedText = cookLogTextAtRecipeScale(log);
   const branchId = recipe.branch.id;
   let draftId: string;
   if (recipe.draft) {
@@ -729,7 +744,7 @@ export async function promoteCookLog(
   if (recipe.versions.some((v) => v.version_string === release.version_string)) {
     throw new Error("version already exists");
   }
-  const resolvedText = resolveDeviationMarkers(log.cooklang_text);
+  const resolvedText = cookLogTextAtRecipeScale(log);
   const previous = latestComparableVersion(recipe.versions);
   const branchId = recipe.branch.id;
   const id = generateId();

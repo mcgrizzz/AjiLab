@@ -199,7 +199,7 @@ const RecipeEditState = (() => {
   function saveUnsentCookLog(storage, slug, branch, fields) {
     try {
       const key = UNSENT_LOG_PREFIX + JSON.stringify([slug, branch]);
-      const hasText = Object.entries(fields).some(([name, value]) => name !== 'source' && name !== 'cooked_at' && String(value || '').trim());
+      const hasText = Object.entries(fields).some(([name, value]) => name !== 'source' && name !== 'cooked_at' && name !== 'scale' && String(value || '').trim());
       if (hasText) storage?.setItem(key, JSON.stringify(fields));
       else storage?.removeItem(key);
     } catch {}

@@ -78,10 +78,11 @@ Object.assign(RecipeView, {
       `<button class="btn btn-sm" onclick="RecipeView.openPrintView()" title="Print ${escHtml(versionName)}${escHtml(scaleNote)} (Ctrl+P)">Print</button>`,
     ];
     if (isExperimentPrimary) {
-      const releaseLabel = primary.is_draft
-        ? 'Release version…'
-        : `Promote ${escHtml(primary.version_string || 'beta')}…`;
-      actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openReleaseModal()">${releaseLabel}</button>`);
+      const releaseLabel = primary.is_draft ? 'Release…' : 'Promote…';
+      const releaseTitle = primary.is_draft
+        ? 'Release the draft as a new version'
+        : `Promote ${primary.version_string || 'this beta'} to a release`;
+      actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openReleaseModal()" title="${escHtml(releaseTitle)}">${releaseLabel}</button>`);
       if (best) {
         actions.push(`<button class="btn btn-sm btn-ghost" onclick="RecipeView.setTab('editor')">Open Editor</button>`);
       }
@@ -94,7 +95,7 @@ Object.assign(RecipeView, {
     </div>`;
   },
 
-  // New cook log for the version on screen, noting the scale if not 1×.
+  // New cook log for the version on screen, at the scale on screen.
   logThisCook() {
     this.openCookLogModal(undefined, { scale: this.scale });
   },
@@ -174,7 +175,7 @@ Object.assign(RecipeView, {
     return `<div class="overview-sidebar-card">
       <div class="overview-sidebar-card-title">Latest Cook Log</div>
       <div class="overview-cook-outcome">${escHtml(log.outcome || '(no outcome)')}</div>
-      <div class="text-muted" style="font-size:0.82rem">${fmtDate(log.cooked_at)} · <span class="badge badge-released">${escHtml(log.version_string)}</span></div>
+      <div class="text-muted" style="font-size:0.82rem">${fmtDate(log.cooked_at)} · <span class="badge badge-released">${escHtml(log.version_string || 'draft')}</span>${cookLogScaleBadge(log)}</div>
       <div class="overview-sidebar-card-actions">
         <button class="btn btn-sm" onclick="RecipeView.setTab('cook-logs')">View all →</button>
       </div>
@@ -242,8 +243,15 @@ Object.assign(RecipeView, {
       return;
     }
     const latest = list.reduce((a, b) => (new Date(a.cooked_at) > new Date(b.cooked_at) ? a : b));
+    // "1 cooked at 2×": cooks at another scale back the version too, but say so.
+    const byScale = new Map();
+    for (const log of list) {
+      const scale = Number(log.scale) || 1;
+      if (scale !== 1) byScale.set(scale, (byScale.get(scale) || 0) + 1);
+    }
+    const scaleNote = Array.from(byScale, ([scale, n]) => `${n} cooked at ${formatEditableQuantity(scale)}×`).join(', ');
     el.className = 'release-evidence';
-    el.innerHTML = `${list.length} cook${list.length === 1 ? '' : 's'} logged on ${escHtml(versionString)} · latest ${escHtml(fmtDate(latest.cooked_at))}${latest.outcome ? `: “${escHtml(latest.outcome)}”` : ''}.${compareLink}`;
+    el.innerHTML = `${list.length} cook${list.length === 1 ? '' : 's'} logged on ${escHtml(versionString)}${scaleNote ? ` (${escHtml(scaleNote)})` : ''} · latest ${escHtml(fmtDate(latest.cooked_at))}${latest.outcome ? `: “${escHtml(latest.outcome)}”` : ''}.${compareLink}`;
   },
 
   // Open the Versions tab's compare on a given pair.
