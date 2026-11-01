@@ -30,7 +30,8 @@
 > | U11 Cook-log feed | **Fixed.** "Changes to try next" shows on each card (and as "Try next:" on Overview's Latest Cook Log); What worked / Problems stay under Details. The expanded recipe uses the full card: ingredients beside steps on wide screens, steps capped at a readable 720px. Step rows highlight on hover/focus and their ⋮ gets an outline (always outlined on touch screens). |
 > | U12 Home page | **Fixed.** Sorted by most recent activity: the latest of last cooked, last version taken and last draft edit, across branches, so a recipe you're iterating on rises before you cook it. Each row says what happened ("Last cooked May 24 · 4 logs", "Edited today · not cooked yet", "v1.1-beta.2 saved Oct 30 · last cooked May 24"). One readable 880px column on wide screens. A search with no results offers "Create 'zzqx'" with the name filled in. The draft badge was already neutral and the button already labelled; never-released recipes now show one draft badge, not two. |
 > | U11 follow-up | "Changes to try next" moved up to right after Outcome in the cook-log form. |
-> | U10, U13, A2 | Open. |
+> | U13 Print | **Fixed.** Ctrl+P (and Print) open the print view without calling the browser's print dialog; only its Print button does. The view has screen-only options (scale ½–3×, °F/°C, photo, notes) and the sheet's meta line names what it is ("v1.1-beta.1 · beta · 2× · Oct 31, 2026"). The preview is a white sheet in light colours whatever the theme (it was dark text on the dark background in dark mode), so it matches paper. Ctrl+P on the print view itself is left to the browser. Print stays in the Overview's action row rather than beside the title. |
+> | U10, A2 | Open. |
 
 **Audited:** October 31, 2026, on the live deployment (`aji.bridgewater.epi.land`), commit `a42d4c2`
 **Viewport:** 1444 × 1241 desktop, dark theme, Chrome

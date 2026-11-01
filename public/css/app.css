@@ -2266,10 +2266,35 @@ details[open] > .diff-summary { margin-bottom: 10px; }
 }
 .print-actions {
   display: flex;
-  gap: 8px;
-  justify-content: flex-end;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
   margin-bottom: 16px;
+  color: var(--ink2);
 }
+.print-options { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 0.84rem; }
+.print-option { display: inline-flex; align-items: center; gap: 4px; }
+.print-option-label { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink3); margin-right: 2px; }
+label.print-option { cursor: pointer; }
+/* The preview is the paper: a white sheet in light colours, whatever the
+   app's theme, so what you see is what prints. */
+.print-sheet {
+  --bg: #faf9f6; --bg2: #f2f0ea; --bg3: #e8e5db; --surface: #ffffff;
+  --ink: #1a1a18; --ink2: #4a4a44; --ink3: #67675e;
+  --accent: #ad4e1d; --link-ink: #93411a; --gold: #b89040; --gold-ink: #7e6118; --green: #3a7a4a;
+  --border: rgba(26,26,24,0.10); --border2: rgba(26,26,24,0.18);
+  color-scheme: light;
+  background: #fff;
+  color: var(--ink);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  box-shadow: 0 2px 14px rgba(0,0,0,0.12);
+  padding: 32px 36px 40px;
+}
+@media (max-width: 600px) { .print-sheet { padding: 20px 16px 28px; } }
+.print-view:not(.print-with-photo) .print-hero-img,
+.print-view:not(.print-with-notes) .print-notes-block { display: none; }
 .print-hero-img {
   width: 100%;
   max-height: 320px;
@@ -2341,9 +2366,9 @@ body.print-route header {
     max-width: none;
     padding: 0;
   }
-  .print-hero-img {
-    display: none;
-  }
+  .print-sheet { border: 0; box-shadow: none; padding: 0; border-radius: 0; }
+  .print-view:not(.print-with-photo) .print-hero-img { display: none; }
+  .print-hero-img { max-height: 240px; }
   .print-title,
   .print-meta,
   .print-servings,
