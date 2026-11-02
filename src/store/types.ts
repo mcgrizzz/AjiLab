@@ -74,6 +74,7 @@ export interface VersionRecord {
   from_label: string | null;  // a version: "Test 3"; a test: the test it was made from
   cook_count: number;
   last_cooked_at: string | null;
+  last_recorded_at: string | null; // when a cook of it was last saved
   last_outcome: string | null;
 }
 

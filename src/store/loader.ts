@@ -130,10 +130,12 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
       WHERE cl.branch_id IN ${sql(branchIds)}
       ORDER BY cl.branch_id, cl.cooked_at DESC, cl.created_at DESC
     `,
-    // Per sheet: how many cooks, and the latest one's outcome.
-    sql<{ source_entry_id: string; n: number; cooked_at: Date; outcome: string }[]>`
+    // Per sheet: how many cooks, the latest one's outcome, and when a cook
+    // of it was last saved (a print is "recorded" once one is saved after it).
+    sql<{ source_entry_id: string; n: number; cooked_at: Date; outcome: string; recorded_at: Date }[]>`
       SELECT DISTINCT ON (source_entry_id) source_entry_id, outcome, cooked_at,
-             (COUNT(*) OVER (PARTITION BY source_entry_id))::int AS n
+             (COUNT(*) OVER (PARTITION BY source_entry_id))::int AS n,
+             MAX(created_at) OVER (PARTITION BY source_entry_id) AS recorded_at
       FROM cook_logs
       WHERE branch_id IN ${sql(branchIds)} AND source_entry_id IS NOT NULL
       ORDER BY source_entry_id, cooked_at DESC, created_at DESC
@@ -148,7 +150,7 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
   ]);
   const cooks = new Map<string, CookSummary>(cooksPerEntry.map((row) => [
     row.source_entry_id,
-    { n: row.n, cooked_at: row.cooked_at.toISOString(), outcome: row.outcome },
+    { n: row.n, cooked_at: row.cooked_at.toISOString(), outcome: row.outcome, recorded_at: row.recorded_at.toISOString() },
   ]));
 
   const branches: RecipeBranchRecord[] = branchRows.map((branchRow) => {

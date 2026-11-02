@@ -386,3 +386,13 @@ test("a cook needs nothing to be recorded, and keeps the differences marked 'I m
   assert.equal(cleared.intended.length, 2);
   assert.equal((await store.getCookLog(slug, log.id)).intended.length, 2);
 });
+
+test("each sheet knows when a cook of it was last saved, whatever date the cook has", async () => {
+  const { store } = ctx;
+  const slug = await recipeWithVersion("Recorded at");
+  const before = Date.now();
+  await store.createCookLog(slug, { kind: "version", version_string: "v1.0" }, { outcome: "", cooked_at: "2026-01-02T12:00:00Z" });
+  const v1 = entry(await get(slug), "v1.0");
+  assert.equal(v1.last_cooked_at, "2026-01-02T12:00:00.000Z");
+  assert.ok(Date.parse(v1.last_recorded_at) >= before - 1000);
+});

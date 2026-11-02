@@ -33,35 +33,40 @@ test('a cook follows the selected test or version; the working copy falls back t
   assert.equal(state.cookLogSourceKey({ draft: {}, versions: [], open_tests: [] }, { is_draft: true }), null);
 });
 
-test('a new cook starts from the paper in hand: the newest print with no cook since', () => {
+test('a new cook starts from the paper in hand: the newest print with no cook saved since', () => {
   const { state } = setup();
   const now = Date.parse('2026-11-10T12:00:00Z');
-  const day = (d) => new Date(now - d * 864e5).toISOString();
+  const at = (hoursAgo) => new Date(now - hoursAgo * 36e5).toISOString();
   const recipe = {
     draft: {},
     current_version: { version_string: 'v1.0' },
     open_tests: [{ version_string: 'test-4' }],
     versions: [
-      { version_string: 'v1.0', last_cooked_at: day(1) },
-      { version_string: 'test-4', last_cooked_at: day(9) },
-      { version_string: 'test-3', last_cooked_at: null },
+      { version_string: 'v1.0', last_recorded_at: at(1) },   // cooked after its print
+      { version_string: 'v1.1', last_recorded_at: at(6) },   // cooked today, printed again since
+      { version_string: 'test-4', last_recorded_at: at(200) },
+      { version_string: 'test-3', last_recorded_at: null },
     ],
     recent_prints: [
-      { version_string: 'v1.0', scale: 1, printed_at: day(2) },   // cooked since
-      { version_string: 'test-4', scale: 2, printed_at: day(3) }, // not cooked since
-      { version_string: 'test-3', scale: 1, printed_at: day(20) }, // too old
+      { version_string: 'v1.0', scale: 1, printed_at: at(2) },
+      { version_string: 'v1.1', scale: 2, printed_at: at(3) },
+      { version_string: 'test-4', scale: 2, printed_at: at(30) },
+      { version_string: 'test-3', scale: 1, printed_at: at(24 * 20) }, // too old
     ],
   };
   const current = { version_string: 'v1.0' };
   // The helper runs in its own context: compare plain values.
   const start = (...args) => JSON.parse(JSON.stringify(state.cookStart(...args)));
-  assert.deepEqual(start(recipe, current, { now }), { version_string: 'test-4', scale: 2, print: recipe.recent_prints[1] });
+  assert.deepEqual(start(recipe, current, { now }), { version_string: 'v1.1', scale: 2, print: recipe.recent_prints[1] });
   // Picked on purpose: that sheet, at its last print's scale or the screen's.
   assert.deepEqual(start(recipe, current, { now, explicit: true }), { version_string: 'v1.0', scale: 1, print: recipe.recent_prints[0] });
   assert.equal(state.cookStart(recipe, { version_string: 'test-4' }, { now, explicit: true }).scale, 2);
   assert.equal(state.cookStart(recipe, { version_string: 'test-4' }, { now, explicit: true, scale: 3 }).scale, 3);
+  // v1.1 recorded too: the next unrecorded print is Test 4's.
+  recipe.versions[1].last_recorded_at = at(0);
+  assert.equal(state.cookStart(recipe, current, { now }).version_string, 'test-4');
   // Everything recorded (or too old): the sheet on screen.
-  recipe.versions[1].last_cooked_at = day(0);
+  recipe.versions[2].last_recorded_at = at(0);
   assert.deepEqual(start(recipe, current, { now }), { version_string: 'v1.0', scale: 1, print: recipe.recent_prints[0] });
   assert.deepEqual(start({ ...recipe, recent_prints: undefined }, { is_draft: true }, { now }), { version_string: 'v1.0', scale: 1, print: null });
 });

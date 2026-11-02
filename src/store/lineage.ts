@@ -59,7 +59,7 @@ export function workingCopyChanged(draft: VersionRecord | null, versions: Versio
   return references.every((v) => draft.updated_at.localeCompare(v.updated_at) > 0);
 }
 
-export interface CookSummary { n: number; cooked_at: string; outcome: string }
+export interface CookSummary { n: number; cooked_at: string; outcome: string; recorded_at: string }
 
 // Fill in the derived fields on every entry of a branch (mutates and returns
 // the same objects).
@@ -87,6 +87,7 @@ export function decorateEntries(
     const cook = cooks.get(v.id);
     v.cook_count = cook?.n || 0;
     v.last_cooked_at = cook?.cooked_at || null;
+    v.last_recorded_at = cook?.recorded_at || null;
     v.last_outcome = cook?.outcome ?? null;
   }
   if (draft) {

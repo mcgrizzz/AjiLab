@@ -82,6 +82,7 @@ export function entryRowToVersion(row: EntryRow): VersionRecord {
     from_label: null,
     cook_count: 0,
     last_cooked_at: null,
+    last_recorded_at: null,
     last_outcome: null,
   };
 }
