@@ -5,6 +5,7 @@ const Router = {
     { pattern: /^\/recipe\/([^/]+)\/versions\/([^/]+)$/, view: 'recipe-version' },
     { pattern: /^\/recipe\/([^/]+)\/tests\/(\d+)$/, view: 'recipe-test' },
     { pattern: /^\/recipe\/([^/]+)\/print$/, view: 'recipe-print' },
+    { pattern: /^\/recipe\/([^/]+)\/cooks\/([^/]+)$/, view: 'recipe-cook' },
     { pattern: /^\/recipe\/([^/]+)$/, view: 'recipe' },
   ],
 
@@ -16,6 +17,7 @@ const Router = {
 
   async dispatch(path) {
     RecipeView.destroyDraftEditor();
+    CookView.leave();
     const url = new URL(path, location.origin);
     const pathname = url.pathname;
     const container = document.getElementById('view-container');
@@ -61,6 +63,18 @@ const Router = {
             branch: url.searchParams.get('branch') || 'main',
             tab: url.searchParams.get('tab') || 'overview',
             scale: url.searchParams.get('scale'),
+          });
+          return;
+        }
+        if (route.view === 'recipe-cook') {
+          backBtn.classList.remove('hidden');
+          addBtn.classList.add('hidden');
+          await CookView.render(container, m[1], {
+            id: m[2] === 'new' ? null : m[2],
+            branch: url.searchParams.get('branch') || 'main',
+            sheet: url.searchParams.get('sheet'),
+            scale: url.searchParams.get('scale'),
+            pick: url.searchParams.get('pick') === '1',
           });
           return;
         }

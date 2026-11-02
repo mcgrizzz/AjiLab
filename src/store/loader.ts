@@ -124,7 +124,7 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
              cl.source_entry_id, cl.source_kind, cl.source_version,
              cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
              cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
-             cl.changes_to_try_next, cl.freeform_notes, cl.created_at, cl.updated_at
+             cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.created_at, cl.updated_at
       FROM cook_logs cl
       JOIN branches b ON b.id = cl.branch_id
       WHERE cl.branch_id IN ${sql(branchIds)}

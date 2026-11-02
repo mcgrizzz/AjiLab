@@ -443,6 +443,29 @@ already starts from the newest unrecorded print.
   keyboard after the first click.
 - **Live:** record a sandbox cook from a printout without opening any other
   screen.
+- **Built.** Measured on a copy of live with the audit's scenario (v1.1
+  printed at 2×; flour, water and the rest time changed, Cool skipped, a
+  note, outcome, try next): one click opens the screen with the sheet,
+  scale and date filled in; the rest is 17 actions counting every click,
+  typed entry and key press, on one screen, no dialogs. Editing a value
+  repaints nothing and moves nothing below it (measured: 0 px). "Cooked as
+  written" with an outcome is 3 actions. Keyboard only works end to end.
+  Decisions made while building it:
+  - On a desktop, a new cook opens with the first value focused, so typing
+    starts at once (not on touch screens, where it would open the keyboard).
+  - Tab visits the values, plus any step whose values are all in the
+    ingredient list, so every step can be reached; Alt+S skips the step
+    you're on, Alt+N adds a note under it, Ctrl/Cmd-Enter is Done.
+  - In a step, "I meant this" shows when you're on the value (or once
+    ticked), so labels of neighbouring values don't collide; in the
+    ingredient list it's always shown.
+  - A value the ingredient list shows isn't repeated with "was …" in its
+    step, only highlighted.
+  - Values show as written in the sheet. A temperature written in words
+    ("450F") stays text; `^{450%F}` is editable.
+  - The parser keeps no timer names, so timers' "I meant this" keys count
+    by position.
+  - The photo of the sheet is not built.
 
 **Phase 4: the test page and decisions.**
 - The test page; the comparison table (rows that differ plus the tested rows,

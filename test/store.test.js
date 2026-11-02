@@ -367,3 +367,22 @@ test("prints: recorded per sheet and scale, the same day updates instead of addi
   await store.deleteVersion(slug, "test-1");
   assert.deepEqual((await get(slug)).recent_prints.map((p) => p.label), ["v1.0"]);
 });
+
+test("a cook needs nothing to be recorded, and keeps the differences marked 'I meant this'", async () => {
+  const { store } = ctx;
+  const slug = await recipeWithVersion("Cook screen");
+  const log = await store.createCookLog(slug, { kind: "version", version_string: "v1.0" }, { outcome: "", scale: 2 });
+  assert.equal(log.outcome, "");
+  assert.match(log.cooklang_text, /@water\{750%g\}/);
+  assert.deepEqual(log.intended, []);
+
+  const water = { kind: "ingredient", name: "Water", n: 0 };
+  const updated = await store.updateCookLog(slug, log.id, {
+    intended: [water, water, { kind: "timer", name: "", n: 0 }, { kind: "nope", n: 1 }, { kind: "timer", n: -1 }],
+  });
+  assert.deepEqual(updated.intended, [{ kind: "ingredient", name: "water", n: 0 }, { kind: "timer", name: "", n: 0 }]);
+  const cleared = await store.updateCookLog(slug, log.id, { outcome: "  " });
+  assert.equal(cleared.outcome, "");
+  assert.equal(cleared.intended.length, 2);
+  assert.equal((await store.getCookLog(slug, log.id)).intended.length, 2);
+});

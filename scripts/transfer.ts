@@ -154,19 +154,32 @@ async function main() {
     ["id", "recipe_id", "entry_id", "is_thumbnail", "filename", "mime_type", "data", "created_at"],
     { batchSize: 20 });
 
-  // 6. Cook logs
+  // 6. Cook logs ("I meant this" keys only from a source that has them)
+  const [{ has_intended }] = await src<{ has_intended: boolean }[]>`
+    SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'cook_logs' AND column_name = 'intended') AS has_intended
+  `;
   await copyTable(tgt, "cook_logs",
     ["id", "branch_id", "source_entry_id", "source_kind", "source_version",
      "cooklang_text", "source_cooklang_text", "tags", "cooked_at",
      "outcome", "what_worked", "problems_found", "changes_to_try_next",
      "freeform_notes", "scale", "created_at", "updated_at"]);
+  if (has_intended) {
+    const marked = await src<{ id: string; intended: unknown }[]>`
+      SELECT id, intended FROM cook_logs WHERE intended <> '[]'::jsonb
+    `;
+    for (const row of marked) {
+      await tgt`UPDATE cook_logs SET intended = ${tgt.json(row.intended as any)} WHERE id = ${row.id}`;
+    }
+    console.log(`[transfer]   ${"cook_logs (intended)".padEnd(22)} ${marked.length}`);
+  }
 
   // 6b. Prints (a source from before printing was recorded has none)
   const [{ has_prints }] = await src<{ has_prints: boolean }[]>`
     SELECT to_regclass('public.prints') IS NOT NULL AS has_prints
   `;
   if (has_prints) {
-    await copyTable(tgt, "prints", ["id", "entry_id", "scale", "printed_at"]);
+    await copyTable(tgt, "prints", ["id", "entry_id", "scale", "printed_at"], { orderBy: "printed_at" });
   }
 
   // 7. Recipe references (no id column — use composite PK)

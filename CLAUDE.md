@@ -50,6 +50,7 @@ The key idea: **the working copy, tests and versions share one `entries` table**
 - The loader derives `kind`, `label`, `testing`, `base_version`, `is_current`, `open`, `adopted_as` per entry (`src/store/lineage.ts`). Adopting a test made from an older version 3-way merges it into the current one and refuses on a conflict (`adoptedText` in `recipe-store.ts`).
 - A test is fixed: editing its text or notes is refused (`TestFixedError`, HTTP 409). Its Testing line can change.
 - `prints` records each sheet (version or test, never the working copy) and scale that went on paper, one per sheet, scale and day; the recipe record carries `recent_prints`, and a new cook starts from the newest unrecorded one (`RecipeEditState.cookStart`).
+- A cook (`cook_logs`) is recorded on its own screen (`/recipe/<slug>/cooks/new`, `/cooks/<id>`): its text is the sheet at the cook's scale, edited one value at a time through the `step-action` route; nothing is required, not even the outcome. `intended` holds the differences marked "I meant this" as `{kind, name, n}` keys (`CookSheet.buildFields`).
 - `entries.updated_at` moves only when the text or tags change (`touch_entry_content`), not on bookkeeping like closing a test.
 - One-time data steps run inside guarded `DO` blocks recorded in `app_migrations`, so a restart never re-runs them.
 - Notes and servings are **not columns** — they live in the Cooklang frontmatter (`>> servings:`, `>> notes:`) and are parsed on read. Don't add columns for them.
@@ -86,13 +87,13 @@ Three layers: ingredient diff (unit-normalized via `metric-expr` conversions), s
 
 ### Frontend (`public/js/`)
 
-Vanilla JS SPA, ES modules. Files prefixed `views-*` are screens (`views-index`, `views-recipe-overview`, `views-recipe-editor`, `views-recipe-viewer`, `views-recipe-versions`, `views-recipe-cook-logs`, `views-print`). `cooklang-render.js` is the renderer used by all viewers; `cooklang-editor.js` is the CodeMirror editor with custom Cooklang syntax highlighting. `api.js` is the thin fetch wrapper.
+Vanilla JS SPA, ES modules. Files prefixed `views-*` are screens (`views-index`, `views-recipe-overview`, `views-recipe-editor`, `views-recipe-viewer`, `views-recipe-versions`, `views-recipe-cook-logs`, `views-cook` (recording a cook, with its pure value model in `cook-sheet.js`), `views-print`). `cooklang-render.js` is the renderer used by all viewers; `cooklang-editor.js` is the CodeMirror editor with custom Cooklang syntax highlighting. `api.js` is the thin fetch wrapper.
 
 The CodeMirror bundle is built separately into `public/vendor/codemirror.js` — re-run `npm run build:editor` after touching `src/browser/codemirror-vendor.js`.
 
 ### Styles (`public/css/`)
 
-Linked in order from `index.html` (plain `<link>`s, no `@import`): `tokens.css` → `base.css` → `components.css` → `index.css` → `recipe.css` → `editor.css` → `compare.css` → `print.css`. **Every colour is a named token in `tokens.css`** (one light block, shared with `.print-sheet`, and the only dark-mode block); other files use `var(--…)` only. `test/css.test.js` fails on a literal colour outside `tokens.css`, a selector defined twice in one context, or a second dark-mode block. New colours: add a token by role (light and, if needed, dark value) and keep text at 4.5:1.
+Linked in order from `index.html` (plain `<link>`s, no `@import`): `tokens.css` → `base.css` → `components.css` → `index.css` → `recipe.css` → `editor.css` → `compare.css` → `cook.css` → `print.css`. **Every colour is a named token in `tokens.css`** (one light block, shared with `.print-sheet`, and the only dark-mode block); other files use `var(--…)` only. `test/css.test.js` fails on a literal colour outside `tokens.css`, a selector defined twice in one context, or a second dark-mode block. New colours: add a token by role (light and, if needed, dark value) and keep text at 4.5:1.
 
 ## Conventions
 

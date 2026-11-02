@@ -96,8 +96,18 @@ export interface CookLogRecord {
   problems_found: string;
   changes_to_try_next: string;
   freeform_notes: string;
+  // Differences marked "I meant this".
+  intended: CookIntendedKey[];
   created_at: string;
   updated_at: string;
+}
+
+// The nth (from 0) value of this kind and name in the sheet, not counting
+// added steps. Inline quantities and unnamed timers have name "".
+export interface CookIntendedKey {
+  kind: "ingredient" | "timer" | "inlineQuantity";
+  name: string;
+  n: number;
 }
 
 // A sheet that went on paper (newest first on the recipe record).

@@ -403,86 +403,6 @@ button.ing-qty {
   text-decoration-color: color-mix(in srgb, var(--ink3) 60%, transparent);
 }
 
-/* Cook-log click-to-edit: any quantity inside a cook-log step with a
-   `data-cl-edit-kind` attribute is clickable, opens an inline input. */
-.s-cl-editable {
-  cursor: pointer;
-  border-radius: 3px;
-  transition: background 0.12s;
-}
-
-.s-cl-editable:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
-.cl-edit-input {
-  font: inherit;
-  color: inherit;
-  background: var(--bg);
-  border: 1px solid var(--accent);
-  border-radius: 3px;
-  padding: 1px 5px;
-  width: 5em;
-  max-width: 8em;
-  outline: none;
-}
-
-.cl-edit-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
-}
-
-.cl-edit-units {
-  margin-left: 4px;
-  color: var(--ink3);
-  font-style: italic;
-}
-
-.cl-edit-unit-select {
-  margin-left: 4px;
-  font: inherit;
-  color: inherit;
-  background: var(--surface, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-  border-radius: 4px;
-  padding: 0 2px;
-}
-
-.cl-edit-unit-select:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
-}
-
-.cl-edit-saving {
-  color: var(--ink3);
-  font-style: italic;
-}
-
-.step-action-btn {
-  flex-shrink: 0;
-  align-self: flex-start;
-  margin-left: auto;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  margin-top: -2px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  color: var(--ink3);
-  font-size: 1.1rem;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
-}
-
-.step-action-btn:hover {
-  background: var(--bg2);
-  border-color: var(--border);
-  color: var(--ink);
-}
-
 .step-action-menu {
   position: absolute;
   z-index: 200;
@@ -564,19 +484,6 @@ button.ing-qty {
 }
 
 .step-section:first-child { padding-top: 4px; }
-
-.step-section-with-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.step-section-with-actions .step-section-name { flex: 1; min-width: 0; }
-
-.step-section-with-actions .step-action-btn {
-  align-self: center;
-  margin-top: 0;
-}
 
 .s-ing-amt { font-weight: 400; font-size: 0.88em; }
 
@@ -1048,26 +955,6 @@ button.ing-qty {
   color: var(--on-accent);
 }
 
-.cook-log-modal-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 12px;
-}
-
-.cook-log-modal-row > .field-group {
-  min-width: 0;
-}
-
-.cook-log-modal-row > .field-group:not(.cl-scale-field) { min-width: 180px; }
-
-.cl-scale-field { flex: 0 0 120px; }
-
-.cl-scale-input { display: flex; align-items: center; gap: 6px; }
-
-.cl-scale-input .field-input { width: 80px; font-variant-numeric: tabular-nums; }
-
-.cl-scale-fixed { padding: 8px 0; font-weight: 600; color: var(--ink2); font-variant-numeric: tabular-nums; }
-
 .cook-log-feed {
   display: flex;
   flex-direction: column;
@@ -1197,33 +1084,6 @@ button.ing-qty {
   .cook-log-recipe-steps { max-width: 720px; }
 }
 
-/* Step actions: the row lights up on hover and the ⋮ gets an outline, so
-   it's clear each step has actions. Always outlined on touch screens. */
-.cook-log-recipe .step-item { border-radius: 6px; transition: background 0.12s ease; }
-
-.cook-log-recipe .step-item:hover,
-.cook-log-recipe .step-item:focus-within { background: var(--bg2); }
-
-.cook-log-recipe .step-item:hover .step-action-btn,
-.cook-log-recipe .step-item:focus-within .step-action-btn {
-  border-color: var(--border2);
-  background: var(--surface);
-  color: var(--ink);
-}
-
-@media (hover: none) {
-  .cook-log-recipe .step-action-btn { border-color: var(--border2); color: var(--ink2); }
-}
-
-.cook-log-recipe-extras {
-  display: flex;
-  gap: 8px;
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px dashed var(--border);
-  flex-wrap: wrap;
-}
-
 /* Settings modal */
 .settings-section {
   margin-top: 22px;
@@ -1337,11 +1197,3 @@ button.ing-qty {
   background: var(--bg3);
 }
 
-.unsent-log-note {
-  margin: 4px 0 6px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--bg2);
-  color: var(--ink2);
-  font-size: 0.84rem;
-}

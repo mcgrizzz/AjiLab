@@ -107,6 +107,11 @@ CREATE TABLE IF NOT EXISTS cook_logs (
 ALTER TABLE cook_logs
   ADD COLUMN IF NOT EXISTS scale DOUBLE PRECISION NOT NULL DEFAULT 1 CHECK (scale > 0);
 
+-- "I meant this": the differences in a cook that were deliberate, as keys
+-- like {"kind":"ingredient","name":"water","n":0} (the nth water in the
+-- sheet, not counting added steps), so they survive later edits to the cook.
+ALTER TABLE cook_logs ADD COLUMN IF NOT EXISTS intended JSONB NOT NULL DEFAULT '[]';
+
 -- Cross-recipe references. Populated whenever an entry's cooklang_text is saved.
 CREATE TABLE IF NOT EXISTS recipe_references (
   from_entry_id UUID NOT NULL REFERENCES entries(id) ON DELETE CASCADE,

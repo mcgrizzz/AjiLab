@@ -109,13 +109,6 @@ const RecipeEditState = (() => {
     return session;
   }
 
-  function localDateTimeInput(value = new Date()) {
-    const date = new Date(value);
-    if (!Number.isFinite(date.getTime())) return '';
-    const pad = n => String(n).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  }
-
   // The sheet a new cook defaults to: the version or test on screen. The
   // working copy is never cooked, so it falls back to the current version
   // (or, with no version yet, the newest open test).
@@ -154,12 +147,6 @@ const RecipeEditState = (() => {
     const key = cookLogSourceKey(recipe, selected);
     const print = prints.find(p => p.version_string === key) || null;
     return { version_string: key, scale: scale !== 1 ? scale : (print?.scale || 1), print };
-  }
-
-  function cookLogTimestamp(local, existing) {
-    // Preserve seconds and the exact instant during a repeated DST hour.
-    if (existing && local === localDateTimeInput(existing)) return existing;
-    return local ? new Date(local).toISOString() : undefined;
   }
 
   // ── Replacing a draft on purpose (fork / undo) ──
@@ -216,29 +203,8 @@ const RecipeEditState = (() => {
     return { removed, added };
   }
 
-  // Unsent new-cook-log form fields, kept per tab until the log is created.
-  const UNSENT_LOG_PREFIX = 'ajilab:unsent-cook-log:';
-  function loadUnsentCookLog(storage, slug, branch) {
-    try {
-      const value = JSON.parse(storage?.getItem(UNSENT_LOG_PREFIX + JSON.stringify([slug, branch])) || 'null');
-      return value && typeof value === 'object' ? value : null;
-    } catch { return null; }
-  }
-  function saveUnsentCookLog(storage, slug, branch, fields) {
-    try {
-      const key = UNSENT_LOG_PREFIX + JSON.stringify([slug, branch]);
-      const hasText = Object.entries(fields).some(([name, value]) => name !== 'source' && name !== 'cooked_at' && name !== 'scale' && String(value || '').trim());
-      if (hasText) storage?.setItem(key, JSON.stringify(fields));
-      else storage?.removeItem(key);
-    } catch {}
-  }
-  function clearUnsentCookLog(storage, slug, branch) {
-    try { storage?.removeItem(UNSENT_LOG_PREFIX + JSON.stringify([slug, branch])); } catch {}
-  }
-
-  return { Session, open, localDateTimeInput, cookLogSourceKey, cookStart, localDay, cookLogTimestamp,
+  return { Session, open, cookLogSourceKey, cookStart,
     draftKey, settle, unsavedValue, discard, lineChangeSummary,
-    loadUnsentCookLog, saveUnsentCookLog, clearUnsentCookLog,
     hasUnsaved: () => [...sessions.values()].some(session => session.dirty || session.pending) };
 })();
 

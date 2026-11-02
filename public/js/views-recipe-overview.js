@@ -156,7 +156,7 @@ Object.assign(RecipeView, {
   // A cook of the sheet on screen, at the scale on screen.
   // An unrecorded print wins unless this sheet was opened on purpose.
   logThisCook() {
-    this.openCookLogModal(undefined, { scale: this.scale, explicit: !!this.explicitVersionRequest });
+    this.recordCook({ scale: this.scale, explicit: !!this.explicitVersionRequest });
   },
 
   overviewSidebarHtml() {

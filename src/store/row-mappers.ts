@@ -7,6 +7,7 @@
 import { parseVersionMetadata } from "./frontmatter.ts";
 import type {
   CookLogRecord,
+  CookIntendedKey,
   CookLogSourceKind,
   RecipeBranchKind,
   RecipeBranchMeta,
@@ -134,6 +135,7 @@ export type CookLogRow = {
   problems_found: string;
   changes_to_try_next: string;
   freeform_notes: string;
+  intended: CookIntendedKey[] | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -156,6 +158,7 @@ export function cookLogRowToRecord(row: CookLogRow): CookLogRecord {
     problems_found: row.problems_found || "",
     changes_to_try_next: row.changes_to_try_next || "",
     freeform_notes: row.freeform_notes || "",
+    intended: Array.isArray(row.intended) ? row.intended : [],
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
   };

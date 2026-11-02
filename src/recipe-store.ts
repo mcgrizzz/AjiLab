@@ -43,6 +43,7 @@ import type {
   BranchCounts,
   RecipeBranchRecord,
   RecipeRecord,
+  CookIntendedKey,
 } from "./store/types.ts";
 
 export type {
@@ -732,8 +733,27 @@ interface CookLogInput {
   freeform_notes?: string;
   cooklang_text?: string;
   tags?: string[];
+  intended?: unknown;
   // Only read on create: the log's amounts are at this scale of the source.
   scale?: number;
+}
+
+// Keep only well-formed "I meant this" keys, once each.
+export function normalizeIntended(raw: unknown): CookIntendedKey[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: CookIntendedKey[] = [];
+  for (const item of raw) {
+    const kind = (item as any)?.kind;
+    const n = Number((item as any)?.n);
+    if (!["ingredient", "timer", "inlineQuantity"].includes(kind) || !Number.isInteger(n) || n < 0) continue;
+    const key: CookIntendedKey = { kind, name: String((item as any)?.name ?? "").trim().toLowerCase(), n };
+    const id = JSON.stringify(key);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(key);
+  }
+  return out;
 }
 
 // The source as it read at the log's scale — what a log is compared with, so
@@ -759,7 +779,7 @@ async function loadCookLogsForBranch(branchId: string, filter?: { version: strin
              cl.source_entry_id, cl.source_kind, cl.source_version,
              cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
              cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
-             cl.changes_to_try_next, cl.freeform_notes, cl.created_at, cl.updated_at
+             cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.created_at, cl.updated_at
       FROM cook_logs cl
       JOIN branches b ON b.id = cl.branch_id
       WHERE cl.branch_id = ${branchId} AND cl.source_version = ${filter.version}
@@ -771,7 +791,7 @@ async function loadCookLogsForBranch(branchId: string, filter?: { version: strin
            cl.source_entry_id, cl.source_kind, cl.source_version,
            cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
            cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
-           cl.changes_to_try_next, cl.freeform_notes, cl.created_at, cl.updated_at
+           cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.created_at, cl.updated_at
     FROM cook_logs cl
     JOIN branches b ON b.id = cl.branch_id
     WHERE cl.branch_id = ${branchId}
@@ -801,7 +821,7 @@ export async function getCookLog(slug: string, id: string, branchSlug = MAIN_BRA
            cl.source_entry_id, cl.source_kind, cl.source_version,
            cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
            cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
-           cl.changes_to_try_next, cl.freeform_notes, cl.created_at, cl.updated_at
+           cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.created_at, cl.updated_at
     FROM cook_logs cl
     JOIN branches b ON b.id = cl.branch_id
     WHERE cl.id = ${id} AND cl.branch_id = ${branchId}
@@ -827,8 +847,9 @@ export async function createCookLog(
     if (!v) throw new Error("version not found");
     sourceEntry = v;
   }
+  // Nothing is required: a cook exists from its first change, and the
+  // outcome often comes last.
   const outcome = String(input.outcome || "").trim();
-  if (!outcome) throw new Error("outcome is required");
 
   const cookedAt = validateCookedAt(input.cooked_at);
   const sourceText = sourceEntry.cooklang_text || "";
@@ -841,7 +862,7 @@ export async function createCookLog(
     INSERT INTO cook_logs (
       id, branch_id, source_entry_id, source_kind, source_version,
       cooklang_text, source_cooklang_text, tags, scale, cooked_at,
-      outcome, what_worked, problems_found, changes_to_try_next, freeform_notes
+      outcome, what_worked, problems_found, changes_to_try_next, freeform_notes, intended
     ) VALUES (
       ${id}, ${branchId}, ${sourceEntry.id}, ${source.kind},
       ${source.kind === "version" ? sourceEntry.version_string : null},
@@ -849,7 +870,8 @@ export async function createCookLog(
       ${outcome}, ${String(input.what_worked || "")},
       ${String(input.problems_found || "")},
       ${String(input.changes_to_try_next || "")},
-      ${String(input.freeform_notes || "")}
+      ${String(input.freeform_notes || "")},
+      ${sql.json(normalizeIntended(input.intended) as any)}
     )
   `;
   return (await getCookLog(slug, id, branchSlug))!;
@@ -864,7 +886,6 @@ export async function updateCookLog(
   const existing = await getCookLog(slug, id, branchSlug);
   if (!existing) throw new Error("cook log not found");
   const nextOutcome = patch.outcome !== undefined ? String(patch.outcome).trim() : existing.outcome;
-  if (!nextOutcome) throw new Error("outcome is required");
   const next = {
     cooked_at: patch.cooked_at !== undefined ? validateCookedAt(patch.cooked_at) : existing.cooked_at,
     outcome: nextOutcome,
@@ -874,6 +895,7 @@ export async function updateCookLog(
     freeform_notes: patch.freeform_notes !== undefined ? String(patch.freeform_notes) : existing.freeform_notes,
     cooklang_text: patch.cooklang_text !== undefined ? String(patch.cooklang_text) : existing.cooklang_text,
     tags: Array.isArray(patch.tags) ? patch.tags.map(String) : existing.tags,
+    intended: patch.intended !== undefined ? normalizeIntended(patch.intended) : existing.intended,
   };
   await sql`
     UPDATE cook_logs SET
@@ -884,7 +906,8 @@ export async function updateCookLog(
       changes_to_try_next = ${next.changes_to_try_next},
       freeform_notes = ${next.freeform_notes},
       cooklang_text = ${next.cooklang_text},
-      tags = ${next.tags}
+      tags = ${next.tags},
+      intended = ${sql.json(next.intended as any)}
     WHERE id = ${id}
   `;
   return (await getCookLog(slug, id, branchSlug))!;

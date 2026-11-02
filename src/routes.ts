@@ -256,7 +256,12 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
 
   api.post(`${prefix}/draft/parse`, async (c) => {
     const body = await c.req.json();
-    const parsed = await enrichRecipeReferences(parseCooklang(body.cooklang_text || ""));
+    // Optional scale: parse the text at that scale and return the scaled
+    // text (what a new cook at that scale starts from).
+    const scale = body.scale !== undefined ? normalizeScale(body.scale) : 1;
+    const text = scale === 1 ? String(body.cooklang_text || "") : scaleCooklangText(String(body.cooklang_text || ""), scale);
+    const parsed: any = await enrichRecipeReferences(parseCooklang(text));
+    if (body.scale !== undefined) parsed.cooklang_text = text;
     // Optional cook-log diff annotation: when the caller supplies the source
     // recipe text, walk paired steps and mutate per-token diff fields onto
     // `parsed.steps` so the renderer can show "was X" chips.
@@ -508,6 +513,7 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
         freeform_notes: body.freeform_notes,
         cooklang_text: body.cooklang_text,
         tags: Array.isArray(body.tags) ? body.tags : undefined,
+        intended: body.intended,
         scale: body.scale,
       }, activeBranch(c)), 201);
     } catch (error: any) {
@@ -529,11 +535,20 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
         freeform_notes: body.freeform_notes,
         cooklang_text: body.cooklang_text,
         tags: Array.isArray(body.tags) ? body.tags : undefined,
+        intended: body.intended,
         scale: body.scale,
       }, activeBranch(c)), 201);
     } catch (error: any) {
       return c.json({ error: error?.message || "cook log create failed" }, 400);
     }
+  });
+
+  api.get(`${prefix}/cook-logs/:id`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    const log = await getCookLog(recipe.slug, c.req.param("id"), activeBranch(c));
+    if (!log) return c.json({ error: "cook log not found" }, 404);
+    return c.json(log);
   });
 
   api.put(`${prefix}/cook-logs/:id`, async (c) => {
@@ -550,6 +565,7 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
         freeform_notes: body.freeform_notes,
         cooklang_text: body.cooklang_text,
         tags: Array.isArray(body.tags) ? body.tags : undefined,
+        intended: body.intended,
       }, activeBranch(c)));
     } catch (error: any) {
       const message = error?.message || "cook log update failed";
