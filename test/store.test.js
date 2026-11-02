@@ -481,3 +481,39 @@ test("tests are named by the version they're made from, and keep their name", as
   const first = await store.saveTest(fresh, {});
   assert.deepEqual([first.label, first.test_key], ["Test 1", "v0-1"]);
 });
+
+test("after adopting, an untouched working copy moves to the new version; one with changes stays", async () => {
+  const { store } = ctx;
+  const slug = await recipeWithVersion("Moves on");
+  await makeTest(slug, "more water", (t) => t.replace("375", "390"));
+  await store.releaseVersion(slug, "test-1", { version_string: "v1.1" });
+  let recipe = await get(slug);
+  assert.equal(recipe.draft.base_version, "v1.1");
+  assert.equal(recipe.draft.cooklang_text, entry(recipe, "v1.1").cooklang_text);
+  assert.equal(recipe.has_unreleased_changes, false);
+  assert.equal(recipe.next_test_label, "v1.1 · Test 1");
+
+  // Work in progress is not touched.
+  await makeTest(slug, "more salt", (t) => t.replace("10%g", "12%g"));
+  await store.updateDraft(slug, { cooklang_text: (await get(slug)).draft.cooklang_text.replace("Rest", "Rest covered") });
+  await store.releaseVersion(slug, "test-2", { version_string: "v1.2" });
+  recipe = await get(slug);
+  assert.equal(recipe.draft.base_version, "v1.1");
+  assert.match(recipe.draft.cooklang_text, /Rest covered/);
+  assert.equal(recipe.next_test_label, "v1.1 · Test 2");
+});
+
+test("a print keeps how it showed the amounts, and a cook keeps its print's", async () => {
+  const { store } = ctx;
+  const slug = await recipeWithVersion("Shown as");
+  await store.recordPrint(slug, "v1.0", 2, "main", { temp: "C", units: { Flour: "cup", bad: 3 }, junk: true });
+  let recipe = await get(slug);
+  assert.deepEqual(recipe.recent_prints[0].display, { temp: "C", units: { flour: "cup" } });
+  // Printed again the same day in °F: the one record follows.
+  await store.recordPrint(slug, "v1.0", 2, "main", { temp: "F" });
+  recipe = await get(slug);
+  assert.deepEqual([recipe.recent_prints.length, recipe.recent_prints[0].display], [1, { temp: "F" }]);
+  const log = await store.createCookLog(slug, { kind: "version", version_string: "v1.0" }, { outcome: "", display: { temp: "C" } });
+  assert.deepEqual(log.display, { temp: "C" });
+  assert.deepEqual((await store.createCookLog(slug, { kind: "version", version_string: "v1.0" }, { outcome: "" })).display, {});
+});

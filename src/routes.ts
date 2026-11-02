@@ -351,7 +351,7 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     if (!(await getRecipeBySlug(c.req.param("slug"), activeBranch(c)))) return c.json({ error: "not found" }, 404);
     const body = await c.req.json().catch(() => ({}));
     try {
-      return c.json(await recordPrint(c.req.param("slug"), String(body?.version || ""), Number(body?.scale ?? 1), activeBranch(c)));
+      return c.json(await recordPrint(c.req.param("slug"), String(body?.version || ""), Number(body?.scale ?? 1), activeBranch(c), body?.display));
     } catch (error: any) {
       const message = error?.message || "print failed";
       return c.json({ error: message }, message === "version not found" ? 404 : 400);
@@ -525,6 +525,7 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
         cooklang_text: body.cooklang_text,
         tags: Array.isArray(body.tags) ? body.tags : undefined,
         intended: body.intended,
+        display: body.display,
         scale: body.scale,
       }, activeBranch(c)), 201);
     } catch (error: any) {
@@ -547,6 +548,7 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
         cooklang_text: body.cooklang_text,
         tags: Array.isArray(body.tags) ? body.tags : undefined,
         intended: body.intended,
+        display: body.display,
         scale: body.scale,
       }, activeBranch(c)), 201);
     } catch (error: any) {

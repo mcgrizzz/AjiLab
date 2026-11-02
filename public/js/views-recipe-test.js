@@ -63,7 +63,7 @@ Object.assign(RecipeView, {
     try {
       const logs = (await API.get(`${this.apiBase()}/versions/${encodeURIComponent(test.version_string)}/cook-logs`))
         .filter((log) => log.source_kind === 'version')
-        .sort((a, b) => a.cooked_at.localeCompare(b.cooked_at));
+        .sort(CookSheet.cookOrder);
       // The cook decisions (adopt from a cook, new test from a cook) look
       // cooks up here.
       this.cookLogs = logs;
@@ -132,11 +132,12 @@ Object.assign(RecipeView, {
         <td class="ct-cell ct-step-text" colspan="${baseEntry ? 2 : 1}">${escHtml(row.text)}</td>
         ${row.cells.map((on) => `<td class="ct-cell${on ? ' ct-changed' : ' ct-none'}">${on ? '✓' : ''}</td>`).join('')}
       </tr>`).join('');
-    const textRow = (label, pick) => `<tr class="ct-words">
+    // A row nobody wrote anything in isn't shown.
+    const textRow = (label, pick) => (!logs.some((log) => String(pick(log) || '').trim()) ? '' : `<tr class="ct-words">
         <th scope="row" class="ct-label">${label}</th>
         <td class="ct-cell" colspan="${baseEntry ? 2 : 1}"></td>
         ${logs.map((log) => `<td class="ct-cell ct-text">${pick(log) ? formatMultilineText(pick(log)) : '<span class="text-muted">—</span>'}</td>`).join('')}
-      </tr>`;
+      </tr>`);
     const decisions = `<tr class="ct-actions">
         <th scope="row" class="ct-label"><span class="visually-hidden">Decide</span></th>
         <td class="ct-cell" colspan="${baseEntry ? 2 : 1}"></td>

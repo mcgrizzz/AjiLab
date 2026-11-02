@@ -119,8 +119,9 @@ const CookSheet = (() => {
   }
 
   // What was typed: "225", "225 g", "1 cup", "18-20", "1/2 tsp", "230°C",
-  // "230 c". A bare number keeps the unit. Null when it isn't an amount.
-  function parseTyped(text, field) {
+  // "230 c". A bare number takes the unit shown (by default the value's own).
+  // Null when it isn't an amount.
+  function parseTyped(text, field, shownUnits = field.current.units) {
     const typed = String(text ?? '').trim();
     if (!typed) return null;
     // Mixed numbers and fractions first, so "1/2" isn't read as "1".
@@ -134,7 +135,73 @@ const CookSheet = (() => {
       if (temp && !TEMP_UNIT.test(temp)) return null;
       units = /^c/i.test(temp) ? 'C' : (/^f/i.test(temp) ? 'F' : '');
     }
-    return { quantity, units: units || field.current.units };
+    return { quantity, units: units || shownUnits };
+  }
+
+  // ── As on the paper ──────────────────────────────────────────────────────
+  // A print can show temperatures in the other scale and ingredients in
+  // other units ({ temp: 'C', units: { flour: 'cup' } }). The cook screen
+  // shows values the same way, and saves what's typed back in the recipe's
+  // own unit, so the text keeps one set of units.
+
+  const tempKey = (unit) => {
+    const t = String(unit ?? '').trim().replace(/^°\s*/, '').toLowerCase();
+    return t === 'c' || t === 'celsius' ? 'C' : (t === 'f' || t === 'fahrenheit' ? 'F' : null);
+  };
+  const convertTemp = (v, from, to) => (from === to ? v : (to === 'C' ? (v - 32) * 5 / 9 : v * 9 / 5 + 32));
+  // As the print rounds them: whole degrees when close, else one decimal.
+  const tempText = (v) => String(Math.abs(v - Math.round(v)) < 0.05 ? Math.round(v) : Number(v.toFixed(1)));
+  // A converted amount Cooklang can hold: no fraction glyphs, sensible digits.
+  const plainNumber = (v) => String(v >= 100 ? Math.round(v) : Number(v.toFixed(v < 10 ? 2 : 1)));
+
+  function shownAmount(field, amount, display) {
+    if (!display || !amount) return amount;
+    if (field.isTemp && display.temp) {
+      const from = tempKey(amount.units);
+      const nums = Units.parseQuantity(String(amount.quantity));
+      if (!from || from === display.temp || !nums) return amount;
+      return { quantity: nums.map((n) => tempText(convertTemp(n, from, display.temp))).join('-'), units: display.temp };
+    }
+    if (field.kind === 'ingredient' && display.units && Object.keys(display.units).length) {
+      const shown = Units.present(amount.quantity, amount.units, 1, { overrides: display.units }, field.name);
+      if (shown?.converted) return { quantity: shown.qty, units: shown.unit };
+    }
+    return amount;
+  }
+
+  // A typed amount in the recipe's own unit for this value, when it converts.
+  function savedAmount(field, typed) {
+    const own = field.original.units;
+    const nums = Units.parseQuantity(String(typed.quantity));
+    if (!nums) return typed;
+    if (field.isTemp) {
+      const from = tempKey(typed.units);
+      const to = tempKey(own);
+      if (!from || !to || from === to) return typed;
+      return { quantity: nums.map((n) => tempText(convertTemp(n, from, to))).join('-'), units: own };
+    }
+    if (field.kind === 'ingredient') {
+      const a = Units.lookup(typed.units);
+      const b = Units.lookup(own);
+      if (a && b && a.key !== b.key && a.category === b.category) {
+        return { quantity: nums.map((n) => plainNumber((n * a.factor) / b.factor)).join('-'), units: own };
+      }
+    }
+    return typed;
+  }
+
+  // "°C, flour in cups": what the screen converts, for its header.
+  function displayNote(display) {
+    const parts = [];
+    if (display?.temp) parts.push(`°${display.temp}`);
+    for (const [name, unit] of Object.entries(display?.units || {})) parts.push(`${name} in ${Units.UNITS[unit] ? Units.unitLabel(unit, 2) : unit}`);
+    return parts.join(', ');
+  }
+
+  // Cooks oldest first: by the day cooked, then by when each was saved (two
+  // cooks of the same day without a time are both at noon).
+  function cookOrder(a, b) {
+    return String(a.cooked_at).localeCompare(String(b.cooked_at)) || String(a.created_at).localeCompare(String(b.created_at));
   }
 
   // 'unchanged' (as printed), 'same' (written differently but the same
@@ -320,22 +387,36 @@ const CookSheet = (() => {
 
   // What a sheet changes from its base, in words: its value changes, and
   // whether anything else in the steps changed.
-  function changeSummary(base, sheet) {
-    if (!base) return '';
+  function changeList(base, sheet) {
+    if (!base) return [];
     const { rows } = comparison({ base, sheet, cooks: [] });
     const parts = rows.filter((r) => r.tested).map((r) => changeText(r.label, r.base, r.sheet, r.isTemp));
     const shape = (text) => String(text || '').replace(/\{[^}]*\}/g, '{}').replace(/\s+/g, ' ').trim();
     if (base.text !== undefined && sheet.text !== undefined && shape(base.text) !== shape(sheet.text)) parts.push('changes to the steps');
-    return parts.join('; ');
+    return parts;
+  }
+
+  function changeSummary(base, sheet) {
+    return changeList(base, sheet).join('; ');
   }
 
   // A cook's ticked changes in words, at the sheet's 1×.
-  function cookChangeSummary(cookFields, scale, keyIds, stepNotes = []) {
+  function cookChangeList(cookFields, scale, keyIds, stepNotes = []) {
     const wanted = new Set(keyIds);
     const parts = cookFields
       .filter((f) => f.key && wanted.has(keyId(f.key)) && changeKind(f) !== 'unchanged')
       .map((f) => changeText(valueLabel(f, new Map(), new Set()), atSheetScale(f, f.original, scale), atSheetScale(f, f.current, scale), f.isTemp));
-    return [...parts, ...stepNotes].join('; ');
+    return [...parts, ...stepNotes];
+  }
+
+  function cookChangeSummary(cookFields, scale, keyIds, stepNotes = []) {
+    return cookChangeList(cookFields, scale, keyIds, stepNotes).join('; ');
+  }
+
+  // A version adopted from a cook of a test: what the test changed, then what
+  // the cook did. "salt: 2 → 1 g (tested); water: 75 → 85 g (Cook 1)".
+  function adoptFromCookNotes(tested, cookParts, cookName) {
+    return [...tested.map((t) => `${t} (tested)`), ...cookParts.map((c) => `${c} (${cookName})`)].join('; ');
   }
 
   // A checklist change id ("step-token:0:2:ingredient:1", in the sheet's
@@ -347,7 +428,8 @@ const CookSheet = (() => {
     return f?.key ? keyId(f.key) : null;
   }
 
-  return { stepList, atSheetScale, comparison, changeSummary, cookChangeSummary, keyForChange,
+  return { shownAmount, savedAmount, displayNote, cookOrder, changeList, cookChangeList, adoptFromCookNotes,
+    stepList, atSheetScale, comparison, changeSummary, cookChangeSummary, keyForChange,
     noteAdded, replaceNote, buildFields, ingredientRows, listedFieldIds, formatAmount, parseTyped, changeKind, keyId,
     joinedNotes, localDay, localTime, dateChoices, cookedAt, stepInfo };
 })();

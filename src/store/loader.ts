@@ -125,7 +125,7 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
              cl.source_entry_id, cl.source_kind, cl.source_version,
              cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
              cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
-             cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.created_at, cl.updated_at
+             cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.display, cl.created_at, cl.updated_at
       FROM cook_logs cl
       JOIN branches b ON b.id = cl.branch_id
       WHERE cl.branch_id IN ${sql(branchIds)}
@@ -141,8 +141,8 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
       WHERE branch_id IN ${sql(branchIds)} AND source_entry_id IS NOT NULL
       ORDER BY source_entry_id, cooked_at DESC, created_at DESC
     `,
-    sql<{ id: string; entry_id: string; branch_id: string; scale: number; printed_at: Date }[]>`
-      SELECT p.id, p.entry_id, e.branch_id, p.scale, p.printed_at
+    sql<{ id: string; entry_id: string; branch_id: string; scale: number; printed_at: Date; display: any }[]>`
+      SELECT p.id, p.entry_id, e.branch_id, p.scale, p.printed_at, p.display
       FROM prints p JOIN entries e ON e.id = p.entry_id
       WHERE e.branch_id IN ${sql(branchIds)}
       ORDER BY p.printed_at DESC
@@ -179,6 +179,7 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
         return {
           id: p.id, entry_id: p.entry_id, version_string: entry.version_string!, label: entry.label,
           scale: Number(p.scale), printed_at: p.printed_at.toISOString(),
+          display: p.display && typeof p.display === "object" ? p.display : {},
         };
       });
 

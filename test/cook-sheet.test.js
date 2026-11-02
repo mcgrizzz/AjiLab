@@ -249,3 +249,53 @@ test("the cooks of a test side by side, at the sheet's 1×", () => {
   assert.equal(CookSheet.keyForChange(sheetAt2, "step-token:0:3:timer:0"), "timer||0");
   assert.equal(CookSheet.keyForChange(sheetAt2, "step-add:0:2"), null);
 });
+
+test("values show as the paper did, and what's typed is saved in the recipe's units", () => {
+  const fields = fieldsOf("Mix @flour{220%g} and @salt{=4%g}.\n\nBake at ^{450%F} for ~{30%min}.");
+  const [flour, salt, oven, time] = fields;
+  const paper = { temp: "C", units: { flour: "oz" } };
+  const shown = (f) => CookSheet.formatAmount(CookSheet.shownAmount(f, f.current, paper), f.isTemp);
+  assert.deepEqual(fields.map(shown), ["7¾ oz", "4 g", "232.2°C", "30 min"]);
+  assert.equal(CookSheet.shownAmount(oven, oven.current, {}), oven.current, "nothing to convert");
+  // Grams can't become cups without a density: shown as written, like the print.
+  assert.equal(CookSheet.formatAmount(CookSheet.shownAmount(flour, flour.current, { units: { flour: "cup" } })), "220 g");
+  // Typed as on the paper: a bare number takes the shown unit, then it's
+  // saved in the recipe's own unit.
+  const typedOven = CookSheet.parseTyped("230", oven, CookSheet.shownAmount(oven, oven.current, paper).units);
+  assert.deepEqual(plain(typedOven), { quantity: "230", units: "C" });
+  assert.deepEqual(plain(CookSheet.savedAmount(oven, typedOven)), { quantity: "446", units: "F" });
+  assert.deepEqual(plain(CookSheet.savedAmount(flour, CookSheet.parseTyped("8", flour, "oz"))), { quantity: "227", units: "g" });
+  assert.deepEqual(plain(CookSheet.savedAmount(flour, { quantity: "250", units: "g" })), { quantity: "250", units: "g" });
+  assert.deepEqual(plain(CookSheet.savedAmount(time, { quantity: "1", units: "hour" })), { quantity: "1", units: "hour" });
+  // Retyping what the paper said changes nothing that matters.
+  assert.equal(CookSheet.changeKind(oven, CookSheet.savedAmount(oven, CookSheet.parseTyped("232.2", oven, "C"))), "unchanged");
+  assert.equal(CookSheet.changeKind(flour, CookSheet.savedAmount(flour, CookSheet.parseTyped("7¾", flour, "oz"))), "unchanged");
+  assert.equal(CookSheet.displayNote(paper), "°C, flour in oz");
+});
+
+test("cooks of the same day are in the order they were saved", () => {
+  const cooks = [
+    { id: "b", cooked_at: "2026-11-02T17:00:00.000Z", created_at: "2026-11-02T20:00:00.000Z" },
+    { id: "c", cooked_at: "2026-11-03T17:00:00.000Z", created_at: "2026-11-03T09:00:00.000Z" },
+    { id: "a", cooked_at: "2026-11-02T17:00:00.000Z", created_at: "2026-11-02T19:00:00.000Z" },
+  ];
+  assert.deepEqual([...cooks].sort(CookSheet.cookOrder).map((c) => c.id), ["a", "b", "c"]);
+});
+
+test("a step added before a timed step doesn't move the timer's key", () => {
+  const text = "Mix @flour{100%g}.\n\nRest ~{30%min}.\n\nBake ~{20%min}.";
+  const keys = (t) => fieldsOf(t).filter((f) => !f.added).map((f) => `${CookSheet.keyId(f.key)}=${f.current.quantity}`);
+  const cooked = updateStepQuantity(insertStepAfterStep(text, 0, 1, "!+ Wait ~{5%min} first."), 0, 3, "timer", 0, "40", "min");
+  assert.deepEqual(keys(text), ["ingredient|flour|0=100", "timer||0=30", "timer||1=20"]);
+  assert.deepEqual(keys(cooked), ["ingredient|flour|0=100", "timer||0=40", "timer||1=20"]);
+});
+
+test("a version adopted from a cook of a test lists the tested change, then the cook's", () => {
+  const BASE = "Add @salt{=2%g} and @water{75%g}.";
+  const TEST = BASE.replace("=2%g", "=1%g");
+  const tested = CookSheet.changeList(sheetOf(BASE), sheetOf(TEST));
+  const cooked = updateStepQuantity(scaleCooklangText(TEST, 2), 0, 1, "ingredient", 1, "170", "g");
+  const cook = cookOf(TEST, cooked, 2);
+  const notes = CookSheet.adoptFromCookNotes(tested, CookSheet.cookChangeList(cook.fields, 2, ["ingredient|water|0"]), "Cook 1");
+  assert.equal(notes, "salt: 2 → 1 g (tested); water: 75 → 85 g (Cook 1)");
+});

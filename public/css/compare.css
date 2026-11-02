@@ -77,6 +77,13 @@
 
 .cp-tag-addition { background: color-mix(in srgb, var(--green) 22%, transparent); color: var(--green); }
 
+.cp-tag-tested { background: var(--badge-beta-bg); color: var(--badge-beta-fg); }
+
+/* The test's own changes, above a cook's checklist: always part of it. */
+.cp-tested { margin-bottom: 12px; }
+
+.cp-row-tested .cp-label { cursor: default; }
+
 .cp-tag-removal { background: color-mix(in srgb, var(--ink3) 15%, transparent); color: var(--ink3); border: 1px solid var(--ink3); }
 
 .cp-row-within-spec .cp-label { opacity: 0.78; }

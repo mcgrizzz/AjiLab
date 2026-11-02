@@ -506,6 +506,23 @@ once, in creation order), so deleting a test renames nothing. Pages are
 where the name already says it; a test behind the current version says
 "v1.2 is newer".
 
+**After the second review (Nov 2).**
+- Adopting from a cook of a test lists the test's own changes in the
+  checklist (ticked, fixed, "tested") and the changelog names both: "salt:
+  2 → 1 g (tested); water: 75 → 85 g (Cook 1)".
+- Cooks are ordered by the day cooked, then by when they were saved, so two
+  cooks of the same day (both stored at noon) number oldest first.
+- Done after recording a test's cook returns to the test's page.
+- Rows of the cooks table that every cook left empty are hidden.
+- After adopting, a working copy with nothing of its own moves onto the new
+  version, so the next test is "v1.3 · Test 1".
+- **The cook screen matches the paper.** A print records how it showed the
+  amounts (`prints.display`: temperature unit and per-ingredient units); a
+  cook keeps its print's (`cook_logs.display`). Values show the same way
+  (header: "as printed: °C, water in oz"), a bare number is read in the shown
+  unit, and what's typed is saved in the recipe's own unit (230 °C →
+  `^{446%F}`, 6 oz → `@water{170%g}`), so the text keeps one set of units.
+
 **Phase 5: re-basing. Dropped** (Nov 2). It only matters when tests run in
 parallel, adopting an older test already merges correctly, and the test says
 when a newer version exists. Kept below for the record.

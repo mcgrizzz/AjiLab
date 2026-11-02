@@ -100,6 +100,21 @@ async function copyTable(
   return total;
 }
 
+// How a print (or a cook) showed its amounts: JSON, copied row by row through
+// sql.json, from a source that has the column.
+async function copyDisplays(tgt: postgres.Sql, table: "prints" | "cook_logs") {
+  const [{ has }] = await src<{ has: boolean }[]>`
+    SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = ${table} AND column_name = 'display') AS has
+  `;
+  if (!has) return;
+  const rows = await src.unsafe(`SELECT id, display FROM "${table}" WHERE display <> '{}'::jsonb`) as { id: string; display: unknown }[];
+  for (const row of rows) {
+    await tgt.unsafe(`UPDATE "${table}" SET display = $1::jsonb WHERE id = $2`, [JSON.stringify(row.display), row.id]);
+  }
+  console.log(`[transfer]   ${`${table} (display)`.padEnd(22)} ${rows.length}`);
+}
+
 async function main() {
   console.log("[transfer] applying schema to target");
   await applySchema();
@@ -176,6 +191,7 @@ async function main() {
     }
     console.log(`[transfer]   ${"cook_logs (intended)".padEnd(22)} ${marked.length}`);
   }
+  await copyDisplays(tgt, "cook_logs");
 
   // 6b. Prints (a source from before printing was recorded has none)
   const [{ has_prints }] = await src<{ has_prints: boolean }[]>`
@@ -183,6 +199,7 @@ async function main() {
   `;
   if (has_prints) {
     await copyTable(tgt, "prints", ["id", "entry_id", "scale", "printed_at"], { orderBy: "printed_at" });
+    await copyDisplays(tgt, "prints");
   }
 
   // 7. Recipe references (no id column — use composite PK)

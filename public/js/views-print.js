@@ -15,8 +15,10 @@ const PrintView = {
   recordPrint() {
     const sheet = this.sheet;
     if (!sheet || !document.body.classList.contains('print-route')) return;
+    // How the amounts were shown, so the cook screen can show the same.
+    const display = { temp: RecipeView.temperatureUnit || 'F', units: { ...RecipeView.unitView(sheet.slug).overrides } };
     API.post(`/recipes/${sheet.slug}/branches/${encodeURIComponent(sheet.branch)}/prints`, {
-      version: sheet.version_string, scale: sheet.scale,
+      version: sheet.version_string, scale: sheet.scale, display,
     }).catch(() => {});
   },
 

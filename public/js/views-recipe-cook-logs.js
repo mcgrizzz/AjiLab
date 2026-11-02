@@ -338,23 +338,38 @@ Object.assign(RecipeView, {
     notes?.addEventListener('input', () => { notes.dataset.edited = '1'; });
     try {
       const branch = `/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}`;
-      const [classified, sheetParsed, cookParsed] = await Promise.all([
+      // A cook of a test: the test's own changes go into the version too.
+      const sheet = log.source_kind === 'version' ? entryByKey(recipe, log.source_version_string) : null;
+      const base = sheet?.kind === 'test' && sheet.base_version ? entryByKey(recipe, sheet.base_version) : null;
+      const [classified, sheetParsed, cookParsed, baseAt1, sheetAt1] = await Promise.all([
         API.get(`${branch}/cook-logs/${encodeURIComponent(logId)}/classify`),
         // The sheet at the cook's scale (the checklist's coordinates), and the
         // cook against it.
         API.post(`${branch}/draft/parse`, { cooklang_text: log.source_cooklang_text || '', scale }),
         API.post(`${branch}/draft/parse`, { cooklang_text: log.cooklang_text || '', source_cooklang_text: log.source_cooklang_text || '', source_scale: scale }),
+        base ? API.post(`${branch}/draft/parse`, { cooklang_text: base.cooklang_text }) : null,
+        base ? API.post(`${branch}/draft/parse`, { cooklang_text: log.source_cooklang_text || '' }) : null,
       ]);
+      const asSheet = (parsed, text) => ({ fields: CookSheet.buildFields(parsed.steps), steps: parsed.steps, text });
+      const tested = base ? CookSheet.changeList(asSheet(baseAt1, base.cooklang_text), asSheet(sheetAt1, log.source_cooklang_text || '')) : [];
+      // "Cook 2": its place among the cooks of that sheet, oldest first.
+      const sameSheet = (this.cookLogs || []).filter((l) => l.source_kind === log.source_kind && l.source_version_string === log.source_version_string).sort(CookSheet.cookOrder);
+      const cookName = sameSheet.length > 1 ? `Cook ${sameSheet.findIndex((l) => l.id === log.id) + 1}` : 'the cook';
       this.cherryPickClassified = classified;
       const target = document.getElementById('cherry-pick-panel');
       if (!target) return;
-      target.innerHTML = this.renderCherryPickPanel(classified);
+      target.innerHTML = (tested.length ? `<div class="cp-tested">
+          <div class="cp-title">What ${escHtml(sheet.label)} tests, always included</div>
+          <ul class="cp-list">${tested.map((t) => `<li class="cp-row cp-row-tested"><label class="cp-label">
+            <input type="checkbox" checked disabled /><span class="cp-tag cp-tag-tested">tested</span><span class="cp-text"><span class="cp-label-line">${escHtml(t)}</span></span>
+          </label></li>`).join('')}</ul>
+        </div>` : '') + this.renderCherryPickPanel(classified);
       const sheetFields = CookSheet.buildFields(sheetParsed.steps);
       const cookFields = CookSheet.buildFields(cookParsed.steps);
       // Changes marked "I meant this" come ticked, and only those.
       const intended = new Set((log.intended || []).map(CookSheet.keyId));
       if (intended.size) {
-        for (const box of target.querySelectorAll('.cp-checkbox')) {
+        for (const box of target.querySelectorAll('.cp-checkbox:not(:disabled)')) {
           const key = CookSheet.keyForChange(sheetFields, box.value);
           if (key) box.checked = intended.has(key);
         }
@@ -365,7 +380,7 @@ Object.assign(RecipeView, {
         const ticked = [...target.querySelectorAll('.cp-checkbox:checked')].map((box) => box.value);
         const keys = ticked.map((id) => CookSheet.keyForChange(sheetFields, id)).filter(Boolean);
         const steps = ticked.filter((id) => !id.startsWith('step-token:')).map((id) => (id.startsWith('step-add:') ? 'added a step' : `dropped step ${id.split(':')[2]}`));
-        notes.value = CookSheet.cookChangeSummary(cookFields, scale, keys, steps);
+        notes.value = CookSheet.adoptFromCookNotes(tested, CookSheet.cookChangeList(cookFields, scale, keys, steps), cookName);
       };
       fill();
       target.addEventListener('change', fill);

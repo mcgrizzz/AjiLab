@@ -46,6 +46,7 @@ import type {
   RecipeBranchRecord,
   RecipeRecord,
   CookIntendedKey,
+  SheetDisplay,
 } from "./store/types.ts";
 
 export type {
@@ -370,6 +371,18 @@ async function insertVersion(
     }
   });
   await syncReferencesForEntry(id, input.text);
+  // A working copy with nothing of its own (no changes, no pending Testing
+  // line) moves onto the new version, so the next test is made, and named,
+  // from it. One with changes is left as it is.
+  const draft = recipe.draft;
+  if (draft && draft.id !== input.delete_entry_id && !recipe.has_unreleased_changes && !draft.testing.trim()) {
+    await sql`
+      UPDATE entries SET cooklang_text = ${input.text}, tags = ${input.tags}, parent_version = ${versionString},
+             current_beta_version = NULL, from_entry_id = NULL, from_cook_log_id = NULL
+      WHERE id = ${draft.id}
+    `;
+    await syncReferencesForEntry(draft.id, input.text);
+  }
   return id;
 }
 
@@ -448,13 +461,32 @@ export async function updateVersionNotes(slug: string, versionString: string, no
 
 // ── Prints ───────────────────────────────────────────────────────────────────
 
-// Record that a version or test went on paper at a scale. The same sheet at
-// the same scale on the same day updates its record rather than adding one.
+// Only the parts of a display we understand: "F"/"C", and ingredient → unit.
+export function normalizeDisplay(raw: unknown): SheetDisplay {
+  const out: SheetDisplay = {};
+  const temp = (raw as any)?.temp;
+  if (temp === "F" || temp === "C") out.temp = temp;
+  const units = (raw as any)?.units;
+  if (units && typeof units === "object" && !Array.isArray(units)) {
+    const clean: Record<string, string> = {};
+    for (const [name, unit] of Object.entries(units)) {
+      const key = String(name).trim().toLowerCase();
+      if (key && typeof unit === "string" && unit.trim() && unit.length <= 20) clean[key] = unit.trim();
+    }
+    if (Object.keys(clean).length) out.units = clean;
+  }
+  return out;
+}
+
+// Record that a version or test went on paper at a scale, and how its
+// amounts were shown. The same sheet at the same scale on the same day
+// updates its record (with the latest display) rather than adding one.
 export async function recordPrint(
   slug: string,
   versionString: string,
   scale: number,
   branchSlug = MAIN_BRANCH_SLUG,
+  display: unknown = {},
 ): Promise<{ ok: true; id: string; created: boolean }> {
   const recipe = await requireRecipe(slug, branchSlug);
   if (!versionString || versionString === "draft") throw new Error("save the working copy as a test to print it");
@@ -466,12 +498,13 @@ export async function recordPrint(
     WHERE entry_id = ${entry.id} AND scale = ${s} AND printed_at::date = now()::date
     ORDER BY printed_at DESC LIMIT 1
   `;
+  const shown = normalizeDisplay(display);
   if (same) {
-    await sql`UPDATE prints SET printed_at = now() WHERE id = ${same.id}`;
+    await sql`UPDATE prints SET printed_at = now(), display = ${sql.json(shown as any)} WHERE id = ${same.id}`;
     return { ok: true, id: same.id, created: false };
   }
   const id = generateId();
-  await sql`INSERT INTO prints (id, entry_id, scale) VALUES (${id}, ${entry.id}, ${s})`;
+  await sql`INSERT INTO prints (id, entry_id, scale, display) VALUES (${id}, ${entry.id}, ${s}, ${sql.json(shown as any)})`;
   return { ok: true, id, created: true };
 }
 
@@ -759,6 +792,8 @@ interface CookLogInput {
   cooklang_text?: string;
   tags?: string[];
   intended?: unknown;
+  // Only read on create: how the paper showed the amounts.
+  display?: unknown;
   // Only read on create: the log's amounts are at this scale of the source.
   scale?: number;
 }
@@ -804,7 +839,7 @@ async function loadCookLogsForBranch(branchId: string, filter?: { version: strin
              cl.source_entry_id, cl.source_kind, cl.source_version,
              cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
              cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
-             cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.created_at, cl.updated_at
+             cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.display, cl.created_at, cl.updated_at
       FROM cook_logs cl
       JOIN branches b ON b.id = cl.branch_id
       WHERE cl.branch_id = ${branchId} AND cl.source_version = ${filter.version}
@@ -816,7 +851,7 @@ async function loadCookLogsForBranch(branchId: string, filter?: { version: strin
            cl.source_entry_id, cl.source_kind, cl.source_version,
            cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
            cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
-           cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.created_at, cl.updated_at
+           cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.display, cl.created_at, cl.updated_at
     FROM cook_logs cl
     JOIN branches b ON b.id = cl.branch_id
     WHERE cl.branch_id = ${branchId}
@@ -846,7 +881,7 @@ export async function getCookLog(slug: string, id: string, branchSlug = MAIN_BRA
            cl.source_entry_id, cl.source_kind, cl.source_version,
            cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
            cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
-           cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.created_at, cl.updated_at
+           cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.display, cl.created_at, cl.updated_at
     FROM cook_logs cl
     JOIN branches b ON b.id = cl.branch_id
     WHERE cl.id = ${id} AND cl.branch_id = ${branchId}
@@ -887,7 +922,7 @@ export async function createCookLog(
     INSERT INTO cook_logs (
       id, branch_id, source_entry_id, source_kind, source_version,
       cooklang_text, source_cooklang_text, tags, scale, cooked_at,
-      outcome, what_worked, problems_found, changes_to_try_next, freeform_notes, intended
+      outcome, what_worked, problems_found, changes_to_try_next, freeform_notes, intended, display
     ) VALUES (
       ${id}, ${branchId}, ${sourceEntry.id}, ${source.kind},
       ${source.kind === "version" ? sourceEntry.version_string : null},
@@ -896,7 +931,8 @@ export async function createCookLog(
       ${String(input.problems_found || "")},
       ${String(input.changes_to_try_next || "")},
       ${String(input.freeform_notes || "")},
-      ${sql.json(normalizeIntended(input.intended) as any)}
+      ${sql.json(normalizeIntended(input.intended) as any)},
+      ${sql.json(normalizeDisplay(input.display) as any)}
     )
   `;
   return (await getCookLog(slug, id, branchSlug))!;

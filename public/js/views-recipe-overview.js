@@ -403,7 +403,8 @@ Object.assign(RecipeView, {
       el.innerHTML = `<strong>${escHtml(label)} hasn't been cooked yet.</strong> Consider cooking it before adopting it.${compareLink}`;
       return;
     }
-    const latest = list.reduce((a, b) => (new Date(a.cooked_at) > new Date(b.cooked_at) ? a : b));
+    const ordered = [...list].sort(CookSheet.cookOrder);
+    const latest = ordered[ordered.length - 1];
     // "1 at 2×": cooks at another scale back the test too, but say so.
     const byScale = new Map();
     for (const log of list) {
@@ -417,7 +418,7 @@ Object.assign(RecipeView, {
     const choice = document.getElementById('rel-source');
     if (!choice) return;
     this.cookLogs = list;
-    const cooks = [...list].sort((a, b) => a.cooked_at.localeCompare(b.cooked_at));
+    const cooks = ordered;
     choice.innerHTML = `<fieldset class="rel-source">
       <legend class="field-label">Adopt</legend>
       <label class="rel-source-option"><input type="radio" name="rel-source" value="" checked /> ${escHtml(label)} as written</label>

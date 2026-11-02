@@ -48,6 +48,8 @@ const CookView = {
     clearTimeout(this.reflectTimer);
     this.changingSheet = false;
     this.startShown = false;
+    // How the paper showed the amounts ({ temp, units }); values show the same.
+    this.display = {};
   },
 
   // opts: { id } for an existing cook; for a new one { sheet, scale, pick }
@@ -71,6 +73,7 @@ const CookView = {
         const time = CookSheet.localTime(log.cooked_at);
         this.time = time === '12:00' ? '' : time;
         for (const key of log.intended || []) this.intended.set(CookSheet.keyId(key), key);
+        this.display = log.display || {};
       } else {
         const selected = opts.sheet ? { version_string: opts.sheet } : null;
         const scale = parseFloat(opts.scale) > 0 ? parseFloat(opts.scale) : 1;
@@ -83,6 +86,7 @@ const CookView = {
         this.sheetKey = this.start.version_string;
         this.scale = this.start.scale;
         if (this.start.print) this.day = CookSheet.localDay(this.start.print.printed_at);
+        this.display = this.printDisplay();
       }
       await this.loadSheet();
       this.paint(container);
@@ -101,6 +105,23 @@ const CookView = {
     if (!this.active) return;
     this.active = false;
     if (Object.keys(this.reflectDirty || {}).length) this.saveReflect();
+  },
+
+  // The display of the print this new cook starts from, if it's this sheet's.
+  printDisplay() {
+    const print = this.start?.print;
+    return print && print.version_string === this.sheetKey ? (print.display || {}) : {};
+  },
+
+  // A value as the paper showed it, as text.
+  shown(f, amount = f.current) {
+    return CookSheet.formatAmount(CookSheet.shownAmount(f, amount, this.display), f.isTemp);
+  },
+
+  // What was typed, as the paper shows it, then in the recipe's own units.
+  readTyped(f, text) {
+    const typed = CookSheet.parseTyped(text, f, CookSheet.shownAmount(f, f.current, this.display).units);
+    return typed ? CookSheet.savedAmount(f, typed) : null;
   },
 
   sheetEntry() {
@@ -213,7 +234,9 @@ const CookView = {
     const change = this.log
       ? '<span class="cook-fixed-note">Fixed once recorded</span>'
       : '<button class="link-btn" data-act="change-sheet">Change</button>';
-    return `<span class="cook-sheet-name">${escHtml(this.sheetLabel())}</span>${scale}${print} ${change}`;
+    const asPrinted = CookSheet.displayNote(this.display);
+    const shownAs = asPrinted ? ` · <span class="cook-shown-as" title="Values are shown as on the printout and saved in the recipe's own units">as printed: ${escHtml(asPrinted)}</span>` : '';
+    return `<span class="cook-sheet-name">${escHtml(this.sheetLabel())}</span>${scale}${print}${shownAs} ${change}`;
   },
 
   dateHtml() {
@@ -267,13 +290,13 @@ const CookView = {
   },
 
   fieldHtml(f, { tabbable = true, inList = false } = {}) {
-    const value = CookSheet.formatAmount(f.current, f.isTemp);
-    const size = Math.max(3, value.length + 1, CookSheet.formatAmount(f.original, f.isTemp).length + 1);
+    const value = this.shown(f);
+    const size = Math.max(3, value.length + 1, this.shown(f, f.original).length + 1);
     const name = f.kind === 'ingredient' ? f.name : (f.kind === 'timer' ? 'time' : (f.isTemp ? 'temperature' : 'amount'));
     const label = f.kind === 'ingredient'
       ? `<span class="ck-name">${escHtml(f.name)}</span>`
       : (f.kind === 'timer' ? '<span class="ck-icon" aria-hidden="true">⏱</span>' : '');
-    const input = `<input class="ck-input" data-f="${f.id}" value="${escHtml(value)}" size="${size}" spellcheck="false" autocomplete="off"${tabbable ? '' : ' tabindex="-1"'} aria-label="${escHtml(`${name}, the sheet said ${CookSheet.formatAmount(f.original, f.isTemp)}`)}" />`;
+    const input = `<input class="ck-input" data-f="${f.id}" value="${escHtml(value)}" size="${size}" spellcheck="false" autocomplete="off"${tabbable ? '' : ' tabindex="-1"'} aria-label="${escHtml(`${name}, the sheet said ${this.shown(f, f.original)}`)}" />`;
     const chip = inList ? `${input}${label}` : `${label}${input}`;
     // In a step, a value the ingredient list also shows leaves "was …" to
     // the list.
@@ -285,7 +308,7 @@ const CookView = {
     const kind = CookSheet.changeKind(f);
     if (kind === 'unchanged') return '';
     const meant = f.key && this.intended.has(CookSheet.keyId(f.key));
-    return `<button class="ck-was-btn" data-act="revert" data-f="${f.id}" tabindex="-1" title="Put back what the sheet said">was ${escHtml(CookSheet.formatAmount(f.original, f.isTemp))}</button>`
+    return `<button class="ck-was-btn" data-act="revert" data-f="${f.id}" tabindex="-1" title="Put back what the sheet said">was ${escHtml(this.shown(f, f.original))}</button>`
       + (kind === 'changed' && f.key
         ? `<button class="ck-meant" data-act="meant" data-f="${f.id}" tabindex="-1" aria-pressed="${!!meant}" title="Mark this change as deliberate">${meant ? '✓ I meant this' : 'I meant this'}</button>`
         : '');
@@ -329,7 +352,7 @@ const CookView = {
           case 'ingredient': return `<span class="s-ingredient">${escHtml(token.name || token.value)}</span>`;
           case 'cookware': return `<span class="s-cookware">${escHtml(token.name || token.value)}</span>`;
           case 'text':
-          case 'comment': return renderTextWithBreaks(token.value, 'F');
+          case 'comment': return renderTextWithBreaks(token.value, this.display.temp || 'F');
           default: return escHtml(token.value || '');
         }
       }).join('');
@@ -395,6 +418,7 @@ const CookView = {
       cooked_at: this.cookedAtIso(),
       outcome, changes_to_try_next: next, freeform_notes: notes,
       intended: [...this.intended.values()],
+      display: this.display,
     });
     this.text = this.log.cooklang_text || '';
     this.sourceText = this.log.source_cooklang_text || '';
@@ -449,7 +473,7 @@ const CookView = {
       if (!preview) el.querySelector('.ck-was').innerHTML = el.dataset.quiet ? '' : this.wasInner(f);
     }
     if (!preview) {
-      const value = CookSheet.formatAmount(f.current, f.isTemp);
+      const value = this.shown(f);
       for (const input of this.inputsFor(f)) {
         input.value = value;
         if (input.size < value.length + 1) input.size = value.length + 1;
@@ -480,7 +504,7 @@ const CookView = {
   commitInput(input) {
     const f = this.field(input.dataset.f);
     if (!f) return;
-    const typed = CookSheet.parseTyped(input.value, f);
+    const typed = this.readTyped(f, input.value);
     if (!typed) {
       if (input.value.trim()) showToast('Type an amount, like 225, 1 cup or 18-20');
       this.paintField(f);
@@ -663,7 +687,7 @@ const CookView = {
     if (el.classList.contains('ck-input')) {
       const f = this.field(el.dataset.f);
       if (!f) return;
-      const typed = CookSheet.parseTyped(el.value, f);
+      const typed = this.readTyped(f, el.value);
       this.paintField(f, { kind: typed ? CookSheet.changeKind(f, typed) : 'invalid' });
       if (el.size < el.value.length + 1) el.size = el.value.length + 1;
       return;
@@ -703,13 +727,13 @@ const CookView = {
       if (e.key === 'Enter') { e.preventDefault(); this.commitInput(el); this.focusNext(el, e.shiftKey ? -1 : 1); return; }
       if (e.key === 'Escape' && f) {
         e.preventDefault();
-        const committed = CookSheet.formatAmount(f.current, f.isTemp);
+        const committed = this.shown(f);
         if (el.value !== committed) { el.value = committed; this.paintField(f); }
         else if (CookSheet.changeKind(f) !== 'unchanged') this.setValue(f, f.original);
         el.select();
         return;
       }
-      if (mod && e.key.toLowerCase() === 'z' && f && el.value === CookSheet.formatAmount(f.current, f.isTemp)) {
+      if (mod && e.key.toLowerCase() === 'z' && f && el.value === this.shown(f)) {
         e.preventDefault();
         this.undo();
       }
@@ -767,6 +791,7 @@ const CookView = {
     this.sheetKey = key;
     this.scale = scale;
     this.changingSheet = false;
+    this.display = this.printDisplay();
     try {
       await this.loadSheet();
     } catch (e) {
@@ -794,9 +819,15 @@ const CookView = {
     await this.queue;
     if (this.failed) { showToast(`Couldn't save: ${this.failed}`); return; }
     const recorded = !!this.log;
-    const params = new URLSearchParams({ tab: 'cook-logs' });
-    if (this.branch !== 'main') params.set('branch', this.branch);
-    await Router.go(`/recipe/${this.slug}?${params.toString()}`);
+    // Back to the test's page for a test (its cooks are there); otherwise
+    // the recipe's Cooks.
+    const sheet = this.sheetEntry();
+    const branch = this.branch !== 'main' ? `branch=${encodeURIComponent(this.branch)}` : '';
+    if (sheet?.kind === 'test' && sheet.test_key) {
+      await Router.go(`/recipe/${this.slug}/tests/${encodeURIComponent(sheet.test_key)}${branch ? `?${branch}` : ''}`);
+    } else {
+      await Router.go(`/recipe/${this.slug}?tab=cook-logs${branch ? `&${branch}` : ''}`);
+    }
     if (recorded) showToast('Cook saved');
   },
 };

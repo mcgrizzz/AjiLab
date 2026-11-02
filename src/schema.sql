@@ -315,3 +315,9 @@ CREATE TABLE IF NOT EXISTS prints (
   printed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_prints_entry_recent ON prints(entry_id, printed_at DESC);
+
+-- How a print showed its amounts: the temperature unit and per-ingredient
+-- unit choices ({"temp":"C","units":{"flour":"cup"}}). A cook started from
+-- that print keeps it, so the cook screen shows what the paper said.
+ALTER TABLE prints ADD COLUMN IF NOT EXISTS display JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE cook_logs ADD COLUMN IF NOT EXISTS display JSONB NOT NULL DEFAULT '{}';

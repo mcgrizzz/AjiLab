@@ -102,6 +102,8 @@ export interface CookLogRecord {
   freeform_notes: string;
   // Differences marked "I meant this".
   intended: CookIntendedKey[];
+  // How the paper showed the amounts (from the print it was started from).
+  display: SheetDisplay;
   created_at: string;
   updated_at: string;
 }
@@ -122,6 +124,14 @@ export interface PrintRecord {
   label: string;
   scale: number;
   printed_at: string;
+  display: SheetDisplay;
+}
+
+// How a sheet's amounts were shown on paper: temperatures in °F or °C, and
+// ingredients shown in another unit ({ flour: "cup" }).
+export interface SheetDisplay {
+  temp?: "F" | "C";
+  units?: Record<string, string>;
 }
 
 export interface BranchCounts {
