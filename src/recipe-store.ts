@@ -12,12 +12,14 @@ import {
   nextAutoBetaVersion,
 } from "./store/version-string.ts";
 import { mergeCooklangText } from "./store/merge.ts";
-import { baseVersionOf } from "./store/lineage.ts";
+import { baseVersionOf, nextTestSeq } from "./store/lineage.ts";
 import {
   MAIN_BRANCH_SLUG,
 } from "./store/types.ts";
 import {
   entryRowToVersion,
+  testLabel,
+  testKey,
   branchRowToMeta,
   cookLogRowToRecord,
   type EntryRow,
@@ -241,7 +243,7 @@ export async function saveTest(
   slug: string,
   input: { testing?: string },
   branchSlug = MAIN_BRANCH_SLUG,
-): Promise<{ ok: true; version_string: string; test_number: number; created: boolean }> {
+): Promise<{ ok: true; version_string: string; test_number: number; label: string; test_key: string | null; created: boolean }> {
   const recipe = await requireRecipe(slug, branchSlug);
   const draft = recipe.draft;
   if (!draft?.cooklang_text.trim()) throw new Error("the working copy is empty");
@@ -251,25 +253,28 @@ export async function saveTest(
     : null;
   if (last && last.kind === "test" && sameDraftState(last, draft.cooklang_text, JSON.parse(draft.tags || "[]"))) {
     if (testing && testing !== last.testing) await sql`UPDATE entries SET changelog = ${testing} WHERE id = ${last.id}`;
-    return { ok: true, version_string: last.version_string!, test_number: last.test_number!, created: false };
+    return { ok: true, version_string: last.version_string!, test_number: last.test_number!, label: last.label, test_key: last.test_key, created: false };
   }
   const branchId = recipe.branch.id;
   const id = generateId();
   const number = recipe.next_test_number;
   const versionString = `test-${number}`;
+  // Named by the version it's made from: "v1.1 · Test 2".
+  const base = draft.base_version ?? null;
+  const seq = nextTestSeq(recipe.versions, base);
   await sql.begin(async (tx) => {
     await tx`
       INSERT INTO entries (id, branch_id, version_string, status, cooklang_text, changelog, parent_version, tags,
-                           test_number, from_entry_id, from_cook_log_id)
+                           test_number, test_base, test_seq, from_entry_id, from_cook_log_id)
       VALUES (${id}, ${branchId}, ${versionString}, 'beta', ${draft.cooklang_text}, ${testing},
               ${draft.base_version}, ${JSON.parse(draft.tags || "[]")},
-              ${number}, ${draft.from_entry_id}, ${draft.from_cook_log_id})
+              ${number}, ${base}, ${seq}, ${draft.from_entry_id}, ${draft.from_cook_log_id})
     `;
     // The working copy remembers its last test; the pending Testing line is used up.
     await tx`UPDATE entries SET current_beta_version = ${versionString}, changelog = '' WHERE id = ${draft.id}`;
   });
   await syncReferencesForEntry(id, draft.cooklang_text);
-  return { ok: true, version_string: versionString, test_number: number, created: true };
+  return { ok: true, version_string: versionString, test_number: number, label: testLabel(base, seq), test_key: testKey(base, seq), created: true };
 }
 
 function findTest(recipe: RecipeRecord, versionString: string): VersionRecord {
@@ -1018,7 +1023,7 @@ async function findEntryById(id: string): Promise<VersionRecord | null> {
            e.version_string, e.status, e.cooklang_text, e.changelog,
            e.parent_version, e.current_beta_version, e.tags,
            e.created_at, e.updated_at,
-           e.test_number, e.closed_as, e.closed_at, e.from_entry_id, e.from_cook_log_id
+           e.test_number, e.test_base, e.test_seq, e.closed_as, e.closed_at, e.from_entry_id, e.from_cook_log_id
     FROM entries e JOIN branches b ON b.id = e.branch_id
     WHERE e.id = ${id}
   `;

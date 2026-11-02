@@ -30,6 +30,8 @@ export type EntryRow = {
   created_at: Date;
   updated_at: Date;
   test_number: number | null;
+  test_base?: string | null;
+  test_seq?: number | null;
   closed_as: string | null;
   closed_at: Date | null;
   from_entry_id: string | null;
@@ -42,10 +44,23 @@ export function entryKind(row: { version_string: string | null; status: string; 
   return "version" as const;
 }
 
-export function entryLabel(row: { version_string: string | null; status: string; test_number: number | null }): string {
+// "v1.1 · Test 2": the 2nd test made from v1.1. Before any version: "Test 1".
+export function testLabel(base: string | null | undefined, seq: number): string {
+  return base ? `${base} · Test ${seq}` : `Test ${seq}`;
+}
+
+// The test's part of its page address: /tests/v1.1-2 (v0-1 before any version).
+export function testKey(base: string | null | undefined, seq: number): string {
+  return `${base || "v0"}-${seq}`;
+}
+
+export function entryLabel(row: { version_string: string | null; status: string; test_number: number | null; test_base?: string | null; test_seq?: number | null }): string {
   const kind = entryKind(row);
   if (kind === "working_copy") return "Working copy";
-  if (kind === "test") return row.test_number !== null ? `Test ${row.test_number}` : (row.version_string || "Test");
+  if (kind === "test") {
+    if (row.test_seq) return testLabel(row.test_base, row.test_seq);
+    return row.test_number !== null ? `Test ${row.test_number}` : (row.version_string || "Test");
+  }
   return row.version_string || "";
 }
 
@@ -68,6 +83,9 @@ export function entryRowToVersion(row: EntryRow): VersionRecord {
     updated_at: row.updated_at.toISOString(),
     is_draft: row.version_string === null,
     test_number: row.test_number ?? null,
+    test_base: row.test_base ?? null,
+    test_seq: row.test_seq ?? null,
+    test_key: row.test_seq ? testKey(row.test_base, row.test_seq) : (row.test_number !== null ? String(row.test_number) : null),
     closed_as: (row.closed_as as VersionRecord["closed_as"]) ?? null,
     closed_at: row.closed_at ? row.closed_at.toISOString() : null,
     from_entry_id: row.from_entry_id ?? null,

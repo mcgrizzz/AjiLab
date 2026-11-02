@@ -13,7 +13,7 @@ Object.assign(RecipeView, {
         ${this.openTestsStripHtml(test)}
         ${this.overviewPrimaryBannerHtml(test)}
         <section class="test-section" aria-labelledby="test-changes-title">
-          <h2 class="test-section-title" id="test-changes-title">What ${escHtml(label)} changes${test.base_version ? ` from ${escHtml(test.base_version)}` : ''}</h2>
+          <h2 class="test-section-title" id="test-changes-title">What it changes${test.base_version ? ` from ${escHtml(test.base_version)}` : ''}</h2>
           <div id="test-changes"><div class="loading"><div class="spinner"></div></div></div>
         </section>
         <section class="test-section" aria-labelledby="test-cooks-title">

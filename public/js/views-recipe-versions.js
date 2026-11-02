@@ -55,12 +55,11 @@ Object.assign(RecipeView, {
   },
 
   // A version: "v1.1 · current", date, "from Test 4", what changed.
-  // A test: "Test 4 · more water", "based on v1.0 · 2 cooks · adopted as v1.1".
+  // A test: "v1.0 · Test 4 · more water", "2 cooks · adopted as v1.1".
   versionRowHtml(v) {
     const isTest = v.kind === 'test';
     const facts = [fmtDate(v.created_at)];
     if (isTest) {
-      if (v.base_version) facts.push(`based on ${v.base_version}`);
       facts.push(v.cook_count ? `${v.cook_count} cook${v.cook_count === 1 ? '' : 's'}` : 'not cooked');
     } else if (v.from_label) {
       facts.push(`from ${v.from_label}`);

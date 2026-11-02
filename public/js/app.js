@@ -3,7 +3,7 @@ const Router = {
   routes: [
     { pattern: /^\/$/, view: 'index' },
     { pattern: /^\/recipe\/([^/]+)\/versions\/([^/]+)$/, view: 'recipe-version' },
-    { pattern: /^\/recipe\/([^/]+)\/tests\/(\d+)$/, view: 'recipe-test' },
+    { pattern: /^\/recipe\/([^/]+)\/tests\/([^/]+)$/, view: 'recipe-test' },
     { pattern: /^\/recipe\/([^/]+)\/print$/, view: 'recipe-print' },
     { pattern: /^\/recipe\/([^/]+)\/cooks\/([^/]+)$/, view: 'recipe-cook' },
     { pattern: /^\/recipe\/([^/]+)$/, view: 'recipe' },
@@ -59,7 +59,7 @@ const Router = {
           backBtn.classList.remove('hidden');
           addBtn.classList.remove('hidden');
           await RecipeView.render(container, m[1], {
-            testNumber: Number(m[2]),
+            testKey: decodeURIComponent(m[2]),
             branch: url.searchParams.get('branch') || 'main',
             tab: url.searchParams.get('tab') || 'overview',
             scale: url.searchParams.get('scale'),

@@ -31,7 +31,7 @@ const PrintView = {
       if (branch !== 'main') params.set('branch', branch);
       if (scale !== 1) params.set('scale', String(scale));
       await Router.go(`/recipe/${slug}/print?${params.toString()}`, true);
-      showToast(saved.created ? `Saved Test ${saved.test_number}` : `No changes since Test ${saved.test_number}`);
+      showToast(saved.created ? `Saved ${saved.label}` : `No changes since ${saved.label}`);
       triggerPrint();
     } catch (e) {
       if (button) button.disabled = false;
@@ -103,8 +103,8 @@ const PrintView = {
       const servings = parsed?.metadata?.servings || parsed?.metadata?.Servings || parsed?.metadata?.yield || '';
       const isDraft = !!version?.is_draft;
       this.sheet = isDraft || !version?.version_string ? null : { slug, branch, version_string: version.version_string, scale };
-      // The stamp, "Test 4 — more water · based on v1.0 · 2× · printed Nov
-      // 2, 2026", ties the paper to the version or test it was cooked from.
+      // The stamp, "v1.0 · Test 4 — more water · 2× · printed Nov 2, 2026",
+      // ties the paper to the version or test it was cooked from.
       const label = version?.label || version?.version_string || '';
       const sheet = isDraft
         ? 'Working copy (not a saved test)'
@@ -113,19 +113,18 @@ const PrintView = {
           : `${label}${version?.is_current || !recipe.current_version ? '' : ' (not current)'}`;
       const meta = [
         sheet,
-        version?.kind === 'test' && version.base_version ? `based on ${version.base_version}` : null,
         scale !== 1 ? `${roundScale(scale)}×` : null,
         branch !== 'main' ? `branch ${branch}` : null,
         isDraft ? `edited ${fmtDate(version.updated_at)}` : `printed ${fmtDate(new Date().toISOString())}`,
       ].filter(Boolean);
       // What to look for when recording the cook.
       const footer = isDraft ? '' : `Record this cook in AjiLab as: ${recipe.title} · ${label}${scale !== 1 ? ` · ${roundScale(scale)}×` : ''}`;
-      const number = recipe.next_test_number;
+      const number = recipe.next_test_label;
       const printAction = isDraft
         ? `<div class="print-save-test">
-            <span class="print-save-test-note">The working copy changes as you edit. Save it as Test ${number} so the paper matches what you record.</span>
+            <span class="print-save-test-note">The working copy changes as you edit. Save it as ${escHtml(number)} so the paper matches what you record.</span>
             <input id="print-testing" class="field-input" placeholder="What are you testing? e.g. more water" maxlength="120" value="${escHtml(version.testing || '')}" aria-label="What are you testing?" />
-            <button id="print-save-test" class="btn btn-sm btn-primary" onclick="PrintView.saveTestAndPrint('${escJs(slug)}', '${escJs(branch)}', ${scale})">Save as Test ${number} and print</button>
+            <button id="print-save-test" class="btn btn-sm btn-primary" onclick="PrintView.saveTestAndPrint('${escJs(slug)}', '${escJs(branch)}', ${scale})">Save as ${escHtml(number)} and print</button>
           </div>`
         : `<button class="btn btn-sm btn-primary" onclick="triggerPrint()">Print</button>`;
       const classes = ['print-view'];

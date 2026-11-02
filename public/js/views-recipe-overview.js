@@ -64,7 +64,7 @@ Object.assign(RecipeView, {
         ? `${t.cook_count} cook${t.cook_count === 1 ? '' : 's'} · latest ${shortDate(t.last_cooked_at)}${t.last_outcome ? `: ${t.last_outcome}` : ''}`
         : 'not cooked yet';
       const stale = current && t.base_version && t.base_version !== current.version_string
-        ? ` · based on ${t.base_version}` : '';
+        ? ` · ${current.version_string} is newer` : '';
       const onScreen = primary.version_string === t.version_string;
       return `<li><button type="button" class="tests-strip-item${onScreen ? ' is-on-screen' : ''}" onclick="RecipeView.switchVersion('${escJs(t.version_string)}')"${onScreen ? ' aria-current="true"' : ''}>
         <span class="tests-strip-name">${escHtml(entryTitle(t))}</span><span class="tests-strip-evidence">${escHtml(`${stale} · ${evidence}`.replace(/^ · /, ''))}</span>
@@ -78,20 +78,16 @@ Object.assign(RecipeView, {
   },
 
   // "v1.1 · current version", "v1.0 · not current (current is v1.1)",
-  // "Test 4 · more water · based on v1.0 · open".
+  // "v1.0 · Test 4 · more water · open" (its name says what it's made from).
   bannerLabel(entry) {
     const current = this.recipe.current_version;
     if (entry.is_draft) {
       return `Working copy${entry.base_version ? ` · based on ${entry.base_version}` : ''}`;
     }
     if (entry.kind === 'test') {
-      let base = '';
-      if (entry.base_version) {
-        base = current && current.version_string !== entry.base_version
-          ? ` · based on ${entry.base_version} (current is ${current.version_string})`
-          : ` · based on ${entry.base_version}`;
-      }
-      return `${entryTitle(entry)}${base} · ${testStateText(entry)}`;
+      const newer = current && entry.base_version && current.version_string !== entry.base_version
+        ? ` · ${current.version_string} is newer` : '';
+      return `${entryTitle(entry)} · ${testStateText(entry)}${newer}`;
     }
     if (entry.is_current) return `${entry.label} · current version`;
     return current ? `${entry.label} · not current (current is ${current.label})` : entry.label;
@@ -109,7 +105,7 @@ Object.assign(RecipeView, {
     let note = '';
     if (primary.is_draft) {
       actions.push(`<button class="btn btn-sm btn-primary" onclick="RecipeView.setTab('editor')">Open editor</button>`);
-      actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openSaveTestModal()">Save as Test ${recipe.next_test_number}…</button>`);
+      actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openSaveTestModal()">Save as ${escHtml(recipe.next_test_label)}…</button>`);
       note = 'The working copy is where the next test is set up. Save it as a test to print and cook it.';
     } else {
       actions.push(`<button class="btn btn-sm btn-primary" onclick="RecipeView.logThisCook()" title="Record a cook of ${escHtml(name)}${escHtml(scaleNote)}">Record a cook</button>`);
@@ -216,7 +212,7 @@ Object.assign(RecipeView, {
         <input id="new-test-testing" class="field-input" placeholder="e.g. more water" maxlength="120" />
         <small style="color:var(--ink2);font-size:0.78rem">One short phrase. It goes on the printout.</small>
       </div>
-      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">The working copy resets to ${escHtml(from.label)} and the Editor opens. Make the change, then save it as Test ${this.recipe.next_test_number}.</p>
+      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">The working copy resets to ${escHtml(from.label)} and the Editor opens. Make the change, then save it as ${escHtml(this.nextTestLabelFrom(from))}.</p>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
         <button class="btn btn-primary" id="new-test-go">Start test</button>
@@ -235,8 +231,18 @@ Object.assign(RecipeView, {
       sourceLabel: from?.label || fromKey,
       targetText: from?.cooklang_text ?? null,
       request: () => API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(fromKey)}/fork`, { testing }),
-      message: `Working copy reset to ${from?.label || fromKey}. Make your change, then save it as Test ${this.recipe.next_test_number}.`,
+      message: `Working copy reset to ${from?.label || fromKey}. Make your change, then save it as a test.`,
     });
+  },
+
+  // What a new test started from this sheet will be called: "v1.1 · Test 3"
+  // (a test made from a test is made from its version).
+  nextTestLabelFrom(from) {
+    const version = from.kind === 'test' ? from.base_version : from.version_string;
+    const seq = (this.recipe.versions || [])
+      .filter((v) => v.kind === 'test' && v.test_seq && (v.test_base || null) === (version || null))
+      .reduce((max, v) => Math.max(max, v.test_seq), 0) + 1;
+    return version ? `${version} · Test ${seq}` : `Test ${seq}`;
   },
 
   openTestingModal(versionString) {

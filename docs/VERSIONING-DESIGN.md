@@ -497,7 +497,18 @@ already starts from the newest unrecorded print.
   "within the sheet's range", "added", "skipped". Not built: the cooks of an
   earlier, re-based test (phase 5).
 
-**Phase 5: re-basing.**
+**Test names, after Andrew's review (Nov 2).** Tests are named by the
+version they were made from: "v1.1 · Test 2" is the 2nd test made from v1.1,
+and a test made before any version is plain "Test 1". The number is stored
+when the test is saved (`test_base`, `test_seq`; existing tests were numbered
+once, in creation order), so deleting a test renames nothing. Pages are
+`/tests/v1.1-2`; the old `/tests/4` links still work. "Based on v1.0" is gone
+where the name already says it; a test behind the current version says
+"v1.2 is newer".
+
+**Phase 5: re-basing. Dropped** (Nov 2). It only matters when tests run in
+parallel, adopting an older test already merges correctly, and the test says
+when a newer version exists. Kept below for the record.
 - "Re-base on v1.2" makes Test N+1 from the 3-way merge and closes the old test
   as re-based. The new page carries the old cooks as earlier evidence.
 - **Tests:** a clean re-base, a conflict, and that the earlier evidence shows.

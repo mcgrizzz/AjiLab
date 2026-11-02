@@ -51,16 +51,16 @@ test("a new recipe has a working copy and no version yet", async () => {
 test("saving the working copy as a test: numbered, based on the current version, open", async () => {
   const slug = await recipeWithVersion("Save test");
   const saved = await makeTest(slug, "more water", (t) => t.replace("375", "390"));
-  assert.deepEqual(saved, { ok: true, version_string: "test-1", test_number: 1, created: true });
+  assert.deepEqual(saved, { ok: true, version_string: "test-1", test_number: 1, label: "v1.0 · Test 1", test_key: "v1.0-1", created: true });
 
   const recipe = await get(slug);
-  const t1 = entry(recipe, "Test 1");
+  const t1 = entry(recipe, "v1.0 · Test 1");
   assert.equal(t1.kind, "test");
   assert.equal(t1.status, "beta");
   assert.equal(t1.testing, "more water");
   assert.equal(t1.base_version, "v1.0");
   assert.equal(t1.open, true);
-  assert.deepEqual(recipe.open_tests.map((v) => v.label), ["Test 1"]);
+  assert.deepEqual(recipe.open_tests.map((v) => v.label), ["v1.0 · Test 1"]);
   assert.equal(recipe.next_test_number, 2);
   // The pending Testing line is used up; the working copy now matches Test 1.
   assert.equal(recipe.draft.testing, "");
@@ -97,12 +97,12 @@ test("a working copy older than what it's compared with has no changes of its ow
 test("renaming or stopping a test doesn't touch its timestamp or hide working-copy changes", async () => {
   const slug = await recipeWithVersion("Bookkeeping");
   await makeTest(slug, "more water", (t) => t.replace("375", "390"));
-  const before = entry(await get(slug), "Test 1").updated_at;
+  const before = entry(await get(slug), "v1.0 · Test 1").updated_at;
   await ctx.store.updateDraft(slug, { cooklang_text: V1.replace("375", "400") });
   await ctx.store.updateTesting(slug, "test-1", "a lot more water");
   await ctx.store.setTestOpen(slug, "test-1", false);
   const recipe = await get(slug);
-  assert.equal(entry(recipe, "Test 1").updated_at, before);
+  assert.equal(entry(recipe, "v1.0 · Test 1").updated_at, before);
   assert.equal(recipe.draft_change_label, "Working copy has changes");
 });
 
@@ -115,10 +115,10 @@ test("adopting a test based on the current version takes it as written and close
   assert.equal(result.merged, false);
 
   const recipe = await get(slug);
-  const t1 = entry(recipe, "Test 1");
+  const t1 = entry(recipe, "v1.0 · Test 1");
   const v11 = entry(recipe, "v1.1");
   assert.equal(v11.cooklang_text, V1.replace("375", "390"));
-  assert.equal(v11.from_label, "Test 1");
+  assert.equal(v11.from_label, "v1.0 · Test 1");
   assert.equal(v11.is_current, true);
   assert.equal(t1.open, false);
   assert.equal(t1.closed_as, "adopted");
@@ -157,7 +157,7 @@ test("adopting a test that changes the same line as the current version is refus
   );
   const recipe = await get(slug);
   assert.equal(entry(recipe, "v1.2"), undefined);
-  assert.equal(entry(recipe, "Test 1").open, true);
+  assert.equal(entry(recipe, "v1.0 · Test 1").open, true);
 });
 
 test("releasing the working copy without testing merges and removes the working copy", async () => {
@@ -217,23 +217,23 @@ test("adopting from a cook merges what was done differently into the current ver
   assert.match(v12.cooklang_text, /~\{40%min\}/, "the cook's change");
   assert.match(v12.cooklang_text, /@salt\{12%g\}/, "v1.1's change kept");
   assert.equal(v12.from_cook_log_id, log.id);
-  assert.equal(v12.from_label, "Test 1");
-  assert.equal(entry(recipe, "Test 1").closed_as, "adopted");
+  assert.equal(v12.from_label, "v1.0 · Test 1");
+  assert.equal(entry(recipe, "v1.0 · Test 1").closed_as, "adopted");
 });
 
 test("the Testing line can change; stopping and reopening a test", async () => {
   const slug = await recipeWithVersion("Test state");
   await makeTest(slug, "", (t) => t.replace("375", "390"));
   await ctx.store.updateTesting(slug, "test-1", "  more water ");
-  let t1 = entry(await get(slug), "Test 1");
+  let t1 = entry(await get(slug), "v1.0 · Test 1");
   assert.equal(t1.testing, "more water");
 
   await ctx.store.setTestOpen(slug, "test-1", false);
-  t1 = entry(await get(slug), "Test 1");
+  t1 = entry(await get(slug), "v1.0 · Test 1");
   assert.equal(t1.closed_as, "stopped");
   assert.equal(t1.open, false);
   await ctx.store.setTestOpen(slug, "test-1", true);
-  assert.equal(entry(await get(slug), "Test 1").open, true);
+  assert.equal(entry(await get(slug), "v1.0 · Test 1").open, true);
 
   await ctx.store.releaseVersion(slug, "test-1", { version_string: "v1.1" });
   await assert.rejects(ctx.store.setTestOpen(slug, "test-1", true), /was adopted/);
@@ -247,14 +247,14 @@ test("a new test made from a test remembers it; its base is the version undernea
   let recipe = await get(slug);
   assert.equal(recipe.draft.testing, "more water, less salt");
   assert.equal(recipe.draft.base_version, "v1.0");
-  assert.equal(recipe.draft.from_label, "Test 1");
+  assert.equal(recipe.draft.from_label, "v1.0 · Test 1");
   await ctx.store.updateDraft(slug, { cooklang_text: recipe.draft.cooklang_text.replace("10%g", "8%g") });
   await ctx.store.saveTest(slug, {});
   recipe = await get(slug);
-  const t2 = entry(recipe, "Test 2");
+  const t2 = entry(recipe, "v1.0 · Test 2");
   assert.equal(t2.testing, "more water, less salt");
   assert.equal(t2.base_version, "v1.0");
-  assert.equal(t2.from_label, "Test 1");
+  assert.equal(t2.from_label, "v1.0 · Test 1");
 });
 
 test("old clients: advance_beta saves a test, and undo gives its Testing line back", async () => {
@@ -262,11 +262,11 @@ test("old clients: advance_beta saves a test, and undo gives its Testing line ba
   await ctx.store.forkVersionToDraft(slug, "v1.0", "main", { testing: "more water" });
   const saved = await ctx.store.updateDraft(slug, { cooklang_text: V1.replace("375", "390") }, { advance_beta: true });
   assert.equal(saved.created_beta, "test-1");
-  assert.equal(entry(await get(slug), "Test 1").testing, "more water");
+  assert.equal(entry(await get(slug), "v1.0 · Test 1").testing, "more water");
 
   await ctx.store.undoDraftBeta(slug, "test-1", null);
   const recipe = await get(slug);
-  assert.equal(entry(recipe, "Test 1"), undefined);
+  assert.equal(entry(recipe, "v1.0 · Test 1"), undefined);
   assert.equal(recipe.draft.testing, "more water");
 });
 
@@ -302,17 +302,17 @@ test("migration: old betas become numbered tests, closed where a version overtoo
   assert.deepEqual(shape("Test 2"), ["v1.0-beta.2", "superseded", null]);
   assert.deepEqual(shape("Test 3"), ["v1.0-beta.3", "stopped", null]);
   assert.deepEqual(shape("Test 4"), ["v1.0-beta.4", "adopted", null]);
-  assert.deepEqual(shape("Test 5"), ["v1.1-beta.1", null, "v1.0"]);
+  assert.deepEqual(shape("v1.0 · Test 1"), ["v1.1-beta.1", null, "v1.0"]);
   assert.equal(entry(recipe, "Test 4").adopted_as, "v1.0");
   assert.equal(entry(recipe, "v1.0").from_label, "Test 4");
   assert.equal(recipe.current_version.label, "v1.0");
-  assert.deepEqual(recipe.open_tests.map((v) => v.label), ["Test 5"]);
+  assert.deepEqual(recipe.open_tests.map((v) => v.label), ["v1.0 · Test 1"]);
   assert.equal(recipe.next_test_number, 6);
   // Bookkeeping doesn't count as an edit.
-  assert.equal(entry(recipe, "Test 5").updated_at, at(25).toISOString());
+  assert.equal(entry(recipe, "v1.0 · Test 1").updated_at, at(25).toISOString());
 
   const other = await get(bystander);
-  assert.deepEqual(other.open_tests.map((v) => [v.label, v.version_string]), [["Test 1", "test-1"]]);
+  assert.deepEqual(other.open_tests.map((v) => [v.label, v.version_string]), [["v1.0 · Test 1", "test-1"]]);
 
   // A restart doesn't re-run it: a reopened test stays open.
   await store.setTestOpen(slug, "v1.0-beta.1", true);
@@ -327,10 +327,10 @@ test("a test is fixed: its text and notes can't change, a version's can", async 
   await makeTest(slug, "more water", (t) => t.replace("375", "390"));
   await assert.rejects(store.updateVersionContent(slug, "test-1", "changed"), store.TestFixedError);
   await assert.rejects(store.updateVersionNotes(slug, "test-1", "a note"), store.TestFixedError);
-  assert.match(entry(await get(slug), "Test 1").cooklang_text, /390/);
+  assert.match(entry(await get(slug), "v1.0 · Test 1").cooklang_text, /390/);
   // Its Testing line is a label, not part of the sheet.
   await store.updateTesting(slug, "test-1", "much more water");
-  assert.equal(entry(await get(slug), "Test 1").testing, "much more water");
+  assert.equal(entry(await get(slug), "v1.0 · Test 1").testing, "much more water");
   // A typo fix in a version still works.
   await store.updateVersionContent(slug, "v1.0", V1.replace("Rest", "Rest covered"));
   assert.match(entry(await get(slug), "v1.0").cooklang_text, /Rest covered/);
@@ -349,7 +349,7 @@ test("prints: recorded per sheet and scale, the same day updates instead of addi
   assert.equal(other.created, true);
 
   let recipe = await get(slug);
-  assert.deepEqual(recipe.recent_prints.map((p) => [p.label, p.version_string, p.scale]), [["v1.0", "v1.0", 1], ["Test 1", "test-1", 2]]);
+  assert.deepEqual(recipe.recent_prints.map((p) => [p.label, p.version_string, p.scale]), [["v1.0", "v1.0", 1], ["v1.0 · Test 1", "test-1", 2]]);
 
   // Yesterday's print of the same sheet is kept; today's is a new one.
   await sql`UPDATE prints SET printed_at = now() - interval '1 day' WHERE id = ${first.id}`;
@@ -408,8 +408,8 @@ test("adopting a test as written takes the test, not what its cooks did", async 
   assert.deepEqual(await store.previewAdopt(slug, "test-1"), { mode: "as-is", current: "v1.0" });
   await store.releaseVersion(slug, "test-1", { version_string: "v1.1" });
   const recipe = await get(slug);
-  assert.equal(entry(recipe, "v1.1").cooklang_text, entry(recipe, "Test 1").cooklang_text);
-  assert.equal(entry(recipe, "Test 1").adopted_as, "v1.1");
+  assert.equal(entry(recipe, "v1.1").cooklang_text, entry(recipe, "v1.0 · Test 1").cooklang_text);
+  assert.equal(entry(recipe, "v1.0 · Test 1").adopted_as, "v1.1");
 });
 
 test("adopt preview: merges into a newer current version, or says it conflicts", async () => {
@@ -450,4 +450,34 @@ test("adopting from a cook takes only the ticked changes; the same cook can be a
   const recipe = await get(slug);
   assert.deepEqual(recipe.versions.filter((v) => v.from_cook_log_id === log.id).map((v) => v.label).sort(), ["v1.1", "v1.2"]);
   assert.match(entry(recipe, "v1.2").cooklang_text, /~\{45%min\}/);
+});
+
+
+test("tests are named by the version they're made from, and keep their name", async () => {
+  const { store } = ctx;
+  const slug = await recipeWithVersion("Names");
+  await makeTest(slug, "a", (t) => t.replace("375", "380"));
+  await makeTest(slug, "b", (t) => t.replace("375", "385"));
+  await store.releaseVersion(slug, "test-2", { version_string: "v1.1" });
+  // A new test starts from the current version.
+  await makeTest(slug, "c", (t) => t.replace("10%g", "11%g"));
+  let recipe;
+  // From the older version again: v1.0's numbering carries on.
+  await store.forkVersionToDraft(slug, "v1.0", "main", { testing: "d" });
+  recipe = await get(slug);
+  assert.equal(recipe.next_test_label, "v1.0 · Test 3");
+  await store.updateDraft(slug, { cooklang_text: recipe.draft.cooklang_text.replace("500", "490") });
+  await store.saveTest(slug, {});
+  recipe = await get(slug);
+  const names = recipe.versions.filter((v) => v.kind === "test").sort((a, b) => a.test_number - b.test_number).map((v) => [v.label, v.test_key, v.base_version]);
+  assert.deepEqual(names, [["v1.0 · Test 1", "v1.0-1", "v1.0"], ["v1.0 · Test 2", "v1.0-2", "v1.0"], ["v1.1 · Test 1", "v1.1-1", "v1.1"], ["v1.0 · Test 3", "v1.0-3", "v1.0"]]);
+  // Deleting one renames nothing.
+  await store.deleteVersion(slug, "test-1");
+  recipe = await get(slug);
+  assert.deepEqual(recipe.versions.filter((v) => v.kind === "test").map((v) => v.label).sort(), ["v1.0 · Test 2", "v1.0 · Test 3", "v1.1 · Test 1"]);
+  // Before any version, a test is plain "Test N".
+  const { slug: fresh } = await store.createRecipe("No version");
+  await store.updateDraft(fresh, { cooklang_text: V1 });
+  const first = await store.saveTest(fresh, {});
+  assert.deepEqual([first.label, first.test_key], ["Test 1", "v0-1"]);
 });

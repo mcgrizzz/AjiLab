@@ -258,6 +258,52 @@ BEGIN
   INSERT INTO app_migrations (name) VALUES ('betas-to-tests') ON CONFLICT (name) DO NOTHING;
 END $$;
 
+-- ── Test names ───────────────────────────────────────────────────────────────
+-- A test is named by the version it was made from: "v1.1 · Test 2" is the
+-- 2nd test made from v1.1 (a test made before any version is plain "Test 1").
+-- Stored when the test is saved, so deleting one never renames another or
+-- stops a printout from matching.
+ALTER TABLE entries ADD COLUMN IF NOT EXISTS test_base TEXT;
+ALTER TABLE entries ADD COLUMN IF NOT EXISTS test_seq INTEGER;
+CREATE UNIQUE INDEX IF NOT EXISTS entries_test_seq_unique
+  ON entries(branch_id, COALESCE(test_base, ''), test_seq) WHERE test_seq IS NOT NULL;
+
+-- Name the tests that have no name yet (first boot, or a restored older
+-- backup): walk each one's parent_version through earlier tests to the
+-- version underneath, then number them per version in creation order, after
+-- any already named.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM entries WHERE test_number IS NOT NULL AND test_seq IS NULL) THEN
+    RETURN;
+  END IF;
+  CREATE TEMP TABLE unnamed_tests ON COMMIT DROP AS
+  WITH RECURSIVE walk AS (
+    SELECT t.id AS test_id, t.branch_id, t.parent_version AS cur, 0 AS depth
+    FROM entries t WHERE t.test_number IS NOT NULL AND t.test_seq IS NULL
+    UNION ALL
+    SELECT w.test_id, w.branch_id, p.parent_version, w.depth + 1
+    FROM walk w
+    JOIN entries p ON p.branch_id = w.branch_id AND p.version_string = w.cur AND p.test_number IS NOT NULL
+    WHERE w.depth < 100
+  )
+  SELECT t.id AS test_id, t.branch_id, t.test_number,
+         (SELECT w.cur FROM walk w
+          JOIN entries v ON v.branch_id = w.branch_id AND v.version_string = w.cur AND v.test_number IS NULL
+          WHERE w.test_id = t.id ORDER BY w.depth LIMIT 1) AS base
+  FROM entries t WHERE t.test_number IS NOT NULL AND t.test_seq IS NULL;
+
+  UPDATE entries e
+  SET test_base = u.base,
+      test_seq = COALESCE((SELECT MAX(x.test_seq) FROM entries x
+                           WHERE x.branch_id = u.branch_id AND x.test_base IS NOT DISTINCT FROM u.base), 0)
+               + (SELECT COUNT(*) FROM unnamed_tests o
+                  WHERE o.branch_id = u.branch_id AND o.base IS NOT DISTINCT FROM u.base AND o.test_number <= u.test_number)
+  FROM unnamed_tests u WHERE e.id = u.test_id;
+
+  INSERT INTO app_migrations (name) VALUES ('tests-named-by-version') ON CONFLICT (name) DO NOTHING;
+END $$;
+
 -- ── Prints ───────────────────────────────────────────────────────────────────
 -- What went on paper: a sheet (a version or a test, never the working copy)
 -- at a scale. Printing the same sheet at the same scale on the same day

@@ -5,6 +5,7 @@
 
 import type { VersionRecord } from "./types.ts";
 import { incrementVersionString } from "./version-string.ts";
+import { testLabel } from "./row-mappers.ts";
 
 // The newest version by creation. Archived versions are old versions, never
 // current.
@@ -32,6 +33,17 @@ export function baseVersionOf(entry: Pick<VersionRecord, "kind" | "parent_versio
 
 export function nextTestNumber(versions: VersionRecord[]): number {
   return versions.reduce((max, v) => Math.max(max, v.test_number || 0), 0) + 1;
+}
+
+// The next test made from this version: its number among that version's tests.
+export function nextTestSeq(versions: VersionRecord[], base: string | null): number {
+  return versions
+    .filter((v) => v.kind === "test" && v.test_seq && (v.test_base ?? null) === (base ?? null))
+    .reduce((max, v) => Math.max(max, v.test_seq || 0), 0) + 1;
+}
+
+export function nextTestLabel(versions: VersionRecord[], base: string | null): string {
+  return testLabel(base, nextTestSeq(versions, base));
 }
 
 export function nextVersionString(versions: VersionRecord[], current: VersionRecord | null): string {
@@ -74,7 +86,8 @@ export function decorateEntries(
     v.is_current = !!current && v.id === current.id;
     v.open = v.kind === "test" && !v.closed_as;
     if (v.kind === "test") {
-      v.base_version = baseVersionOf(v, versions);
+      // Named tests store their version; older ones are walked to it.
+      v.base_version = v.test_seq ? v.test_base : baseVersionOf(v, versions);
       const adopted = versions
         .filter((other) => other.kind === "version" && other.from_entry_id === v.id)
         .sort((a, b) => a.created_at.localeCompare(b.created_at))[0];

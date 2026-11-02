@@ -53,7 +53,7 @@ Object.assign(RecipeView, {
       : isFixingVersion
         ? `<button class="btn btn-sm btn-primary" onclick="RecipeView.saveDraft({ advanceBeta: false })">Save changes</button>
            <button class="btn btn-sm" onclick="RecipeView.finishFixingVersion()">Done</button>`
-        : `<button id="editor-test-btn" class="btn btn-sm btn-primary" onclick="RecipeView.openSaveTestModal()">Save as Test ${this.recipe.next_test_number}…</button>
+        : `<button id="editor-test-btn" class="btn btn-sm btn-primary" onclick="RecipeView.openSaveTestModal()">Save as ${escHtml(this.recipe.next_test_label)}…</button>
            <button class="btn btn-sm btn-ghost" onclick="RecipeView.openWorkingCopyMenu(event, this)" aria-label="More actions for the working copy" title="More actions">⋯</button>`;
     const targetTitle = isEditingCookLog
       ? 'Edits save to this cook only, not to the working copy or any version.'
@@ -235,7 +235,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     if (!button || !session) return;
     const reason = this.saveTestBlockedReason(session.value);
     button.disabled = !!reason;
-    button.title = reason || `Save the working copy as Test ${this.recipe?.next_test_number}: a fixed sheet you can print and cook. You keep editing the working copy.`;
+    button.title = reason || `Save the working copy as ${this.recipe?.next_test_label}: a fixed sheet you can print and cook. You keep editing the working copy.`;
   },
 
   saveTestBlockedReason(value) {
@@ -277,18 +277,18 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     const draft = this.recipe?.draft;
     const reason = this.editorSaveSession ? this.saveTestBlockedReason(this.editorSaveSession.value) : '';
     if (reason) { showToast(reason); return; }
-    const number = this.recipe.next_test_number;
+    const number = escHtml(this.recipe.next_test_label);
     showModal(`
-      <div class="modal-title">Save as Test ${number}</div>
+      <div class="modal-title">Save as ${number}</div>
       <div class="field-group mt8">
         <label class="field-label" for="save-test-testing">What are you testing?</label>
         <input id="save-test-testing" class="field-input" placeholder="e.g. more water" maxlength="120" value="${escHtml(draft?.testing || '')}" />
         <small style="color:var(--ink2);font-size:0.78rem">One short phrase. It goes on the printout.</small>
       </div>
-      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">Test ${number} is fixed once saved, so a printout always matches it. You can keep editing the working copy.</p>
+      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">${number} is fixed once saved, so a printout always matches it. You can keep editing the working copy.</p>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" id="save-test-go">Save Test ${number}</button>
+        <button class="btn btn-primary" id="save-test-go">Save ${number}</button>
       </div>`);
     const input = document.getElementById('save-test-testing');
     const go = () => this.saveAsTest(input?.value.trim() || '');
@@ -314,8 +314,8 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     await this.refreshRecipe();
     this.activeTab = 'overview';
     await this.renderDetail(document.getElementById('view-container'), saved.version_string, { syncUrl: true });
-    if (!saved.created) { showToast(`No changes since Test ${saved.test_number}`); return; }
-    showToast(`Saved Test ${saved.test_number}`, { action: { label: 'Undo', onClick: () => this.undoDraftBeta(saved.version_string, previous) } });
+    if (!saved.created) { showToast(`No changes since ${saved.label}`); return; }
+    showToast(`Saved ${saved.label}`, { action: { label: 'Undo', onClick: () => this.undoDraftBeta(saved.version_string, previous) } });
   },
 
   async undoDraftBeta(version, previous) {

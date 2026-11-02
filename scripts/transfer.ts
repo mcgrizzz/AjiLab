@@ -120,15 +120,18 @@ async function main() {
 
   // 3. Entries — depend on branches. A source from before tests existed has
   // no test columns; the target then numbers its betas itself (step 8).
-  const [{ has_tests }] = await src<{ has_tests: boolean }[]>`
+  const [{ has_tests, has_names }] = await src<{ has_tests: boolean; has_names: boolean }[]>`
     SELECT EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'entries' AND column_name = 'test_number') AS has_tests
+                   WHERE table_name = 'entries' AND column_name = 'test_number') AS has_tests,
+           EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'entries' AND column_name = 'test_seq') AS has_names
   `;
   await copyTable(tgt, "entries",
     ["id", "branch_id", "version_string", "status", "cooklang_text",
      "changelog", "parent_version", "current_beta_version", "tags",
      "created_at", "updated_at",
-     ...(has_tests ? ["test_number", "closed_as", "closed_at"] : [])]);
+     ...(has_tests ? ["test_number", "closed_as", "closed_at"] : []),
+     ...(has_names ? ["test_base", "test_seq"] : [])]);
 
   // 4. Backfill branch FK columns now that entries exist
   const branchFks = await src<{
@@ -205,6 +208,11 @@ async function main() {
       await tgt`UPDATE entries SET from_entry_id = ${link.from_entry_id}, from_cook_log_id = ${link.from_cook_log_id} WHERE id = ${link.id}`;
     }
     console.log(`[transfer]   ${"entries (lineage pass)".padEnd(22)} ${links.length}`);
+    // A source from before tests were named by version: name them now.
+    if (!has_names) {
+      await applySchema();
+      console.log(`[transfer]   tests named by version`);
+    }
   } else {
     await applySchema();
     console.log(`[transfer]   betas numbered as tests`);

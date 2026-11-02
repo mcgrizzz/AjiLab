@@ -63,12 +63,15 @@ const RecipeView = {
       container.innerHTML = `<div class="empty-state"><p>Recipe not found.</p></div>`;
       return;
     }
-    // /tests/4 → the test's internal name.
+    // /tests/v1.1-2 → the test's internal name. Older links (/tests/4) used
+    // the recipe-wide number and still work.
     let versionKey = opts.version || null;
-    if (opts.testNumber) {
-      const test = (this.recipe.versions || []).find((v) => v.test_number === opts.testNumber);
+    if (opts.testKey) {
+      const key = opts.testKey;
+      const test = (this.recipe.versions || []).find((v) => v.kind === 'test'
+        && (v.test_key === key || (/^\d+$/.test(key) && v.test_number === Number(key))));
       if (!test) {
-        container.innerHTML = `<div class="empty-state"><p>Test ${escHtml(String(opts.testNumber))} not found.</p></div>`;
+        container.innerHTML = `<div class="empty-state"><p>Test ${escHtml(key)} not found.</p></div>`;
         return;
       }
       versionKey = test.version_string;
@@ -103,7 +106,7 @@ const RecipeView = {
   recipePathFor(versionKey = this.selectedVersionKey()) {
     const entry = entryByKey(this.recipe, versionKey);
     let base = `/recipe/${this.slug}`;
-    if (entry?.kind === 'test' && entry.test_number) base = `/recipe/${this.slug}/tests/${entry.test_number}`;
+    if (entry?.kind === 'test' && entry.test_key) base = `/recipe/${this.slug}/tests/${encodeURIComponent(entry.test_key)}`;
     else if (versionKey && versionKey !== 'draft' && !entry?.is_current) base = `/recipe/${this.slug}/versions/${encodeURIComponent(versionKey)}`;
     const params = new URLSearchParams();
     if (this.branchSlug && this.branchSlug !== 'main') params.set('branch', this.branchSlug);

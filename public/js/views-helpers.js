@@ -6,7 +6,7 @@ function tagChip(tag) {
 
 function recipePathForSelection(slug, version, branch = 'main', scale = 1) {
   let base = `/recipe/${slug}`;
-  if (version?.kind === 'test' && version.test_number) base = `/recipe/${slug}/tests/${version.test_number}`;
+  if (version?.kind === 'test' && version.test_key) base = `/recipe/${slug}/tests/${encodeURIComponent(version.test_key)}`;
   else if (version && !version.is_draft && version.version_string && !version.is_current) {
     base = `/recipe/${slug}/versions/${encodeURIComponent(version.version_string)}`;
   }

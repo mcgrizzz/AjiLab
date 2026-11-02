@@ -222,7 +222,7 @@ Object.assign(RecipeView, {
         <input id="cook-test-testing" class="field-input" placeholder="e.g. longer rest, as in this cook" maxlength="120" value="${escHtml((log.changes_to_try_next || '').trim().split('\n')[0].slice(0, 120))}" />
         <small style="color:var(--ink2);font-size:0.78rem">One short phrase. It goes on the printout.</small>
       </div>
-      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">The working copy becomes this cook as cooked${(Number(log.scale) || 1) !== 1 ? ', back at 1×' : ''}. Adjust it in the Editor, then save it as Test ${this.recipe.next_test_number}.</p>
+      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">The working copy becomes this cook as cooked${(Number(log.scale) || 1) !== 1 ? ', back at 1×' : ''}. Adjust it in the Editor, then save it as a test.</p>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
         <button class="btn btn-primary" id="cook-test-go">Start test</button>
@@ -248,7 +248,7 @@ Object.assign(RecipeView, {
           await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/fork-to-draft`, { testing });
           this.cookLogEditingId = null;
         },
-        message: `Working copy is now this cook. Make any changes, then save it as Test ${this.recipe.next_test_number}.`,
+        message: 'Working copy is now this cook. Make any changes, then save it as a test.',
       });
     } catch (e) {
       showToast('Error: ' + e.message);

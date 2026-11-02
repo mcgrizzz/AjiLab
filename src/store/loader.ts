@@ -35,6 +35,7 @@ import {
 import {
   decorateEntries,
   nextTestNumber,
+  nextTestLabel,
   nextVersionString,
   workingCopyChanged,
   type CookSummary,
@@ -109,7 +110,7 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
              e.version_string, e.status, e.cooklang_text, e.changelog,
              e.parent_version, e.current_beta_version, e.tags,
              e.created_at, e.updated_at,
-             e.test_number, e.closed_as, e.closed_at, e.from_entry_id, e.from_cook_log_id
+             e.test_number, e.test_base, e.test_seq, e.closed_as, e.closed_at, e.from_entry_id, e.from_cook_log_id
       FROM entries e
       JOIN branches b ON b.id = e.branch_id
       WHERE e.branch_id IN ${sql(branchIds)}
@@ -201,6 +202,8 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
       current_version: current,
       open_tests: openTests,
       next_test_number: nextTestNumber(versions),
+      // The working copy's version (or what a new one would start from).
+      next_test_label: nextTestLabel(versions, draft ? draft.base_version : (current?.version_string ?? openTests[0]?.base_version ?? null)),
       next_version_string: nextVersionString(versions, current),
       latest_cook_log: logRow ? cookLogRowToRecord(logRow) : null,
       recent_prints: recentPrints,
@@ -239,6 +242,7 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
     current_version: branch.current_version,
     open_tests: branch.open_tests,
     next_test_number: branch.next_test_number,
+    next_test_label: branch.next_test_label,
     next_version_string: branch.next_version_string,
     latest_cook_log: branch.latest_cook_log,
     recent_prints: branch.recent_prints,

@@ -59,6 +59,9 @@ export interface VersionRecord {
   is_draft: boolean;
   // Tests and lineage (stored)
   test_number: number | null;
+  test_base: string | null;   // the version a test was made from, as stored
+  test_seq: number | null;    // its number among that version's tests
+  test_key: string | null;    // "v1.1-2", for its page address
   closed_as: TestClosedAs | null;
   closed_at: string | null;
   from_entry_id: string | null;
@@ -144,6 +147,8 @@ export interface RecipeBranchRecord extends RecipeBranchMeta {
   current_version: VersionRecord | null;
   open_tests: VersionRecord[];
   next_test_number: number;
+  // What saving the working copy as a test would call it ("v1.1 · Test 3").
+  next_test_label: string;
   // What adopting or releasing would be called by default (v1.2, or v1.0).
   next_version_string: string;
   latest_cook_log: CookLogRecord | null;
@@ -177,6 +182,8 @@ export interface RecipeRecord {
   current_version: VersionRecord | null;
   open_tests: VersionRecord[];
   next_test_number: number;
+  // What saving the working copy as a test would call it ("v1.1 · Test 3").
+  next_test_label: string;
   // What adopting or releasing would be called by default (v1.2, or v1.0).
   next_version_string: string;
   latest_cook_log: CookLogRecord | null;
