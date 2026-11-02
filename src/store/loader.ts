@@ -16,6 +16,7 @@ import {
   type RecipeRecord,
   type RecipeBranchRecord,
   type VersionRecord,
+  type PrintRecord,
 } from "./types.ts";
 import {
   entryRowToVersion,
@@ -101,8 +102,8 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
   if (branchRows.length === 0) return null;
 
   const branchIds = branchRows.map((r) => r.id);
-  // Parallel: these three queries are independent.
-  const [entryRows, cookLogCounts, latestCookLogs, cooksPerEntry] = await Promise.all([
+  // Parallel: these queries are independent.
+  const [entryRows, cookLogCounts, latestCookLogs, cooksPerEntry, printRows] = await Promise.all([
     sql<EntryRow[]>`
       SELECT e.id, e.branch_id, b.slug AS branch_slug, b.recipe_id,
              e.version_string, e.status, e.cooklang_text, e.changelog,
@@ -137,6 +138,13 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
       WHERE branch_id IN ${sql(branchIds)} AND source_entry_id IS NOT NULL
       ORDER BY source_entry_id, cooked_at DESC, created_at DESC
     `,
+    sql<{ id: string; entry_id: string; branch_id: string; scale: number; printed_at: Date }[]>`
+      SELECT p.id, p.entry_id, e.branch_id, p.scale, p.printed_at
+      FROM prints p JOIN entries e ON e.id = p.entry_id
+      WHERE e.branch_id IN ${sql(branchIds)}
+      ORDER BY p.printed_at DESC
+      LIMIT 20
+    `,
   ]);
   const cooks = new Map<string, CookSummary>(cooksPerEntry.map((row) => [
     row.source_entry_id,
@@ -158,6 +166,18 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
       const sourceRow = entryRows.find((e) => e.id === branchRow.forked_from_entry_id);
       if (sourceRow) sourceVersion = entryRowToVersion(sourceRow);
     }
+
+    const byId = new Map(versions.map((v) => [v.id, v]));
+    const recentPrints: PrintRecord[] = printRows
+      .filter((p) => p.branch_id === branchRow.id && byId.has(p.entry_id))
+      .slice(0, 10)
+      .map((p) => {
+        const entry = byId.get(p.entry_id)!;
+        return {
+          id: p.id, entry_id: p.entry_id, version_string: entry.version_string!, label: entry.label,
+          scale: Number(p.scale), printed_at: p.printed_at.toISOString(),
+        };
+      });
 
     const countsRow = cookLogCounts.find((c) => c.branch_id === branchRow.id);
     const logRow = latestCookLogs.find((c) => c.branch_id === branchRow.id);
@@ -181,6 +201,7 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
       next_test_number: nextTestNumber(versions),
       next_version_string: nextVersionString(versions, current),
       latest_cook_log: logRow ? cookLogRowToRecord(logRow) : null,
+      recent_prints: recentPrints,
       counts: {
         releases_count: versions.filter((v) => v.kind === "version").length,
         betas_count: versions.filter((v) => v.kind === "test").length,
@@ -218,6 +239,7 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
     next_test_number: branch.next_test_number,
     next_version_string: branch.next_version_string,
     latest_cook_log: branch.latest_cook_log,
+    recent_prints: branch.recent_prints,
     counts: branch.counts,
   };
 }

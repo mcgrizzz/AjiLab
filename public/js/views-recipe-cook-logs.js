@@ -292,13 +292,21 @@ Object.assign(RecipeView, {
     const existing = existingId ? (this.cookLogs || []).find((log) => log.id === existingId) : null;
     // "Which sheet?": versions and tests. The working copy is never cooked;
     // an old cook of it shows as such.
+    // A new cook starts from the newest print not yet recorded, unless a
+    // sheet was picked on purpose.
+    const start = existing ? null : RecipeEditState.cookStart(this.recipe, this.activeVersion, {
+      explicit: !!options.explicit, scale: Number(options.scale) > 0 ? Number(options.scale) : 1,
+    });
     const defaultSourceKey = existing
       ? (existing.source_kind === 'draft' ? '__draft__' : (existing.source_version_string || '__draft__'))
-      : RecipeEditState.cookLogSourceKey(this.recipe, this.activeVersion);
+      : start.version_string;
     const sourceOptions = (defaultSourceKey === '__draft__' ? `<option value="__draft__" selected>Working copy</option>` : '')
       + sheetOptionsHtml(sheetOptionGroups(this.recipe), defaultSourceKey);
     const cookedAtDefault = RecipeEditState.localDateTimeInput(existing?.cooked_at || new Date());
-    const startScale = Number(options.scale) > 0 ? Number(options.scale) : 1;
+    const startScale = start?.scale || 1;
+    const printNote = start?.print
+      ? `Printed ${shortDate(start.print.printed_at)}${start.print.scale !== 1 ? ` at ${formatEditableQuantity(start.print.scale)}×` : ''}.`
+      : 'The version or test you cooked from.';
     const existingScale = Number(existing?.scale) || 1;
     const scaleField = existing
       ? `<div class="field-group mt8 cl-scale-field">
@@ -317,7 +325,7 @@ Object.assign(RecipeView, {
         <div class="field-group mt8" style="flex:1">
           <label class="field-label" for="cl-source">Which sheet?</label>
           <select id="cl-source" class="field-input" ${existing ? 'disabled' : ''}>${sourceOptions}</select>
-          ${existing ? '' : '<small style="color:var(--ink2);font-size:0.78rem">The version or test you cooked from. A copy is kept with the cook.</small>'}
+          ${existing ? '' : `<small style="color:var(--ink2);font-size:0.78rem">${escHtml(printNote)} A copy is kept with the cook.</small>`}
         </div>
         <div class="field-group mt8" style="flex:1">
           <label class="field-label" for="cl-cooked-at">Cooked at</label>
@@ -355,7 +363,7 @@ Object.assign(RecipeView, {
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
         <button class="btn btn-primary" onclick="RecipeView.saveCookLog('${escJs(existingId || '')}')">${existing ? 'Save notes' : 'Save cook'}</button>
       </div>`);
-    if (!existing) this.trackUnsentCookLog({ keepScale: options.scale != null });
+    if (!existing) this.trackUnsentCookLog({ keepScale: true });
     setTimeout(() => document.getElementById('cl-outcome')?.focus(), 80);
   },
 

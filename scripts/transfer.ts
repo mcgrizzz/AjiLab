@@ -161,6 +161,14 @@ async function main() {
      "outcome", "what_worked", "problems_found", "changes_to_try_next",
      "freeform_notes", "scale", "created_at", "updated_at"]);
 
+  // 6b. Prints (a source from before printing was recorded has none)
+  const [{ has_prints }] = await src<{ has_prints: boolean }[]>`
+    SELECT to_regclass('public.prints') IS NOT NULL AS has_prints
+  `;
+  if (has_prints) {
+    await copyTable(tgt, "prints", ["id", "entry_id", "scale", "printed_at"]);
+  }
+
   // 7. Recipe references (no id column — use composite PK)
   const refs = await src<{ from_entry_id: string; to_recipe_id: string; pinned_version: string | null }[]>`
     SELECT from_entry_id, to_recipe_id, pinned_version FROM recipe_references

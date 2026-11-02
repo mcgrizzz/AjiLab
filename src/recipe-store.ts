@@ -406,10 +406,24 @@ export async function updateDraftNotes(slug: string, notes: string, branchSlug =
   await updateDraft(slug, { cooklang_text: nextText }, {}, branchSlug);
 }
 
-export async function updateVersionContent(slug: string, versionString: string, cooklangText: string, tags?: string[], branchSlug = MAIN_BRANCH_SLUG) {
-  const recipe = await requireRecipe(slug, branchSlug);
+// A test is fixed once saved, so the printouts and cooks of it match it.
+// Changing it means a new test.
+export class TestFixedError extends Error {
+  constructor(label: string) {
+    super(`${label} is fixed so it matches its printouts. Make a new test from it instead.`);
+  }
+}
+
+function editableVersion(recipe: RecipeRecord, versionString: string): VersionRecord {
   const version = recipe.versions.find((v) => v.version_string === versionString);
   if (!version) throw new Error("version not found");
+  if (version.kind === "test") throw new TestFixedError(version.label);
+  return version;
+}
+
+export async function updateVersionContent(slug: string, versionString: string, cooklangText: string, tags?: string[], branchSlug = MAIN_BRANCH_SLUG) {
+  const recipe = await requireRecipe(slug, branchSlug);
+  const version = editableVersion(recipe, versionString);
   const nextTags = tags ?? JSON.parse(version.tags || "[]");
   await sql`
     UPDATE entries SET cooklang_text = ${cooklangText}, tags = ${nextTags}
@@ -420,11 +434,39 @@ export async function updateVersionContent(slug: string, versionString: string, 
 
 export async function updateVersionNotes(slug: string, versionString: string, notes: string, branchSlug = MAIN_BRANCH_SLUG) {
   const recipe = await requireRecipe(slug, branchSlug);
-  const version = recipe.versions.find((v) => v.version_string === versionString);
-  if (!version) throw new Error("version not found");
+  const version = editableVersion(recipe, versionString);
   const nextText = upsertNotesInCooklang(version.cooklang_text, notes.trim());
   await sql`UPDATE entries SET cooklang_text = ${nextText} WHERE id = ${version.id}`;
   await syncReferencesForEntry(version.id, nextText);
+}
+
+// ── Prints ───────────────────────────────────────────────────────────────────
+
+// Record that a version or test went on paper at a scale. The same sheet at
+// the same scale on the same day updates its record rather than adding one.
+export async function recordPrint(
+  slug: string,
+  versionString: string,
+  scale: number,
+  branchSlug = MAIN_BRANCH_SLUG,
+): Promise<{ ok: true; id: string; created: boolean }> {
+  const recipe = await requireRecipe(slug, branchSlug);
+  if (!versionString || versionString === "draft") throw new Error("save the working copy as a test to print it");
+  const entry = recipe.versions.find((v) => v.version_string === versionString);
+  if (!entry) throw new Error("version not found");
+  const s = normalizeScale(scale);
+  const [same] = await sql<{ id: string }[]>`
+    SELECT id FROM prints
+    WHERE entry_id = ${entry.id} AND scale = ${s} AND printed_at::date = now()::date
+    ORDER BY printed_at DESC LIMIT 1
+  `;
+  if (same) {
+    await sql`UPDATE prints SET printed_at = now() WHERE id = ${same.id}`;
+    return { ok: true, id: same.id, created: false };
+  }
+  const id = generateId();
+  await sql`INSERT INTO prints (id, entry_id, scale) VALUES (${id}, ${entry.id}, ${s})`;
+  return { ok: true, id, created: true };
 }
 
 export async function deleteVersion(slug: string, versionString: string, branchSlug = MAIN_BRANCH_SLUG) {

@@ -320,3 +320,50 @@ test("migration: old betas become numbered tests, closed where a version overtoo
   recipe = await get(slug);
   assert.equal(entry(recipe, "Test 1").open, true);
 });
+
+test("a test is fixed: its text and notes can't change, a version's can", async () => {
+  const { store } = ctx;
+  const slug = await recipeWithVersion("Fixed test");
+  await makeTest(slug, "more water", (t) => t.replace("375", "390"));
+  await assert.rejects(store.updateVersionContent(slug, "test-1", "changed"), store.TestFixedError);
+  await assert.rejects(store.updateVersionNotes(slug, "test-1", "a note"), store.TestFixedError);
+  assert.match(entry(await get(slug), "Test 1").cooklang_text, /390/);
+  // Its Testing line is a label, not part of the sheet.
+  await store.updateTesting(slug, "test-1", "much more water");
+  assert.equal(entry(await get(slug), "Test 1").testing, "much more water");
+  // A typo fix in a version still works.
+  await store.updateVersionContent(slug, "v1.0", V1.replace("Rest", "Rest covered"));
+  assert.match(entry(await get(slug), "v1.0").cooklang_text, /Rest covered/);
+});
+
+test("prints: recorded per sheet and scale, the same day updates instead of adding", async () => {
+  const { store, sql } = ctx;
+  const slug = await recipeWithVersion("Prints");
+  await makeTest(slug, "more water", (t) => t.replace("375", "390"));
+
+  const first = await store.recordPrint(slug, "test-1", 2);
+  assert.equal(first.created, true);
+  const again = await store.recordPrint(slug, "test-1", 2);
+  assert.deepEqual([again.created, again.id], [false, first.id]);
+  const other = await store.recordPrint(slug, "v1.0", 1);
+  assert.equal(other.created, true);
+
+  let recipe = await get(slug);
+  assert.deepEqual(recipe.recent_prints.map((p) => [p.label, p.version_string, p.scale]), [["v1.0", "v1.0", 1], ["Test 1", "test-1", 2]]);
+
+  // Yesterday's print of the same sheet is kept; today's is a new one.
+  await sql`UPDATE prints SET printed_at = now() - interval '1 day' WHERE id = ${first.id}`;
+  const today = await store.recordPrint(slug, "test-1", 2);
+  assert.equal(today.created, true);
+  recipe = await get(slug);
+  assert.equal(recipe.recent_prints.length, 3);
+  assert.equal(recipe.recent_prints[0].id, today.id);
+
+  // The working copy isn't a sheet.
+  await assert.rejects(store.recordPrint(slug, "draft", 1), /save the working copy as a test/);
+  await assert.rejects(store.recordPrint(slug, "v9.9", 1), /version not found/);
+
+  // Deleting a test deletes its prints.
+  await store.deleteVersion(slug, "test-1");
+  assert.deepEqual((await get(slug)).recent_prints.map((p) => p.label), ["v1.0"]);
+});

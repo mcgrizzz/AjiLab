@@ -49,7 +49,10 @@ Object.assign(RecipeView, {
           ${CL.renderCookware(parsed.cookwares)}
         </div>` : ''}
       </div>` : '';
-    const inlineAddNotes = !notes ? `<button class="notes-inline-add" onclick="RecipeView.openNotesModal()" title="Add notes">✎ Add notes</button>` : '';
+    // A test is fixed, notes included (they print); versions and the working
+    // copy take notes.
+    const notesFixed = this.activeVersion?.kind === 'test';
+    const inlineAddNotes = !notes && !notesFixed ? `<button class="notes-inline-add" onclick="RecipeView.openNotesModal()" title="Add notes">✎ Add notes</button>` : '';
     const stepsHtml = hasSteps ? `
       <div class="recipe-main">
         <div class="section-head" id="steps-head">
@@ -74,7 +77,7 @@ Object.assign(RecipeView, {
         <div class="notes-card">
           <div class="notes-actions">
             <div class="section-head notes-head">${escHtml(notesLabel)}</div>
-            <button class="btn btn-sm" onclick="RecipeView.openNotesModal()">Edit notes</button>
+            ${notesFixed ? '' : '<button class="btn btn-sm" onclick="RecipeView.openNotesModal()">Edit notes</button>'}
           </div>
           <div class="notes-box recipe-notes-display">${formatMultilineText(notes)}</div>
         </div>` : ''}

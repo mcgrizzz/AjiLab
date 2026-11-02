@@ -30,6 +30,8 @@ import {
   updateTesting,
   setTestOpen,
   AdoptConflictError,
+  TestFixedError,
+  recordPrint,
   getRecipeBranch,
   getRecipeBySlug,
   getVersionByString,
@@ -67,6 +69,13 @@ function releaseError(c: any, error: any, fallback: string) {
   const message = error?.message || fallback;
   if (message === "cook log not found") return c.json({ error: message }, 404);
   return c.json({ error: message }, message === "version already exists" ? 409 : 400);
+}
+
+// An edit to a fixed test is a 409: the client should offer a new test.
+function editError(c: any, error: any) {
+  if (error instanceof TestFixedError) return c.json({ error: "test is fixed", message: error.message }, 409);
+  const message = error?.message || "update failed";
+  return c.json({ error: message }, message === "version not found" ? 404 : 400);
 }
 
 async function readImageUpload(c: any) {
@@ -291,13 +300,17 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     if (!version) return c.json({ error: "version not found" }, 404);
     if (version.is_draft) return c.json({ error: "use draft endpoint" }, 400);
     const body = await c.req.json();
-    await updateVersionContent(
-      recipe.slug,
-      version.version_string!,
-      body.cooklang_text ?? version.cooklang_text,
-      body.tags ?? JSON.parse(version.tags || "[]"),
-      activeBranch(c),
-    );
+    try {
+      await updateVersionContent(
+        recipe.slug,
+        version.version_string!,
+        body.cooklang_text ?? version.cooklang_text,
+        body.tags ?? JSON.parse(version.tags || "[]"),
+        activeBranch(c),
+      );
+    } catch (error: any) {
+      return editError(c, error);
+    }
     return c.json({ ok: true });
   });
 
@@ -306,7 +319,11 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     if (!recipe) return c.json({ error: "not found" }, 404);
     if (!(await getVersionByString(recipe.slug, c.req.param("version"), activeBranch(c)))) return c.json({ error: "version not found" }, 404);
     const body = await c.req.json();
-    await updateVersionNotes(recipe.slug, c.req.param("version"), body.notes || "", activeBranch(c));
+    try {
+      await updateVersionNotes(recipe.slug, c.req.param("version"), body.notes || "", activeBranch(c));
+    } catch (error: any) {
+      return editError(c, error);
+    }
     return c.json({ ok: true });
   });
 
@@ -320,6 +337,19 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
       return c.json({ error: message }, message === "cannot delete draft" ? 400 : 404);
     }
     return c.json({ ok: true });
+  });
+
+  // A sheet went on paper. Body: { version, scale }. The working copy can't
+  // be printed; the client saves it as a test first.
+  api.post(`${prefix}/prints`, async (c) => {
+    if (!(await getRecipeBySlug(c.req.param("slug"), activeBranch(c)))) return c.json({ error: "not found" }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      return c.json(await recordPrint(c.req.param("slug"), String(body?.version || ""), Number(body?.scale ?? 1), activeBranch(c)));
+    } catch (error: any) {
+      const message = error?.message || "print failed";
+      return c.json({ error: message }, message === "version not found" ? 404 : 400);
+    }
   });
 
   // Save the working copy as the next test. Body: { testing }.

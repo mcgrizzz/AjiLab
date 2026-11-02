@@ -252,3 +252,15 @@ BEGIN
 
   INSERT INTO app_migrations (name) VALUES ('betas-to-tests') ON CONFLICT (name) DO NOTHING;
 END $$;
+
+-- ── Prints ───────────────────────────────────────────────────────────────────
+-- What went on paper: a sheet (a version or a test, never the working copy)
+-- at a scale. Printing the same sheet at the same scale on the same day
+-- updates the one record. "Record a cook" starts from the newest print.
+CREATE TABLE IF NOT EXISTS prints (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  entry_id   UUID NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+  scale      DOUBLE PRECISION NOT NULL DEFAULT 1 CHECK (scale > 0),
+  printed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_prints_entry_recent ON prints(entry_id, printed_at DESC);

@@ -100,6 +100,16 @@ export interface CookLogRecord {
   updated_at: string;
 }
 
+// A sheet that went on paper (newest first on the recipe record).
+export interface PrintRecord {
+  id: string;
+  entry_id: string;
+  version_string: string;
+  label: string;
+  scale: number;
+  printed_at: string;
+}
+
 export interface BranchCounts {
   releases_count: number;   // versions
   betas_count: number;      // tests
@@ -126,6 +136,8 @@ export interface RecipeBranchRecord extends RecipeBranchMeta {
   // What adopting or releasing would be called by default (v1.2, or v1.0).
   next_version_string: string;
   latest_cook_log: CookLogRecord | null;
+  // The branch's latest prints, newest first.
+  recent_prints: PrintRecord[];
   counts: BranchCounts;
 }
 
@@ -157,5 +169,7 @@ export interface RecipeRecord {
   // What adopting or releasing would be called by default (v1.2, or v1.0).
   next_version_string: string;
   latest_cook_log: CookLogRecord | null;
+  // The branch's latest prints, newest first.
+  recent_prints: PrintRecord[];
   counts: BranchCounts;
 }

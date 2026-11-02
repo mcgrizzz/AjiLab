@@ -130,6 +130,32 @@ const RecipeEditState = (() => {
       || null;
   }
 
+  // Where a new cook starts: { version_string, scale, print }. Unless a
+  // sheet was picked on purpose (explicit), the newest print from the last
+  // two weeks that has no cook recorded since: that's the paper in your hand.
+  // Otherwise the sheet on screen, at the scale on screen or, at 1×, at the
+  // scale it was last printed.
+  const PRINT_FRESH_MS = 14 * 24 * 60 * 60 * 1000;
+  function localDay(iso) {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  function cookStart(recipe, selected, { explicit = false, scale = 1, now = Date.now() } = {}) {
+    const prints = (recipe.recent_prints || []).filter(p => now - Date.parse(p.printed_at) < PRINT_FRESH_MS);
+    const sheetOf = (key) => recipe.versions?.find(v => v.version_string === key);
+    const recorded = (p) => {
+      const cooked = sheetOf(p.version_string)?.last_cooked_at;
+      return !!cooked && localDay(cooked) >= localDay(p.printed_at);
+    };
+    if (!explicit) {
+      const pending = prints.find(p => sheetOf(p.version_string) && !recorded(p));
+      if (pending) return { version_string: pending.version_string, scale: pending.scale, print: pending };
+    }
+    const key = cookLogSourceKey(recipe, selected);
+    const print = prints.find(p => p.version_string === key) || null;
+    return { version_string: key, scale: scale !== 1 ? scale : (print?.scale || 1), print };
+  }
+
   function cookLogTimestamp(local, existing) {
     // Preserve seconds and the exact instant during a repeated DST hour.
     if (existing && local === localDateTimeInput(existing)) return existing;
@@ -210,7 +236,7 @@ const RecipeEditState = (() => {
     try { storage?.removeItem(UNSENT_LOG_PREFIX + JSON.stringify([slug, branch])); } catch {}
   }
 
-  return { Session, open, localDateTimeInput, cookLogSourceKey, cookLogTimestamp,
+  return { Session, open, localDateTimeInput, cookLogSourceKey, cookStart, localDay, cookLogTimestamp,
     draftKey, settle, unsavedValue, discard, lineChangeSummary,
     loadUnsentCookLog, saveUnsentCookLog, clearUnsentCookLog,
     hasUnsaved: () => [...sessions.values()].some(session => session.dirty || session.pending) };

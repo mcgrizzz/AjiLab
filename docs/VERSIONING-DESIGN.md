@@ -202,20 +202,38 @@ stays as it is.
 - The full sheet, collapsed.
 
 **Cook screen** (`/recipe/<slug>/cooks/new`, and `/cooks/<id>` to edit, phase 3).
-- **Top:** which sheet (recent printouts first), date, scale (fixed once
-  saved), Outcome, Try next. Then Details (what worked, problems, notes),
-  collapsed.
-- **Below:** the sheet as printed, at the cook's scale. Amounts, times and
-  temperatures in the steps are inline fields that look like the printed text
-  with a dotted underline.
-- **Ingredient list:** an ingredient used once can be edited in the list too.
-  One used in several steps shows its total there and is edited in the steps,
-  which avoids ambiguity.
-- **Per step:** "Skipped" and "Add a note / added step" (today's ⋯ step menu
-  made visible).
-- **Differences:** each changed field shows "was 375 g", greyed when it's
-  ≈ same, plus an "I meant this" toggle.
-- One **Save** at the bottom and in a sticky bar.
+Revised after the cook-recording audit (Nov 2): recording the scenario there
+(4 changed values, a skipped step, a note, outcome, try next) took about 25
+actions across a modal and a second screen, ending in a native `prompt()`.
+- **One click to start, no form first.** "Record a cook" opens the screen
+  filled in from the paper in hand: the newest print with no cook since
+  (phase 2's `cookStart`), its scale and its print date. Nothing is required;
+  the cook is saved at the first change or on Done.
+  **"Cooked as written"** records it as is and leaves only Outcome.
+- **The paper's order.** A slim header (sheet, scale, and the date as
+  **Print date · Today · Yesterday · pick…**, time optional), then the sheet
+  (ingredients, then steps, every number editable in place), then the
+  reflection: **Outcome** (one line), **Try next**, and one **Notes** box that
+  replaces "What worked", "Problems found" and "Freeform notes" (old cooks'
+  three fields are joined into it when edited).
+- **Fast number editing.** The whole chip (name and amount) is the target,
+  at least 32 px tall, styled like the printed text with a dotted underline.
+  **Tab / Shift-Tab** moves through the values in sheet order, ingredient list
+  included; **Enter** confirms and moves on; **Esc** reverts. Saving happens in
+  the background with no repaint, no focus or layout change: the space for
+  "was 220 g" is reserved. A unit or a range can be typed ("1 cup", "18-20").
+  `Units.sameAmount` greys slips and highlights real changes while typing.
+  Clicking the struck-through old value reverts it; Ctrl/Cmd-Z undoes the
+  last change.
+- **Ingredient list:** an ingredient used once is edited in the list. One used
+  in several steps shows its total and is edited in the steps.
+- **In place, no dialogs.** Each step has a visible **Skip** toggle. Notes and
+  added steps open as text areas under the step (Enter saves, Shift-Enter is a
+  new line). All six `prompt()` calls go.
+- **Differences:** each changed value shows "was 375 g", greyed when ≈ same,
+  plus an "I meant this" toggle.
+- **Editing a cook later** opens the same screen.
+- **Later, optional:** a photo of the marked-up sheet on the cook.
 
 **Adopt dialog** (phase 4; a simplified version in phase 1).
 - Title: "Adopt Test 4 as v1.2".
@@ -398,7 +416,10 @@ collided), and an edit made on both sides is applied once instead of twice.
 - **Live:** Sakadane opens on v1.0, and its strip shows Test 4. The sandbox
   shows Tests 1… and v1.0/v1.1.
 
-**Phase 2: fixed tests, print stamping.**
+**Phase 2: fixed tests, print stamping.** Built. Printing the working copy
+when it has nothing of its own prints the sheet it matches; with changes, the
+print page asks for the Testing line and saves the test first. The cook modal
+already starts from the newest unrecorded print.
 - Tests read-only in the API (PUT on a test returns 409 with "make a new
   test") and in the interface.
 - The `prints` table, the stamp and footer, and the print-the-working-copy
@@ -408,13 +429,18 @@ collided), and an edit made on both sides is applied once instead of twice.
 - **Live:** print a sandbox test and check the stamp, then that "Record a cook"
   offers that print first.
 
-**Phase 3: the one-screen cook.**
-- The new route replaces the modal and the "Mark differences" flow.
-- Inline fields, live slip/real highlighting with `Units.sameAmount`, step
-  skip/add, "I meant this", one Save. Editing reuses it.
-- The words change in `cooklang-render.js`.
+**Phase 3: the one-screen cook** (§7, as revised by the audit).
+- The new route replaces the modal and the "Mark differences" flow; editing
+  a cook reuses it. No `prompt()` remains.
+- Inline fields with keyboard flow and background saves, live slip/real
+  highlighting with `Units.sameAmount`, Skip toggles, inline notes and added
+  steps, "I meant this", "Cooked as written".
 - **Tests:** text splicing for every token kind at 1× and 2×; intended keys
   survive edits; save creates exactly the right Cooklang text.
+- **Done when:** the audit scenario takes one click to open and about 12
+  actions after it, on one screen with no dialogs; "Cooked as written" with an
+  outcome takes 3 actions or fewer; a whole cook can be recorded from the
+  keyboard after the first click.
 - **Live:** record a sandbox cook from a printout without opening any other
   screen.
 

@@ -48,6 +48,8 @@ The key idea: **the working copy, tests and versions share one `entries` table**
 - `test_number IS NOT NULL` (status `beta`, or `archived` for an old archived beta) → a test. `changelog` is its Testing line; `closed_as` (adopted/stopped/rebased/superseded, NULL = open). New tests are named `test-N` internally; older ones keep `v1.1-beta.1`. Never show `version_string` for a test; use the derived `label`.
 - `status = 'released'` → a version; the newest by `created_at` is current. `from_entry_id` / `from_cook_log_id` record what it was adopted from.
 - The loader derives `kind`, `label`, `testing`, `base_version`, `is_current`, `open`, `adopted_as` per entry (`src/store/lineage.ts`). Adopting a test made from an older version 3-way merges it into the current one and refuses on a conflict (`adoptedText` in `recipe-store.ts`).
+- A test is fixed: editing its text or notes is refused (`TestFixedError`, HTTP 409). Its Testing line can change.
+- `prints` records each sheet (version or test, never the working copy) and scale that went on paper, one per sheet, scale and day; the recipe record carries `recent_prints`, and a new cook starts from the newest unrecorded one (`RecipeEditState.cookStart`).
 - `entries.updated_at` moves only when the text or tags change (`touch_entry_content`), not on bookkeeping like closing a test.
 - One-time data steps run inside guarded `DO` blocks recorded in `app_migrations`, so a restart never re-runs them.
 - Notes and servings are **not columns** — they live in the Cooklang frontmatter (`>> servings:`, `>> notes:`) and are parsed on read. Don't add columns for them.
