@@ -200,3 +200,52 @@ test("values without an amount still count, as the server counts them", () => {
   assert.equal(updateStepQuantity("Add @oil and @salt{2%g}.", 0, 1, "ingredient", 1, "3", "g"), "Add @oil and @salt{3%g}.");
   assert.equal(updateStepQuantity("Add @oil, then stir.", 0, 1, "ingredient", 0, "0", ""), "Add oil, then stir.");
 });
+
+// A sheet and its cooks, parsed the way the test page parses them.
+const sheetOf = (text) => { const parsed = parseCooklang(text); return { fields: CookSheet.buildFields(parsed.steps), steps: parsed.steps, text }; };
+function cookOf(sheetText, cookedText, scale, intended = []) {
+  const parsed = parseCooklang(cookedText);
+  annotateCookLogDiff(parsed.steps, parseCooklang(scaleCooklangText(sheetText, scale)).steps);
+  return { scale, fields: CookSheet.buildFields(parsed.steps), steps: parsed.steps, intended };
+}
+
+test("the cooks of a test side by side, at the sheet's 1×", () => {
+  const BASE = "Mix @flour{500%g} and @water{375%g}.\n\nAdd @salt{10%g}.\n\nRest ~{30%min}.";
+  const TEST = BASE.replace("375", "390");
+  // Cook 1 at 1×: rested longer (meant it), and added a step.
+  let one = updateStepQuantity(TEST, 0, 3, "timer", 0, "40", "min");
+  one = insertStepAfterStep(one, 0, 1, "!+ Fold twice.");
+  // Cook 2 at 2×: water written in kg (the same amount), more salt, skipped the rest.
+  const at2 = scaleCooklangText(TEST, 2);
+  let two = updateStepQuantity(at2, 0, 1, "ingredient", 1, "0.78", "kg");
+  two = updateStepQuantity(two, 0, 2, "ingredient", 0, "30", "g");
+  two = applyStepDeviation(two, 0, 3, "skipped");
+  const table = plain(CookSheet.comparison({
+    base: sheetOf(BASE), sheet: sheetOf(TEST),
+    cooks: [cookOf(TEST, one, 1, [{ kind: "timer", name: "", n: 0 }]), cookOf(TEST, two, 2)],
+  }));
+  const cell = (c) => (c.kind === "unchanged" ? "=" : `${c.kind}:${CookSheet.formatAmount(c.amount)}${c.intended ? "!" : ""}`);
+  assert.deepEqual(table.rows.map((r) => [r.label, r.tested, r.base && CookSheet.formatAmount(r.base), CookSheet.formatAmount(r.sheet), ...r.cells.map(cell)]), [
+    // 0.78 kg at 2× is the sheet's 780 g: not a difference.
+    ["water", true, "375 g", "390 g", "=", "="],
+    ["salt", false, "10 g", "10 g", "=", "changed:15 g"],
+    ["time, step 3", false, "30 min", "30 min", "changed:40 min!", "="],
+  ]);
+  // The real amount, for the hover.
+  assert.deepEqual([table.rows[1].cells[1].cooked, table.rows[1].cells[1].scaled], [{ quantity: "30", units: "g" }, true]);
+  assert.deepEqual(table.stepRows.map((r) => [r.label, r.text, ...r.cells]), [
+    ["Skipped step 3", "Rest 30 min.", false, true],
+    ["Added after step 1", "Fold twice.", true, false],
+  ]);
+
+  assert.equal(CookSheet.changeSummary(sheetOf(BASE), sheetOf(TEST)), "water: 375 → 390 g");
+  assert.equal(CookSheet.changeSummary(sheetOf(BASE), sheetOf(TEST.replace("Rest", "Rest covered"))), "water: 375 → 390 g; changes to the steps");
+  const cook2 = cookOf(TEST, two, 2);
+  assert.equal(CookSheet.cookChangeSummary(cook2.fields, 2, ["ingredient|salt|0", "ingredient|water|0"]), "salt: 10 → 15 g");
+
+  // Checklist ids are in the sheet's coordinates at the cook's scale.
+  const sheetAt2 = CookSheet.buildFields(parseCooklang(at2).steps);
+  assert.equal(CookSheet.keyForChange(sheetAt2, "step-token:0:2:ingredient:0"), "ingredient|salt|0");
+  assert.equal(CookSheet.keyForChange(sheetAt2, "step-token:0:3:timer:0"), "timer||0");
+  assert.equal(CookSheet.keyForChange(sheetAt2, "step-add:0:2"), null);
+});

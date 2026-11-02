@@ -505,6 +505,26 @@ async function releaseSource(
   return { ok: true, version_string: release.version_string.trim(), merged: mode === "merged" };
 }
 
+// What adopting a test (or releasing the working copy) would do, without
+// doing it: take it as written, merge it into the current version, or
+// conflict with it.
+export async function previewAdopt(slug: string, versionString: string, branchSlug = MAIN_BRANCH_SLUG): Promise<{
+  mode: "as-is" | "merged" | "conflict"; current: string | null; conflicts?: Array<Record<string, unknown>>;
+}> {
+  const recipe = await requireRecipe(slug, branchSlug);
+  const source = versionString === "draft" ? recipe.draft : recipe.versions.find((v) => v.version_string === versionString);
+  if (!source) throw new Error("version not found");
+  const current = recipe.current_version;
+  if (source.kind === "version") return { mode: "as-is", current: current?.label ?? null };
+  try {
+    const { mode } = adoptedText(baseTextFor(recipe, source), current?.cooklang_text ?? null, source.cooklang_text);
+    return { mode, current: current?.label ?? null };
+  } catch (error) {
+    if (error instanceof AdoptConflictError) return { mode: "conflict", current: current?.label ?? null, conflicts: error.conflicts };
+    throw error;
+  }
+}
+
 export async function releaseDraft(
   slug: string,
   release: { version_string: string; status?: string; changelog?: string },

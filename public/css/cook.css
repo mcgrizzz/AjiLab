@@ -382,3 +382,108 @@
 }
 
 .cook-done-note { font-size: 0.82rem; color: var(--ink3); }
+
+/* ── The test page: its cooks side by side ── */
+
+.test-section { margin-top: 26px; }
+
+.test-section-title {
+  font-family: var(--font-serif);
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.test-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+
+.test-sheet { margin-top: 26px; border-top: 1px solid var(--border); padding-top: 12px; }
+
+.test-sheet > summary {
+  cursor: pointer;
+  font-family: var(--font-serif);
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ink2);
+  padding: 6px 0;
+}
+
+.test-sheet[open] > summary { margin-bottom: 12px; }
+
+.cook-table-wrap {
+  /* Positioned, so absolutely placed bits inside (screen-reader labels)
+     scroll with the table instead of widening the page. */
+  position: relative;
+  overflow-x: auto;
+  border: 1px solid var(--border2);
+  border-radius: var(--r2);
+  background: var(--surface);
+}
+
+.cook-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+
+.cook-table th,
+.cook-table td { padding: 8px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
+
+.cook-table tbody tr:last-child th,
+.cook-table tbody tr:last-child td { border-bottom: none; }
+
+.cook-table thead th {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--ink3);
+  background: var(--bg2);
+  white-space: nowrap;
+}
+
+.ct-cook-meta { display: block; font-weight: 400; letter-spacing: 0; color: var(--ink3); }
+
+.ct-label { font-weight: 600; color: var(--ink); white-space: nowrap; }
+
+.ct-tested-tag {
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--badge-beta-bg);
+  color: var(--badge-beta-fg);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.ct-tested .ct-sheet { font-weight: 600; }
+
+.ct-cell { font-family: var(--font-mono); font-size: 0.86rem; color: var(--qty-ink); white-space: nowrap; }
+
+.ct-sheet { color: var(--ink2); }
+
+.ct-unchanged { color: var(--ink3); }
+
+.ct-same { color: var(--ink3); font-style: italic; }
+
+.ct-changed { color: var(--gold-ink); font-weight: 600; background: color-mix(in srgb, var(--gold) 12%, transparent); }
+
+.ct-intended { box-shadow: inset 3px 0 0 var(--badge-released-fg); }
+
+.ct-meant { color: var(--badge-released-fg); font-family: var(--font-sans); }
+
+.ct-none { color: var(--ink3); }
+
+.ct-step-text,
+.ct-text { font-family: var(--font-sans); white-space: normal; min-width: 140px; color: var(--ink); }
+
+.ct-step-text { color: var(--ink2); }
+
+.ct-words .ct-text { font-size: 0.86rem; }
+
+.ct-actions .ct-cell { white-space: normal; font-family: var(--font-sans); }
+
+.ct-actions .btn { margin: 0 6px 6px 0; }
+
+.ct-legend { margin-top: 8px; font-size: 0.78rem; color: var(--ink3); }
+
+.ct-key { display: inline-block; margin-left: 8px; padding: 0 6px; border-radius: 4px; font-size: 0.75rem; }
+
+/* Adopt: as written, or what one of the cooks did. */
+.rel-source { margin-top: 12px; border: none; padding: 0; }
+
+.rel-source-option { display: flex; align-items: baseline; gap: 8px; padding: 4px 0; font-size: 0.88rem; color: var(--ink); cursor: pointer; }

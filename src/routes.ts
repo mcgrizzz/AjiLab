@@ -32,6 +32,7 @@ import {
   AdoptConflictError,
   TestFixedError,
   recordPrint,
+  previewAdopt,
   getRecipeBranch,
   getRecipeBySlug,
   getVersionByString,
@@ -377,6 +378,16 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     } catch (error: any) {
       const message = error?.message || "update failed";
       return c.json({ error: message }, message === "version not found" ? 404 : 400);
+    }
+  });
+
+  // Would adopting this test merge cleanly into the current version?
+  api.get(`${prefix}/versions/:version/adopt-preview`, async (c) => {
+    if (!(await getRecipeBySlug(c.req.param("slug"), activeBranch(c)))) return c.json({ error: "not found" }, 404);
+    try {
+      return c.json(await previewAdopt(c.req.param("slug"), c.req.param("version"), activeBranch(c)));
+    } catch (error: any) {
+      return c.json({ error: error?.message || "preview failed" }, 404);
     }
   });
 

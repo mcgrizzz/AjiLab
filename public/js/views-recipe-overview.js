@@ -32,6 +32,7 @@ Object.assign(RecipeView, {
         </div>`;
       return;
     }
+    if (primary.kind === 'test') { this.renderTestPage(body, primary); return; }
     body.innerHTML = `
       <div class="tab-content overview-tab">
         <div class="overview-grid">
@@ -116,6 +117,7 @@ Object.assign(RecipeView, {
       if (primary.kind === 'test') {
         if (primary.open) {
           actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openReleaseModal()" title="Make ${escHtml(recipe.next_version_string)} from ${escHtml(primary.label)}">Adopt as ${escHtml(recipe.next_version_string)}…</button>`);
+          actions.push(`<button class="btn btn-sm btn-ghost" onclick="RecipeView.setTestOpen('${escJs(key)}', false)" title="It stays with its cooks, out of the Testing list">Stop testing</button>`);
         }
         if (!recipe.current_version) note = `No version yet. Adopt this test to make ${recipe.next_version_string}.`;
         if (primary.closed_as === 'superseded') note = `${recipe.current_version?.label || 'A newer version'} came after this test. Reopen it to keep testing it.`;
@@ -139,8 +141,8 @@ Object.assign(RecipeView, {
     if (entry.kind === 'test') {
       items.push({ label: entry.testing ? 'Change what it’s testing…' : 'Say what it’s testing…', onClick: () => this.openTestingModal(versionString) });
       items.push({ label: `New test from ${entry.label}…`, onClick: () => this.openNewTestModal(versionString) });
-      if (entry.open) items.push({ label: 'Stop testing', onClick: () => this.setTestOpen(versionString, false) });
-      else if (entry.closed_as === 'stopped' || entry.closed_as === 'superseded') {
+      // Stop testing sits beside Adopt on the page.
+      if (!entry.open && (entry.closed_as === 'stopped' || entry.closed_as === 'superseded')) {
         items.push({ label: 'Reopen', onClick: () => this.setTestOpen(versionString, true) });
       }
     } else {
@@ -302,7 +304,7 @@ Object.assign(RecipeView, {
     const source = entryByKey(recipe, sourceKey);
     const current = recipe.current_version;
     const fromTest = sourceKey !== 'draft';
-    const title = fromTest ? `Adopt ${source?.label || 'this test'}` : 'Release without testing';
+    const title = fromTest ? `Adopt ${source?.label || 'this test'} as ${recipe.next_version_string}` : 'Release without testing';
     const base = source?.base_version;
     const mergeNote = current && base && base !== current.version_string
       ? `${fromTest ? source.label : 'The working copy'} is based on ${base}. Its changes will be merged into ${current.label}, so nothing adopted since is lost.`
@@ -322,15 +324,49 @@ Object.assign(RecipeView, {
         <label class="field-label" for="rel-changelog">What changed</label>
         <textarea id="rel-changelog" class="field-input" placeholder="e.g. water 350 → 380 g">${escHtml(fromTest ? (source?.testing || '') : (recipe.draft?.testing || ''))}</textarea>
       </div>
-      ${mergeNote ? `<div id="rel-merge" class="release-evidence">${escHtml(mergeNote)}</div>` : ''}
-      ${fromTest ? `<div id="rel-evidence" class="release-evidence" aria-live="polite"></div>` : ''}
+      <div id="rel-merge" class="release-evidence" aria-live="polite"${mergeNote ? '' : ' hidden'}>${escHtml(mergeNote)}</div>
+      ${fromTest ? `<div id="rel-evidence" class="release-evidence" aria-live="polite"></div><div id="rel-source"></div>` : ''}
       <div id="rel-conflict" class="release-evidence release-evidence-warn" hidden></div>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="RecipeView.release()">${fromTest ? 'Adopt' : 'Release'}</button>
+        <button class="btn btn-primary" id="rel-go" onclick="RecipeView.release()">${fromTest ? 'Adopt' : 'Release'}</button>
       </div>`);
     setTimeout(() => document.getElementById('rel-version')?.select(), 100);
+    const notes = document.getElementById('rel-changelog');
+    notes?.addEventListener('input', () => { notes.dataset.edited = '1'; });
     if (fromTest) this.loadReleaseEvidence(sourceKey);
+    this.loadAdoptPreview(sourceKey, fromTest ? source : recipe.draft);
+  },
+
+  // Before Adopt is clicked: whether it merges into the current version or
+  // conflicts with it, and "What changed" in words from the real changes.
+  async loadAdoptPreview(sourceKey, source) {
+    const base = source?.base_version ? entryByKey(this.recipe, source.base_version) : null;
+    const branch = `/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}`;
+    try {
+      const [preview, baseParsed, sourceParsed] = await Promise.all([
+        API.get(`${branch}/versions/${encodeURIComponent(sourceKey)}/adopt-preview`),
+        base ? API.post(`${branch}/draft/parse`, { cooklang_text: base.cooklang_text }) : null,
+        base ? API.post(`${branch}/draft/parse`, { cooklang_text: source.cooklang_text }) : null,
+      ]);
+      if (!document.getElementById('rel-go')) return; // closed
+      const merge = document.getElementById('rel-merge');
+      if (preview.mode === 'conflict') {
+        this.showAdoptConflict(entryLabelFor(this.recipe, sourceKey));
+        document.getElementById('rel-go').disabled = true;
+      } else if (merge && preview.mode === 'merged') {
+        merge.hidden = false;
+        merge.textContent = `Merges cleanly into ${preview.current}: its changes are added to ${preview.current}, and nothing adopted since is lost.`;
+      }
+      const notes = document.getElementById('rel-changelog');
+      if (base && notes && !notes.dataset.edited) {
+        const asSheet = (parsed, text) => ({ fields: CookSheet.buildFields(parsed.steps), steps: parsed.steps, text });
+        const summary = CookSheet.changeSummary(asSheet(baseParsed, base.cooklang_text), asSheet(sourceParsed, source.cooklang_text));
+        if (summary) notes.value = summary;
+      }
+    } catch {
+      // The preview is a help; Adopt still checks on the server.
+    }
   },
 
   // How much cooking backs this test: adopting something nobody has cooked
@@ -371,6 +407,19 @@ Object.assign(RecipeView, {
     const scaleNote = Array.from(byScale, ([scale, n]) => `${n} at ${formatEditableQuantity(scale)}×`).join(', ');
     el.className = 'release-evidence';
     el.innerHTML = `${list.length} cook${list.length === 1 ? '' : 's'}${scaleNote ? ` (${escHtml(scaleNote)})` : ''} · latest ${escHtml(fmtDate(latest.cooked_at))}${latest.outcome ? `: “${escHtml(latest.outcome)}”` : ''}.${compareLink}`;
+    // As written, or what one of the cooks did (the per-change checklist).
+    const choice = document.getElementById('rel-source');
+    if (!choice) return;
+    this.cookLogs = list;
+    const cooks = [...list].sort((a, b) => a.cooked_at.localeCompare(b.cooked_at));
+    choice.innerHTML = `<fieldset class="rel-source">
+      <legend class="field-label">Adopt</legend>
+      <label class="rel-source-option"><input type="radio" name="rel-source" value="" checked /> ${escHtml(label)} as written</label>
+      ${cooks.map((log, i) => `<label class="rel-source-option"><input type="radio" name="rel-source" value="${escHtml(log.id)}" /> What Cook ${i + 1} did (${escHtml(shortDate(log.cooked_at))}${(Number(log.scale) || 1) !== 1 ? `, ${escHtml(formatEditableQuantity(Number(log.scale)))}×` : ''}${log.outcome ? `: ${escHtml(log.outcome)}` : ''})…</label>`).join('')}
+    </fieldset>`;
+    choice.addEventListener('change', (e) => {
+      if (e.target.name === 'rel-source' && e.target.value) this.openPromoteLogModal(e.target.value);
+    });
   },
 
   // Open the Versions tab's compare on a given pair.

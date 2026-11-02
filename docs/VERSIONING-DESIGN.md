@@ -486,6 +486,16 @@ already starts from the newest unrecorded print.
   ignores slips; adopt from a cook takes the ticked changes only; the
   double-adopt warning.
 - **Live:** cook a sandbox test twice and adopt it.
+- **Built.** The test page is the Overview of a test (`views-recipe-test.js`);
+  the table comes from the cook screen's value model (`CookSheet.comparison`),
+  so a row is "the nth water", the same key as "I meant this". Adopt shows,
+  before it's clicked, whether it merges cleanly or conflicts (Adopt is then
+  disabled), fills "What changed" from the real changes ("water, step 2:
+  15 → 30 g"), and offers "as written" or what one of the cooks did; the
+  per-change checklist comes with the "I meant this" changes ticked, and its
+  "What changed" follows the ticks. The checklist's tags say "changed",
+  "within the sheet's range", "added", "skipped". Not built: the cooks of an
+  earlier, re-based test (phase 5).
 
 **Phase 5: re-basing.**
 - "Re-base on v1.2" makes Test N+1 from the 3-way merge and closes the old test

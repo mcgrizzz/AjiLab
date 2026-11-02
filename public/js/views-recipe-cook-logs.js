@@ -6,12 +6,15 @@
 // a TokenDiff to a kind-appropriate human label (temperature vs ingredient
 // name vs timer). cherryStepGroup wraps a modified step's snippet header
 // around its token-diff children so the snippet appears once per step.
+// The checklist's words for each kind of change.
+const CHANGE_WORDS = { deviation: 'changed', 'within-spec': "within the sheet's range", addition: 'added', removal: 'skipped' };
+
 function cherryRow(id, classification, label, sub, defaultChecked) {
   const checked = defaultChecked ? ' checked' : '';
   return `<li class="cp-row cp-row-${escHtml(classification)}">
     <label class="cp-label">
       <input type="checkbox" class="cp-checkbox" value="${escHtml(id)}"${checked} />
-      <span class="cp-tag cp-tag-${escHtml(classification)}">${escHtml(classification)}</span>
+      <span class="cp-tag cp-tag-${escHtml(classification)}">${escHtml(CHANGE_WORDS[classification] || classification)}</span>
       <span class="cp-text">
         <span class="cp-label-line">${escHtml(label)}</span>
         ${sub ? `<span class="cp-sub">${sub}</span>` : ''}
@@ -331,11 +334,41 @@ Object.assign(RecipeView, {
         <button class="btn btn-primary" onclick="RecipeView.promoteLog('${escJs(logId)}')">Adopt</button>
       </div>`);
     setTimeout(() => document.getElementById('rel-version')?.select(), 100);
+    const notes = document.getElementById('rel-changelog');
+    notes?.addEventListener('input', () => { notes.dataset.edited = '1'; });
     try {
-      const classified = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(logId)}/classify`);
+      const branch = `/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}`;
+      const [classified, sheetParsed, cookParsed] = await Promise.all([
+        API.get(`${branch}/cook-logs/${encodeURIComponent(logId)}/classify`),
+        // The sheet at the cook's scale (the checklist's coordinates), and the
+        // cook against it.
+        API.post(`${branch}/draft/parse`, { cooklang_text: log.source_cooklang_text || '', scale }),
+        API.post(`${branch}/draft/parse`, { cooklang_text: log.cooklang_text || '', source_cooklang_text: log.source_cooklang_text || '', source_scale: scale }),
+      ]);
       this.cherryPickClassified = classified;
       const target = document.getElementById('cherry-pick-panel');
-      if (target) target.innerHTML = this.renderCherryPickPanel(classified);
+      if (!target) return;
+      target.innerHTML = this.renderCherryPickPanel(classified);
+      const sheetFields = CookSheet.buildFields(sheetParsed.steps);
+      const cookFields = CookSheet.buildFields(cookParsed.steps);
+      // Changes marked "I meant this" come ticked, and only those.
+      const intended = new Set((log.intended || []).map(CookSheet.keyId));
+      if (intended.size) {
+        for (const box of target.querySelectorAll('.cp-checkbox')) {
+          const key = CookSheet.keyForChange(sheetFields, box.value);
+          if (key) box.checked = intended.has(key);
+        }
+      }
+      // "What changed" follows the ticks, until it's edited by hand.
+      const fill = () => {
+        if (!notes || notes.dataset.edited) return;
+        const ticked = [...target.querySelectorAll('.cp-checkbox:checked')].map((box) => box.value);
+        const keys = ticked.map((id) => CookSheet.keyForChange(sheetFields, id)).filter(Boolean);
+        const steps = ticked.filter((id) => !id.startsWith('step-token:')).map((id) => (id.startsWith('step-add:') ? 'added a step' : `dropped step ${id.split(':')[2]}`));
+        notes.value = CookSheet.cookChangeSummary(cookFields, scale, keys, steps);
+      };
+      fill();
+      target.addEventListener('change', fill);
     } catch (e) {
       const target = document.getElementById('cherry-pick-panel');
       if (target) target.innerHTML = `<p class="text-muted">Could not load changes: ${escHtml(e.message)}</p>`;

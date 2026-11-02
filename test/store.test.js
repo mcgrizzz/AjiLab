@@ -396,3 +396,58 @@ test("each sheet knows when a cook of it was last saved, whatever date the cook 
   assert.equal(v1.last_cooked_at, "2026-01-02T12:00:00.000Z");
   assert.ok(Date.parse(v1.last_recorded_at) >= before - 1000);
 });
+
+test("adopting a test as written takes the test, not what its cooks did", async () => {
+  const { store } = ctx;
+  const slug = await recipeWithVersion("As written");
+  await makeTest(slug, "more water", (t) => t.replace("375", "390"));
+  for (const [scale, edit] of [[1, (t) => t.replace("500%g", "502%g")], [2, (t) => t.replace("20%g", "22%g")]]) {
+    const log = await store.createCookLog(slug, { kind: "version", version_string: "test-1" }, { outcome: "ok", scale });
+    await store.updateCookLog(slug, log.id, { cooklang_text: edit(log.cooklang_text) });
+  }
+  assert.deepEqual(await store.previewAdopt(slug, "test-1"), { mode: "as-is", current: "v1.0" });
+  await store.releaseVersion(slug, "test-1", { version_string: "v1.1" });
+  const recipe = await get(slug);
+  assert.equal(entry(recipe, "v1.1").cooklang_text, entry(recipe, "Test 1").cooklang_text);
+  assert.equal(entry(recipe, "Test 1").adopted_as, "v1.1");
+});
+
+test("adopt preview: merges into a newer current version, or says it conflicts", async () => {
+  const { store } = ctx;
+  const slug = await recipeWithVersion("Preview");
+  await makeTest(slug, "more water", (t) => t.replace("375", "390"));
+  await makeTest(slug, "more salt", (t) => t.replace("10%g", "12%g"));
+  await makeTest(slug, "less water", (t) => t.replace("375", "360"));
+  await store.releaseVersion(slug, "test-2", { version_string: "v1.1" });
+  assert.deepEqual(await store.previewAdopt(slug, "test-1"), { mode: "merged", current: "v1.1" });
+  await store.releaseVersion(slug, "test-1", { version_string: "v1.2" });
+  const conflict = await store.previewAdopt(slug, "test-3");
+  assert.equal(conflict.mode, "conflict");
+  assert.equal(conflict.current, "v1.2");
+  assert.equal((await get(slug)).versions.filter((v) => v.kind === "version").length, 3, "a preview makes nothing");
+});
+
+test("adopting from a cook takes only the ticked changes; the same cook can be adopted again", async () => {
+  const { store } = ctx;
+  const { synthesizePromotedRecipe } = await import("../src/compare.ts");
+  const { scaleCooklangText } = await import("../src/cooklang.ts");
+  const slug = await recipeWithVersion("Ticked");
+  await makeTest(slug, "more water", (t) => t.replace("375", "390"));
+  const log = await store.createCookLog(slug, { kind: "version", version_string: "test-1" }, { outcome: "ok", scale: 2 });
+  // At 2×: more salt (ticked) and a longer rest (not ticked).
+  const cooked = log.cooklang_text.replace("20%g", "24%g").replace("30%min", "45%min");
+  await store.updateCookLog(slug, log.id, { cooklang_text: cooked });
+  const source = scaleCooklangText(log.source_cooklang_text, 2);
+  const picked = synthesizePromotedRecipe(source, cooked, new Set(["step-token:0:2:ingredient:0"]));
+  const fresh = await store.getCookLog(slug, log.id);
+  await store.promoteCookLogWithText(slug, log.id, store.cookLogTextAtRecipeScale(fresh, picked), { version_string: "v1.1" });
+  let v11 = entry(await get(slug), "v1.1");
+  assert.match(v11.cooklang_text, /@salt\{12%g\}/, "ticked, back at 1×");
+  assert.match(v11.cooklang_text, /~\{30%min\}/, "not ticked");
+  assert.match(v11.cooklang_text, /@water\{390%g\}/, "the test itself");
+  // Adopting the same cook again is allowed (the screen warns first).
+  await store.promoteCookLog(slug, log.id, { version_string: "v1.2" });
+  const recipe = await get(slug);
+  assert.deepEqual(recipe.versions.filter((v) => v.from_cook_log_id === log.id).map((v) => v.label).sort(), ["v1.1", "v1.2"]);
+  assert.match(entry(recipe, "v1.2").cooklang_text, /~\{45%min\}/);
+});

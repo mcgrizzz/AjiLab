@@ -72,6 +72,8 @@ const CookSheet = (() => {
           index,
           name: String(token.name || ''),
           isTemp: token.type === 'inlineQuantity' && TEMP_UNIT.test(String(token.units || '')),
+          // Scaling changes only ingredients that aren't fixed (@salt{=2%g}).
+          scales: token.type === 'ingredient' && !token.fixed,
           key,
           added,
           original,
@@ -211,6 +213,141 @@ const CookSheet = (() => {
     return lines.join('\n');
   }
 
-  return { noteAdded, replaceNote, buildFields, ingredientRows, listedFieldIds, formatAmount, parseTyped, changeKind, keyId,
+  // ── Comparing the cooks of a sheet ─────────────────────────────────────────
+
+  const plainStepText = (step) => step
+    .map((t) => (typeof t === 'string' ? t : (t.type === 'ingredient' || t.type === 'cookware' ? (t.name || t.value) : t.value)) || '')
+    .join('').replace(/\s+/g, ' ').trim();
+
+  // The sheet's steps as printed: numbered in order, added steps not
+  // counted (they have no number on the paper).
+  function stepList(steps) {
+    const out = [];
+    let number = 0;
+    for (const step of steps || []) {
+      const info = stepInfo(step);
+      if (!Number.isFinite(info.stepNumber)) continue;
+      const added = info.deviation === 'added';
+      if (!added) number += 1;
+      out.push({ sectionIndex: info.sectionIndex, stepNumber: info.stepNumber, number: added ? null : number, after: number, deviation: info.deviation, text: plainStepText(step) });
+    }
+    return out;
+  }
+
+  const trimNumber = (n) => String(Number(n.toFixed(2)));
+
+  // An amount as at the sheet's 1×: a 2× cook's scaled ingredients divided
+  // back. Times, temperatures and fixed amounts don't scale.
+  function atSheetScale(field, amount, scale) {
+    if (!scale || scale === 1 || !field.scales) return amount;
+    const values = Units.parseQuantity(String(amount.quantity));
+    if (!values) return amount;
+    return { quantity: values.map((v) => trimNumber(v / scale)).join('-'), units: amount.units };
+  }
+
+  function valueLabel(field, numbers, repeated) {
+    const step = numbers.get(`${field.sectionIndex}:${field.stepNumber}`);
+    const where = step ? `, step ${step}` : '';
+    if (field.kind === 'ingredient') return repeated.has(lower(field.name)) ? `${field.name}${where}` : field.name;
+    if (field.kind === 'timer') return `time${where}`;
+    return `${field.isTemp ? 'temperature' : 'amount'}${where}`;
+  }
+
+  // The cooks of a sheet side by side, at the sheet's 1×. Rows: the values
+  // the sheet changes from its base ("tested"), and any value a cook did
+  // differently; then skipped and added steps.
+  //   base, sheet: { fields, steps } (base may be null)
+  //   cooks: [{ id, scale, fields, steps, intended: [keys] }] (fields parsed
+  //          against the sheet at the cook's scale)
+  function comparison({ base, sheet, cooks }) {
+    const keyed = (fields) => new Map(fields.filter((f) => f.key).map((f) => [keyId(f.key), f]));
+    const sheetByKey = keyed(sheet.fields);
+    const baseByKey = base ? keyed(base.fields) : null;
+    const steps = stepList(sheet.steps);
+    const numbers = new Map(steps.filter((s) => s.number).map((s) => [`${s.sectionIndex}:${s.stepNumber}`, s.number]));
+    const counts = new Map();
+    for (const f of sheet.fields) if (f.kind === 'ingredient' && f.key) counts.set(lower(f.name), (counts.get(lower(f.name)) || 0) + 1);
+    const repeated = new Set([...counts].filter(([, n]) => n > 1).map(([name]) => name));
+    const cookKeyed = cooks.map((cook) => ({ cook, byKey: keyed(cook.fields), intended: new Set((cook.intended || []).map(keyId)) }));
+
+    const rows = [];
+    const ids = [...sheetByKey.keys()];
+    if (baseByKey) for (const id of baseByKey.keys()) if (!sheetByKey.has(id)) ids.push(id);
+    for (const id of ids) {
+      const f = sheetByKey.get(id) || null;
+      const b = baseByKey?.get(id) || null;
+      const ref = f || b;
+      const tested = !!baseByKey && (!f || !b || formatAmount(b.current, ref.isTemp) !== formatAmount(f.current, ref.isTemp));
+      const cells = cookKeyed.map(({ cook, byKey, intended }) => {
+        const cf = byKey.get(id);
+        if (!f) return { kind: 'none' };
+        if (!cf) return { kind: 'left-out', intended: intended.has(id) };
+        return {
+          kind: changeKind(cf),
+          amount: atSheetScale(cf, cf.current, cook.scale),
+          cooked: cf.current,
+          scaled: (cook.scale || 1) !== 1 && cf.scales,
+          intended: intended.has(id),
+        };
+      });
+      if (!tested && cells.every((c) => c.kind === 'unchanged' || c.kind === 'none')) continue;
+      rows.push({ id, label: valueLabel(ref, numbers, repeated), isTemp: ref.isTemp, base: b ? b.current : null, sheet: f ? f.current : null, tested, cells });
+    }
+
+    // Steps a cook skipped, by their number on the paper.
+    const stepRows = [];
+    for (const step of steps.filter((s) => s.number)) {
+      const cells = cooks.map((cook) => stepList(cook.steps).some((s) => s.number === step.number && s.deviation === 'skipped'));
+      if (cells.some(Boolean)) stepRows.push({ label: `Skipped step ${step.number}`, text: step.text, cells });
+    }
+    cooks.forEach((cook, i) => {
+      for (const s of stepList(cook.steps).filter((x) => x.deviation === 'added')) {
+        stepRows.push({ label: `Added after step ${s.after}`, text: s.text, cells: cooks.map((_, j) => j === i) });
+      }
+    });
+    return { rows, stepRows };
+  }
+
+  // "water: 140 → 150 g" for the version notes.
+  function changeText(label, from, to, isTemp) {
+    if (!from) return `added ${label}: ${formatAmount(to, isTemp)}`;
+    if (!to) return `no ${label}`;
+    const sameUnit = String(from.units) === String(to.units);
+    return sameUnit && from.units && !isTemp
+      ? `${label}: ${from.quantity} → ${to.quantity} ${to.units}`
+      : `${label}: ${formatAmount(from, isTemp)} → ${formatAmount(to, isTemp)}`;
+  }
+
+  // What a sheet changes from its base, in words: its value changes, and
+  // whether anything else in the steps changed.
+  function changeSummary(base, sheet) {
+    if (!base) return '';
+    const { rows } = comparison({ base, sheet, cooks: [] });
+    const parts = rows.filter((r) => r.tested).map((r) => changeText(r.label, r.base, r.sheet, r.isTemp));
+    const shape = (text) => String(text || '').replace(/\{[^}]*\}/g, '{}').replace(/\s+/g, ' ').trim();
+    if (base.text !== undefined && sheet.text !== undefined && shape(base.text) !== shape(sheet.text)) parts.push('changes to the steps');
+    return parts.join('; ');
+  }
+
+  // A cook's ticked changes in words, at the sheet's 1×.
+  function cookChangeSummary(cookFields, scale, keyIds, stepNotes = []) {
+    const wanted = new Set(keyIds);
+    const parts = cookFields
+      .filter((f) => f.key && wanted.has(keyId(f.key)) && changeKind(f) !== 'unchanged')
+      .map((f) => changeText(valueLabel(f, new Map(), new Set()), atSheetScale(f, f.original, scale), atSheetScale(f, f.current, scale), f.isTemp));
+    return [...parts, ...stepNotes].join('; ');
+  }
+
+  // A checklist change id ("step-token:0:2:ingredient:1", in the sheet's
+  // coordinates) as an "I meant this" key, through the sheet's fields.
+  function keyForChange(sheetFields, changeId) {
+    const m = String(changeId).match(/^step-token:(-?\d+):(\d+):(\w+):(\d+)$/);
+    if (!m) return null;
+    const f = sheetFields.find((x) => x.sectionIndex === Number(m[1]) && x.stepNumber === Number(m[2]) && x.kind === m[3] && x.index === Number(m[4]));
+    return f?.key ? keyId(f.key) : null;
+  }
+
+  return { stepList, atSheetScale, comparison, changeSummary, cookChangeSummary, keyForChange,
+    noteAdded, replaceNote, buildFields, ingredientRows, listedFieldIds, formatAmount, parseTyped, changeKind, keyId,
     joinedNotes, localDay, localTime, dateChoices, cookedAt, stepInfo };
 })();
