@@ -155,3 +155,48 @@ test("a temperature written in words stays text and doesn't shift the values aft
   assert.equal(updateStepQuantity(text, 0, 1, "inlineQuantity", fields[1].index, "380", "F"),
     "Preheat to 450F, then bake ~{10%min} and drop to ^{380%F}.");
 });
+
+test("ranges show their unit once, and putting one back writes it as it was", () => {
+  const text = "Bake for ~{1-2%min}, proof ~{18-24%hours}, add @salt{2-3%g} at ^{23-25%C}.";
+  const fields = fieldsOf(text);
+  assert.deepEqual(fields.map((f) => CookSheet.formatAmount(f.current, f.isTemp)), ["1-2 min", "18-24 hours", "2-3 g", "23-25°C"]);
+  let same = text;
+  for (const f of fields) same = updateStepQuantity(same, f.sectionIndex, f.stepNumber, f.kind, f.index, f.original.quantity, f.original.units);
+  assert.equal(same, text);
+  const typed = CookSheet.parseTyped("20-26 hours", fields[1]);
+  assert.equal(updateStepQuantity(text, 0, 1, "timer", 1, typed.quantity, typed.units),
+    "Bake for ~{1-2%min}, proof ~{20-26%hours}, add @salt{2-3%g} at ^{23-25%C}.");
+});
+
+test("a note added while recording can be fixed or removed; the sheet's own notes are not offered", () => {
+  const source = "Mix @flour{100%g}.\n\n> keep it cool\n\nRest.";
+  let cooked = insertNoteAfterStep(source, 0, 1, "dough stiky");
+  assert.equal(CookSheet.noteAdded(source, "dough stiky"), true);
+  assert.equal(CookSheet.noteAdded(source, "keep it cool"), false);
+  const fixed = CookSheet.replaceNote(cooked, "dough stiky", 0, "dough sticky");
+  assert.match(fixed, /^> dough sticky$/m);
+  assert.doesNotMatch(fixed, /stiky/);
+  assert.equal(CookSheet.replaceNote(cooked, "dough stiky", 0, "  "), source);
+  // The second of two identical notes.
+  cooked = insertNoteAfterStep(insertNoteAfterStep(source, 0, 2, "again"), 0, 1, "again");
+  const second = CookSheet.replaceNote(cooked, "again", 1, "later");
+  assert.deepEqual(second.split("\n").filter((l) => l.startsWith(">")), ["> again", "> keep it cool", "> later"]);
+  assert.equal(CookSheet.replaceNote(cooked, "missing", 0, "x"), cooked);
+});
+
+test("values without an amount still count, as the server counts them", () => {
+  for (const scale of [1, 2]) {
+    const text = scaleCooklangText("Add @pepper{} and @salt{2%g}, then @oil and @sugar{5%g}, @red wine{} and @egg{2}.", scale);
+    const fields = fieldsOf(text);
+    assert.deepEqual(fields.map((f) => `${f.name}#${f.index}`), ["salt#1", "sugar#3", "egg#5"]);
+    for (const field of fields) {
+      const next = updateStepQuantity(text, field.sectionIndex, field.stepNumber, field.kind, field.index, "777", field.current.units);
+      const after = fieldsOf(next);
+      after.forEach((other, i) => assert.equal(other.current.quantity, other.id === field.id ? "777" : fields[i].current.quantity, `${field.name} at ${scale}×`));
+    }
+  }
+  // A bare ingredient gets braces when given an amount, and 0 leaves the word.
+  assert.equal(updateStepQuantity("Add @oil and @salt{2%g}.", 0, 1, "ingredient", 0, "10", "ml"), "Add @oil{10%ml} and @salt{2%g}.");
+  assert.equal(updateStepQuantity("Add @oil and @salt{2%g}.", 0, 1, "ingredient", 1, "3", "g"), "Add @oil and @salt{3%g}.");
+  assert.equal(updateStepQuantity("Add @oil, then stir.", 0, 1, "ingredient", 0, "0", ""), "Add oil, then stir.");
+});

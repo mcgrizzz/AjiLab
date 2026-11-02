@@ -163,7 +163,7 @@ const CookView = {
         </section>
         <div class="cook-done-bar">
           <span class="cook-done-note">Saved as you go.</span>
-          <button class="btn btn-primary" data-act="done" title="Ctrl+Enter">Done</button>
+          <button class="btn btn-primary" data-act="done" title="Done (Ctrl+Enter)">Done</button>
         </div>
       </div>`;
     const view = container.querySelector('.cook-view');
@@ -294,13 +294,22 @@ const CookView = {
   stepsHtml() {
     const out = [];
     let number = 0;
+    const noteCounts = new Map();
     for (const step of this.parsed.steps || []) {
       const info = CookSheet.stepInfo(step);
       if (!Number.isFinite(info.stepNumber)) {
         const token = step.find((t) => t && typeof t === 'object');
         const value = String(token?.value || '');
-        if (token?.type === 'text' && /^\s*=\s+/.test(value)) out.push(`<li class="cook-section">${escHtml(value.replace(/^\s*=\s+/, ''))}</li>`);
-        else if (value.trim()) out.push(`<li class="cook-step-comment">${escHtml(value.replace(/^\s*(>\s*|--\s*)/, ''))}</li>`);
+        if (token?.type === 'text' && /^\s*=\s+/.test(value)) { out.push(`<li class="cook-section">${escHtml(value.replace(/^\s*=\s+/, ''))}</li>`); continue; }
+        const note = value.replace(/^\s*(>\s*|--\s*)/, '');
+        if (!note.trim()) continue;
+        const occurrence = noteCounts.get(note.trim()) || 0;
+        noteCounts.set(note.trim(), occurrence + 1);
+        // A note added while recording can be fixed by clicking it.
+        const added = this.log && token?.type === 'comment' && CookSheet.noteAdded(this.sourceText, note);
+        out.push(added
+          ? `<li class="cook-step-comment is-editable" tabindex="0" role="button" data-act="edit-note" data-note="${escHtml(note.trim())}" data-occurrence="${occurrence}" title="Fix this note (empty removes it)">${escHtml(note)}</li>`
+          : `<li class="cook-step-comment">${escHtml(note)}</li>`);
         continue;
       }
       const added = info.deviation === 'added';
@@ -310,10 +319,10 @@ const CookView = {
       const counts = { ingredient: 0, timer: 0, inlineQuantity: 0 };
       const body = step.map((token) => {
         if (typeof token === 'string') return escHtml(token);
-        const hasQty = token.quantity !== '' && token.quantity != null;
-        if (hasQty && token.type in counts) {
-          const f = here.find((x) => x.kind === token.type && x.index === counts[token.type]);
-          counts[token.type] += 1;
+        // Count every value of a kind, as buildFields does.
+        if (token.type in counts) {
+          const index = counts[token.type]++;
+          const f = here.find((x) => x.kind === token.type && x.index === index);
           if (f) return this.fieldHtml(f, { tabbable: !this.listed.has(f.id) });
         }
         switch (token.type) {
@@ -327,14 +336,14 @@ const CookView = {
       const valueless = !here.some((f) => !this.listed.has(f.id));
       const tools = added
         ? `<span class="cook-badge-added">Added</span><button class="cook-tool" data-act="remove-step" tabindex="-1">Remove</button>`
-        : `<button class="cook-tool cook-skip" data-act="skip" aria-pressed="${skipped}" tabindex="-1" title="Alt+S">${skipped ? 'Skipped' : 'Skip'}</button>`;
+        : `<button class="cook-tool cook-skip" data-act="skip" aria-pressed="${skipped}" tabindex="-1" title="${skipped ? 'Not skipped after all' : 'Skip this step'} (Alt+S)">${skipped ? 'Skipped' : 'Skip'}</button>`;
       out.push(`<li class="cook-step${skipped ? ' is-skipped' : ''}${added ? ' is-added' : ''}" data-section="${info.sectionIndex}" data-step="${info.stepNumber}"${valueless ? ` tabindex="0" aria-label="Step ${added ? '(added)' : number}"` : ''}>
         <span class="cook-step-num" aria-hidden="true">${added ? '+' : number}</span>
         <div class="cook-step-main">
           <div class="cook-step-text">${body}</div>
           <div class="cook-step-tools">${tools}
-            <button class="cook-tool" data-act="note" tabindex="-1" title="Alt+N">Note</button>
-            <button class="cook-tool" data-act="add-step" tabindex="-1">Add a step after</button>
+            <button class="cook-tool" data-act="note" tabindex="-1" title="Add a note under this step (Alt+N)">Note</button>
+            <button class="cook-tool" data-act="add-step" tabindex="-1" title="Add a step you did after this one">Add a step after</button>
           </div>
           <div class="cook-step-editor"></div>
         </div>
@@ -521,7 +530,11 @@ const CookView = {
     const skipped = !step.li.classList.contains('is-skipped');
     step.li.classList.toggle('is-skipped', skipped);
     const button = step.li.querySelector('.cook-skip');
-    if (button) { button.setAttribute('aria-pressed', String(skipped)); button.textContent = skipped ? 'Skipped' : 'Skip'; }
+    if (button) {
+      button.setAttribute('aria-pressed', String(skipped));
+      button.textContent = skipped ? 'Skipped' : 'Skip';
+      button.title = `${skipped ? 'Not skipped after all' : 'Skip this step'} (Alt+S)`;
+    }
     this.enqueue(() => this.stepAction(step.sectionIndex, step.stepNumber, { action: 'set-deviation', deviation: skipped ? 'skipped' : null }), { undo: true });
   },
 
@@ -558,6 +571,40 @@ const CookView = {
         : { action: 'insert-step-after', content: `!+ ${content.replace(/\s*\n\s*/g, ' ')}` });
       await this.repaintSheet(() => this.focusStep(sectionIndex, stepNumber, { after: true }));
     }, { undo: true });
+  },
+
+  // Fixing a note added while recording: the note becomes a text area in
+  // place. Enter saves, Esc cancels, empty removes it.
+  editNote(li) {
+    if (li.querySelector('textarea')) return;
+    const note = li.dataset.note;
+    li.innerHTML = `<textarea class="field-input cook-note-fix" rows="2" aria-label="Fix this note">${escHtml(note)}</textarea>
+      <div class="cook-editor-hint">Enter saves · Esc cancels · empty removes the note</div>`;
+    const area = li.querySelector('textarea');
+    area.focus();
+    area.setSelectionRange(area.value.length, area.value.length);
+  },
+
+  saveNote(area) {
+    const li = area.closest('.cook-step-comment');
+    if (!li) return;
+    const note = li.dataset.note;
+    const occurrence = Number(li.dataset.occurrence) || 0;
+    const next = area.value;
+    if (next.replace(/\s+/g, ' ').trim() === note) { this.cancelNote(area); return; }
+    this.enqueue(async () => {
+      const text = CookSheet.replaceNote(this.text, note, occurrence, next);
+      if (text === this.text) return;
+      await this.putLog({ cooklang_text: text });
+      await this.repaintSheet();
+    }, { undo: true });
+  },
+
+  cancelNote(area) {
+    const li = area.closest('.cook-step-comment');
+    if (!li) return;
+    li.textContent = li.dataset.note;
+    li.focus();
   },
 
   removeAddedStep(step) {
@@ -668,6 +715,16 @@ const CookView = {
       }
       return;
     }
+    if (el.classList.contains('cook-note-fix')) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.saveNote(el); }
+      else if (e.key === 'Escape') { e.preventDefault(); this.cancelNote(el); }
+      return;
+    }
+    if (el.classList.contains('cook-step-comment') && el.dataset.act === 'edit-note' && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      this.editNote(el);
+      return;
+    }
     if (el.classList.contains('cook-editor-text')) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.saveEditor(el); }
       else if (e.key === 'Escape') { e.preventDefault(); this.closeEditor(this.stepOf(el)); }
@@ -694,6 +751,7 @@ const CookView = {
     else if (act === 'note' && step) this.openEditor(step, 'note');
     else if (act === 'add-step' && step) this.openEditor(step, 'add');
     else if (act === 'remove-step' && step) this.removeAddedStep(step);
+    else if (act === 'edit-note' && !e.target.closest('textarea')) this.editNote(target);
     else if (act === 'day') this.setDay(target.dataset.day);
     else if (act === 'as-written') this.cookedAsWritten();
     else if (act === 'change-sheet') { this.changingSheet = true; document.getElementById('cook-sheet-line').innerHTML = this.sheetLineHtml(); document.getElementById('cook-pick-sheet')?.focus(); }

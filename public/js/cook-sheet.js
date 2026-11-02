@@ -11,6 +11,15 @@ const CookSheet = (() => {
   const TEMP_UNIT = /^°?\s*([FCfc]|fahrenheit|celsius)$/i;
 
   const hasQuantity = (token) => token.quantity !== '' && token.quantity != null;
+
+  // A timer range comes from the parser with its unit inside the quantity
+  // ("1-2 min" with units "min"); keep the number part only.
+  function bareQuantity(quantity, units) {
+    const text = String(quantity ?? '').trim();
+    const unit = String(units ?? '').trim();
+    if (unit && text.endsWith(unit) && text.length > unit.length) return text.slice(0, -unit.length).trim();
+    return text;
+  }
   const lower = (text) => String(text ?? '').trim().toLowerCase();
 
   function stepInfo(step) {
@@ -37,8 +46,11 @@ const CookSheet = (() => {
       const added = info.deviation === 'added';
       const counts = { ingredient: 0, timer: 0, inlineQuantity: 0 };
       for (const token of step) {
-        if (!token || typeof token !== 'object' || !KINDS.includes(token.type) || !hasQuantity(token)) continue;
+        if (!token || typeof token !== 'object' || !KINDS.includes(token.type)) continue;
+        // Every value of a kind counts, with an amount or not ("@pepper{}",
+        // "@oil"), as the server's step actions count them.
         const index = counts[token.type]++;
+        if (!hasQuantity(token)) continue;
         const name = token.type === 'inlineQuantity' ? '' : lower(token.name);
         let key = null;
         if (!added) {
@@ -47,10 +59,10 @@ const CookSheet = (() => {
           ordinals.set(id, n + 1);
           key = { kind: token.type, name, n };
         }
-        const current = { quantity: String(token.quantity), units: String(token.units || '') };
+        const current = { quantity: bareQuantity(token.quantity, token.units), units: String(token.units || '') };
         const annotated = token.source_quantity !== undefined && token.source_quantity !== null;
         const original = annotated
-          ? { quantity: String(token.source_quantity), units: String(token.source_units ?? current.units) }
+          ? { quantity: bareQuantity(token.source_quantity, token.source_units ?? token.units), units: String(token.source_units ?? current.units) }
           : { ...current };
         fields.push({
           id: `f${fields.length}`,
@@ -176,6 +188,29 @@ const CookSheet = (() => {
     return new Date(y, m - 1, d, hh, mm).toISOString();
   }
 
-  return { buildFields, ingredientRows, listedFieldIds, formatAmount, parseTyped, changeKind, keyId,
+  // Notes are "> text" lines. A note you added can be fixed (or removed,
+  // with empty text): the nth line with that text is replaced.
+  const noteLine = (line) => line.match(/^\s*>\s?(.*)$/);
+  function noteAdded(sourceText, note) {
+    return !String(sourceText || '').split('\n').some((line) => noteLine(line)?.[1].trim() === note.trim());
+  }
+  function replaceNote(text, note, occurrence, next) {
+    const lines = String(text).split('\n');
+    let seen = -1;
+    const at = lines.findIndex((line) => noteLine(line)?.[1].trim() === note.trim() && ++seen === occurrence);
+    if (at < 0) return text;
+    const value = String(next || '').replace(/\s*\n\s*/g, ' ').trim();
+    if (value) {
+      lines[at] = `> ${value}`;
+    } else {
+      // Remove the note and one of the blank lines around it.
+      const blankAfter = lines[at + 1] !== undefined && !lines[at + 1].trim();
+      const blankBefore = at > 0 && !lines[at - 1].trim();
+      lines.splice(blankAfter ? at : (blankBefore ? at - 1 : at), blankAfter || blankBefore ? 2 : 1);
+    }
+    return lines.join('\n');
+  }
+
+  return { noteAdded, replaceNote, buildFields, ingredientRows, listedFieldIds, formatAmount, parseTyped, changeKind, keyId,
     joinedNotes, localDay, localTime, dateChoices, cookedAt, stepInfo };
 })();

@@ -41,7 +41,7 @@ function ingredientOccurrences(text: string): Occurrence[] {
   const seen = new Map<string, number>();
   const out: Occurrence[] = [];
   for (const a of scanAnnotations(body)) {
-    if (a.kind !== "ingredient" || a.prose) continue;
+    if (a.kind !== "ingredient" || a.prose || a.bare) continue;
     const name = body.slice(findIngredientNameStart(body, a.sigil_start), a.name_end)
       .replace(/^\([^)]*\)/, "")
       .trim()

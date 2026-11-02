@@ -649,3 +649,12 @@ test("step diff: a rewritten step reads as removed + added, in that order", () =
   const changes = diffStepBlocks("Preheat the oven.", "Score the loaf with a lame.");
   assert.deepEqual(changes.map((c) => c.kind), ["removed", "added"]);
 });
+
+test("synthesize: a ticked change after a bare ingredient lands on the right one", () => {
+  const src = "Add @oil and @sugar{5%g}, then @salt{2%g}.";
+  const log = "Add @oil and @sugar{8%g}, then @salt{2%g}.";
+  const classified = classifyCookLogVsSource(parseCooklang(log), parseCooklang(src));
+  const id = classified.steps.flatMap((s) => (s.token_diffs || []).map((d) => `step-token:${s.section_index}:${s.step_number}:${d.kind}:${d.source_token_index}`));
+  assert.deepEqual(id, ["step-token:0:1:ingredient:1"]);
+  assert.equal(synthesizePromotedRecipe(src, log, new Set(id)), log);
+});

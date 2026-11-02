@@ -98,6 +98,10 @@ export interface AnnotationMatch {
   // Present for prose temperatures (`26.5°C`) that carry no sigil/braces. The
   // span covers the whole match so updateStepQuantity can replace it wholesale.
   prose?: { start: number; end: number };
+  // A bare ingredient (`@salt`, no braces): no quantity, brace_open and
+  // brace_close are -1. Still counted, so "the nth ingredient of a step"
+  // means the same here as in the parser's token list.
+  bare?: boolean;
 }
 
 // Prose temperature mention: `26.5°C`, `23-25°C`. Mirrors the regex in
@@ -141,7 +145,17 @@ export function scanAnnotations(text: string): AnnotationMatch[] {
         j++;
       }
       if (!sawBrace) {
-        // No braces → annotation has no editable quantity. Advance past name.
+        // No braces: a bare ingredient is one word (Cooklang needs braces
+        // for more). Timers always have braces.
+        if (kind === "ingredient") {
+          const word = text.slice(nameStart).match(/^[\p{L}\p{N}_]+(?:['’-][\p{L}\p{N}_]+)*/u);
+          if (word) {
+            const end = nameStart + word[0].length;
+            out.push({ kind, sigil_start: sigilStart, name_end: end, brace_open: -1, brace_close: -1, bare: true });
+            i = end;
+            continue;
+          }
+        }
         // Reset position to nameStart so we don't skip nested sigils.
         i = nameStart > sigilStart + 1 ? nameStart : sigilStart + 1;
         continue;
@@ -212,7 +226,14 @@ export function updateStepQuantity(
   const target = annotations[index];
 
   let nextStepText: string;
-  if (target.prose) {
+  if (target.bare) {
+    // `@oil` → `@oil{10%ml}`; 0 leaves the plain word.
+    const before = stepText.slice(0, target.sigil_start);
+    const after = stepText.slice(target.name_end);
+    nextStepText = newQuantity.trim() === "0"
+      ? before + stepText.slice(findIngredientNameStart(stepText, target.sigil_start), target.name_end) + after
+      : stepText.slice(0, target.name_end) + `{${composeBraceContent(newQuantity, newUnits)}}` + after;
+  } else if (target.prose) {
     // Upgrade the prose temperature to a canonical `^{value%unit}` sigil so it
     // round-trips through the parser and stays editable afterwards.
     const unit = newUnits.replace(/^[°º]\s*/, "").trim();

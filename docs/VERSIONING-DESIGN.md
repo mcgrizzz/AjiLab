@@ -466,6 +466,15 @@ already starts from the newest unrecorded print.
   - The parser keeps no timer names, so timers' "I meant this" keys count
     by position.
   - The photo of the sheet is not built.
+  - After Andrew's run: a note added while recording can be fixed by
+    clicking it (empty removes it); Skip, Note and Done show their
+    shortcuts. Fixed: ranges showed their unit twice ("1-2 min min"); a
+    skipped step's values weren't struck through; and a step's nth value
+    was counted differently by the server when an ingredient without an
+    amount came first ("@pepper{}", "@oil"), which also affected
+    "Adopt from this cook".
+  - Next: the print record keeps the temperature unit and unit choices,
+    and the cook screen shows values as printed.
 
 **Phase 4: the test page and decisions.**
 - The test page; the comparison table (rows that differ plus the tested rows,
