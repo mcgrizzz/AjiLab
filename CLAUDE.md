@@ -89,6 +89,8 @@ Three layers: ingredient diff (unit-normalized via `metric-expr` conversions), s
 
 Vanilla JS SPA, ES modules. Files prefixed `views-*` are screens (`views-index`, `views-recipe-overview`, `views-recipe-editor`, `views-recipe-viewer`, `views-recipe-versions`, `views-recipe-cook-logs`, `views-cook` (recording a cook, with its pure value model in `cook-sheet.js`), `views-recipe-test` (a test's page: what it changes, its cooks side by side, adopt), `views-print`). `cooklang-render.js` is the renderer used by all viewers; `cooklang-editor.js` is the CodeMirror editor with custom Cooklang syntax highlighting. `api.js` is the thin fetch wrapper.
 
+`import-prompt.js` holds the syntax list, written once: the editor's Syntax help shows the entries marked `help`, and "Import from a link" (New recipe dialog, `app.js`) builds a prompt from all of it for a chat assistant, then reads the reply back (checked through `POST /api/parse` before anything is created). **When you add or change syntax or a house-style convention, update `import-prompt.js`** (or list the syntax in `NOT_FOR_IMPORT` with the reason). `test/import-prompt.test.js` parses every example and the sample recipe with the real parser, and fails on a CLAUDE.md extension that's in neither list.
+
 The CodeMirror bundle is built separately into `public/vendor/codemirror.js` — re-run `npm run build:editor` after touching `src/browser/codemirror-vendor.js`.
 
 ### Styles (`public/css/`)
@@ -101,4 +103,4 @@ Linked in order from `index.html` (plain `<link>`s, no `@import`): `tokens.css` 
 - When mutating cooklang text from the server, use the `upsert*InCooklang` helpers rather than string-splicing the frontmatter yourself — they handle legacy formats and aliases.
 - Don't add new columns for things that belong in cooklang frontmatter (notes, servings, tags-that-are-already-there).
 - `MAIN_BRANCH = "main"` is the canonical slug; `MAIN_BRANCH_SLUG` in `recipe-store.ts` is the same constant for that module.
-- The Cooklang spec is the source of truth — extensions added here (`^{}`, `%{}`, `!+`/`!-`, `@?`/`@-`/`@&`) must remain backward-compatible: standard Cooklang renderers should still display the recipe sanely.
+- The Cooklang spec is the source of truth — extensions added here (`^{}`, `%{}`, `!+`/`!-`, `@?`/`@-`/`@&`) must remain backward-compatible: standard Cooklang renderers should still display the recipe sanely. A new extension also goes in `public/js/import-prompt.js` and the extension list in `test/import-prompt.test.js`.

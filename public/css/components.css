@@ -411,3 +411,19 @@ button.s-timer-start:hover { text-decoration: underline; text-underline-offset: 
   color: var(--ink3);
   font-weight: 400;
 }
+
+/* ── Import a recipe (the New recipe dialog) ── */
+.import-switch { display: inline-block; margin-top: 12px; font-size: 0.85rem; }
+.import-intro { margin: 0 0 12px; font-size: 0.88rem; line-height: 1.45; color: var(--ink2); }
+.import-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 14px; }
+.import-steps > li::marker { color: var(--ink3); font-weight: 600; }
+.import-row { display: flex; gap: 8px; }
+.import-row .field-input { flex: 1; min-width: 0; }
+.import-row .btn { flex-shrink: 0; }
+.import-hint { font-size: 0.8rem; color: var(--ink3); line-height: 1.4; }
+.import-prompt summary { cursor: pointer; font-size: 0.82rem; color: var(--ink3); }
+.import-prompt textarea { margin-top: 6px; width: 100%; min-height: 160px; font-family: var(--font-mono); font-size: 0.75rem; }
+.import-reply { width: 100%; min-height: 140px; font-family: var(--font-mono); font-size: 0.8rem; }
+.import-check { margin: 0; min-height: 1.2em; font-size: 0.85rem; color: var(--ink2); }
+.import-check-bad { color: var(--danger-text); }
+.import-title[hidden] { display: none; }

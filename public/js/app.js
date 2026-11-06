@@ -209,13 +209,16 @@ function showToast(msg, options = {}) {
 }
 
 // ── New Recipe ────────────────────────────────────────────────────────────────
-document.getElementById('nav-add').addEventListener('click', () => {
+document.getElementById('nav-add').addEventListener('click', () => openNewRecipe());
+
+function openNewRecipe() {
   showModal(`
     <div class="modal-title">New recipe</div>
     <div class="field-group mt8">
-      <label class="field-label">Recipe name</label>
+      <label class="field-label" for="new-recipe-title">Recipe name</label>
       <input id="new-recipe-title" class="field-input" placeholder="e.g. Sourdough Bagels" autofocus />
     </div>
+    <button type="button" class="link-btn import-switch" onclick="openImportRecipe()">Import one from a link…</button>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="createRecipe()">Create</button>
@@ -227,7 +230,138 @@ document.getElementById('nav-add').addEventListener('click', () => {
       input.addEventListener('keydown', e => { if (e.key === 'Enter') createRecipe(); });
     }
   }, 80);
-});
+}
+
+// ── Import from a link ───────────────────────────────────────────────────────
+// No AI here: copy a prompt (import-prompt.js) into a chat assistant, paste
+// its reply back. The reply is parsed and summed up before anything is made.
+let importCheckTimer;
+let importChecked = null;
+
+function openImportRecipe() {
+  importChecked = null;
+  showModal(`
+    <div class="modal-title">Import a recipe</div>
+    <p class="import-intro">Copy a prompt into a chat assistant (Claude, ChatGPT, …). It reads the page and replies with the recipe written the AjiLab way.</p>
+    <ol class="import-steps">
+      <li class="field-group">
+        <label class="field-label" for="import-url">Link to the recipe</label>
+        <div class="import-row">
+          <input id="import-url" class="field-input" type="url" inputmode="url" placeholder="https://…" autocomplete="off" />
+          <button type="button" class="btn" id="import-copy" onclick="copyImportPrompt()">Copy prompt</button>
+        </div>
+        <span class="import-hint">No link? Leave it empty and paste the recipe into the chat after the prompt.</span>
+        <details class="import-prompt">
+          <summary>See the prompt</summary>
+          <textarea id="import-prompt-text" class="field-input" readonly aria-label="The prompt"></textarea>
+        </details>
+      </li>
+      <li class="field-group">
+        <label class="field-label" for="import-reply">Paste the reply</label>
+        <textarea id="import-reply" class="field-input import-reply" placeholder="The assistant’s reply"></textarea>
+        <p id="import-check" class="import-check" aria-live="polite"></p>
+        <div id="import-title-group" class="field-group import-title" hidden>
+          <label class="field-label" for="import-title">Recipe name</label>
+          <input id="import-title" class="field-input" />
+        </div>
+      </li>
+    </ol>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="openNewRecipe()">Back</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="import-create" onclick="createImportedRecipe()" disabled>Create</button>
+    </div>`);
+  const url = document.getElementById('import-url');
+  const refreshPrompt = () => {
+    document.getElementById('import-prompt-text').value = ImportPrompt.build({ url: url.value });
+  };
+  refreshPrompt();
+  url.addEventListener('input', refreshPrompt);
+  document.getElementById('import-reply').addEventListener('input', () => {
+    clearTimeout(importCheckTimer);
+    importCheckTimer = setTimeout(checkImportReply, 250);
+  });
+  document.getElementById('import-title').addEventListener('input', updateImportCreate);
+  setTimeout(() => url.focus(), 80);
+}
+
+async function copyImportPrompt() {
+  const text = ImportPrompt.build({ url: document.getElementById('import-url')?.value });
+  const button = document.getElementById('import-copy');
+  try {
+    await navigator.clipboard.writeText(text);
+    if (button) button.textContent = 'Copied';
+    setTimeout(() => { if (button?.isConnected) button.textContent = 'Copy prompt'; }, 2000);
+  } catch {
+    // No clipboard (an insecure page, or refused): show it to copy by hand.
+    const details = document.querySelector('.import-prompt');
+    const area = document.getElementById('import-prompt-text');
+    if (details) details.open = true;
+    area?.focus();
+    area?.select();
+    showToast("Couldn't copy. The prompt is selected: copy it yourself.");
+  }
+}
+
+async function checkImportReply() {
+  const reply = document.getElementById('import-reply');
+  const check = document.getElementById('import-check');
+  if (!reply || !check) return;
+  const text = ImportPrompt.fromReply(reply.value);
+  importChecked = null;
+  check.className = 'import-check';
+  if (!text) { check.textContent = ''; updateImportCreate(); return; }
+  try {
+    const parsed = await API.post('/parse', { cooklang_text: text });
+    if (document.getElementById('import-reply') !== reply || ImportPrompt.fromReply(reply.value) !== text) return;
+    const sum = ImportPrompt.summarize(parsed);
+    if (sum.error || (!sum.ingredients && sum.steps < 2)) {
+      check.classList.add('import-check-bad');
+      check.textContent = sum.error ? `Couldn't read it: ${sum.error}` : "That doesn't look like a recipe yet. Paste the whole reply.";
+    } else {
+      const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+      check.textContent = `${sum.title ? `“${sum.title}”: ` : ''}${[count(sum.ingredients, 'ingredient'), count(sum.steps, 'step'), sum.sections ? count(sum.sections, 'section') : ''].filter(Boolean).join(', ')}.`;
+      importChecked = { text, title: sum.title };
+    }
+    const titleGroup = document.getElementById('import-title-group');
+    if (titleGroup) titleGroup.hidden = !importChecked || !!importChecked.title;
+  } catch (e) {
+    check.classList.add('import-check-bad');
+    check.textContent = `Couldn't check it: ${e.message}`;
+  }
+  updateImportCreate();
+}
+
+function importTitle() {
+  return importChecked?.title || document.getElementById('import-title')?.value.trim() || '';
+}
+
+function updateImportCreate() {
+  const button = document.getElementById('import-create');
+  if (button) button.disabled = !importChecked || !importTitle();
+}
+
+async function createImportedRecipe() {
+  const title = importTitle();
+  if (!importChecked || !title) return;
+  const button = document.getElementById('import-create');
+  if (button) button.disabled = true;
+  let created;
+  try {
+    created = await API.post('/recipes', { title });
+  } catch (e) {
+    showToast('Error: ' + e.message);
+    updateImportCreate();
+    return;
+  }
+  try {
+    await API.put(`/recipes/${created.slug}/draft`, { cooklang_text: importChecked.text });
+  } catch (e) {
+    showToast(`Made “${title}”, but couldn't save the recipe text: ${e.message}`);
+  }
+  closeModal();
+  await Router.go(`/recipe/${created.slug}?tab=editor`);
+}
 
 async function createRecipe() {
   const title = document.getElementById('new-recipe-title')?.value.trim();

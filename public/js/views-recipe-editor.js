@@ -343,16 +343,18 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       open = stored === null || stored === 'open';
       if (stored === null) window.localStorage.setItem('ajilab:editor-help', 'closed');
     } catch {}
+    // The same list the import prompt teaches (import-prompt.js); the full
+    // rule is on hover.
+    const codes = (items) => items.filter((item) => item.help)
+      .map((item) => `<code title="${escHtml(item.rule)}">${escHtml(item.code)}</code>`).join('');
     // Remember only your clicks (the initial open state also fires 'toggle').
     return `<details class="editor-help"${open ? ' open' : ''}>
       <summary onclick="RecipeView.rememberEditorHelp(!this.parentElement.open)">Syntax</summary>
       <div class="editor-help-body">
-        <span class="editor-help-group">
-          <code>@ingredient{qty%unit}</code><code>#cookware{}</code><code>~{25%min}</code><code>^{450%F}</code><code>= Section</code><code>&gt; note</code><code>@salt{=1%tsp}</code>
-        </span>
+        <span class="editor-help-group">${codes(ImportPrompt.SYNTAX)}</span>
         <span class="editor-help-group">
           <span class="editor-help-label">Metadata</span>
-          <code>servings: 4</code><code>source: URL or book</code><code>notes: Your notes</code><code>metric.hydration: water.g / flour.g * 100 | %</code>
+          ${codes(ImportPrompt.METADATA)}
         </span>
         <span class="editor-help-note">Metadata goes between <code>---</code> lines at the top. <code>{=…}</code> keeps an amount fixed when scaling.</span>
       </div>

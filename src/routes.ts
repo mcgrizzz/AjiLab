@@ -145,6 +145,13 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
       return c.json(await createRecipe(body.title.trim()), 201);
     });
 
+    // Parse text that isn't a recipe yet (an imported recipe, before it's
+    // created). Recipe text goes through `${prefix}/draft/parse`.
+    api.post("/parse", async (c) => {
+      const body = await c.req.json().catch(() => ({}));
+      return c.json(parseCooklang(String(body.cooklang_text || "")));
+    });
+
     api.get("/recipes/:slug", async (c) => {
       const recipe = await getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH);
       if (!recipe) return c.json({ error: "not found" }, 404);

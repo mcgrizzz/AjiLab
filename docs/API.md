@@ -17,6 +17,7 @@ Content type: `application/json` for everything except image uploads (multipart)
 | `GET` | `/recipes/:slug` | Full recipe with all branches, versions, draft, and counts |
 | `PUT` | `/recipes/:slug` | Update title. Body: `{ title }`. Slug regenerates if needed |
 | `DELETE` | `/recipes/:slug` | Delete recipe (cascades to branches, entries, images, cook logs) |
+| `POST` | `/parse` | Parse Cooklang that isn't a recipe yet (an import, before it's created). Body: `{ cooklang_text }`. Returns the parsed recipe, with `error` if it couldn't be read |
 
 ---
 

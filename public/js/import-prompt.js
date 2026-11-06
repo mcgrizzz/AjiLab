@@ -1,0 +1,165 @@
+// ── Importing a recipe from a link: the prompt (pure) ───────────────────────
+// AjiLab has no AI of its own, so "Import from a link" hands you a prompt to
+// paste into a chat assistant, and reads back the recipe it replies with.
+//
+// The syntax is written down once, here. The editor's Syntax help reads the
+// entries marked `help`, and the prompt reads all of them, so the two can't
+// drift. test/import-prompt.test.js parses every example and the sample recipe
+// with the real parser. When you add syntax, add it here (or to NOT_FOR_IMPORT
+// with the reason) and the test keeps you honest.
+//
+// build() is plain text in, plain text out, so if AjiLab ever calls a model
+// itself it can send the same prompt from the server.
+const ImportPrompt = (() => {
+  // kind: what the parser makes of `example` (checked by the test).
+  const SYNTAX = [
+    { code: '@ingredient{qty%unit}', example: '@bread flour{500%g}', kind: 'ingredient', help: true,
+      rule: 'An ingredient, with its amount and unit, in the step where it is used. Always close it with braces, even for one word.' },
+    { code: '@salt{}', example: '@salt{}', kind: 'ingredient',
+      rule: 'An ingredient with no amount: to taste, for dusting, for the pan.' },
+    { code: '@butter{15%g}(melted)', example: '@butter{15%g}(melted)', kind: 'ingredient',
+      rule: 'Preparation goes in parentheses straight after the braces.' },
+    { code: '@?sesame seeds{1%tbsp}', example: '@?sesame seeds{1%tbsp}', kind: 'ingredient',
+      rule: 'An optional ingredient.' },
+    { code: '#cookware{}', example: '#dutch oven{}', kind: 'cookware', help: true,
+      rule: 'Equipment, the first time a step needs it.' },
+    { code: '~{25%min}', example: '~{20-25%min}', kind: 'timer', help: true,
+      rule: 'A time: baking, resting, simmering. Ranges are fine: ~{20-25%min}. Units: sec, min, hours.' },
+    { code: '^{450%F}', example: '^{230%C}', kind: 'temperature', help: true,
+      rule: 'Every temperature (oven, oil, water, dough), in the unit the source uses. Ranges are fine: ^{21-23%C}. Never write a temperature as plain text like 450°F; AjiLab converts these.' },
+    { code: '= Section', example: '= Dough', kind: 'section', help: true,
+      rule: 'A stage of the recipe (Dough, Shape, Bake), on its own line. Leave sections out of a short, one-stage recipe.' },
+    { code: '> note', example: '> Wear gloves.', kind: 'note', help: true,
+      rule: 'A tip, warning or cue that belongs to the step just above it.' },
+    { code: '@salt{=1%tsp}', example: '@salt{=1%tsp}', kind: 'ingredient', fixed: true, help: true,
+      rule: 'An amount that stays the same when the recipe is scaled. Rarely needed.' },
+  ];
+
+  const METADATA = [
+    { code: 'title: Sourdough Bagels', key: 'title',
+      rule: 'The recipe name, short, without the site name or "Best Ever".' },
+    { code: 'servings: 4', key: 'servings', help: true,
+      rule: 'How many it serves or makes, if the source says.' },
+    { code: 'source: URL or book', key: 'source', help: true,
+      rule: 'Where it came from: the link, or the book and author.' },
+    { code: 'notes: Your notes', key: 'notes', help: true,
+      rule: 'Facts about the whole recipe worth keeping on the sheet: expected yield, storage, make-ahead. Written as a block (notes: |-) with one point per line.' },
+    { code: 'metric.hydration: water.g / flour.g * 100 | %', key: 'metric.hydration', help: true,
+      rule: 'A computed figure. Leave these out; I add them myself.' },
+  ];
+
+  // AjiLab syntax the prompt deliberately doesn't teach, and why.
+  const NOT_FOR_IMPORT = {
+    '!+ / !-': 'cook records only: an added or skipped step',
+    '@&': 'merges an amount with an earlier ingredient; plain repeats are clearer',
+    '@&(=N)': 'something made in an earlier section; written by hand',
+    '@-': 'hidden from the ingredient list; written by hand',
+    '@./': 'a link to another AjiLab recipe; the assistant can’t know them',
+    '%{}': 'an amount with no ingredient, used in metrics; written by hand',
+  };
+
+  const HOUSE_STYLE = [
+    'Write each ingredient inline, in the step where it is used. Don’t write a separate ingredient list; AjiLab builds it from the steps.',
+    'If an ingredient is used in two steps, give each use its own amount where it is used.',
+    'Keep the author’s amounts and units exactly. Don’t convert, round, scale or improve anything. When the source gives both weights and cups, use the weights.',
+    'Use short unit names: g, kg, ml, l, tsp, tbsp, cup, oz, lb. Write fractions as 1/2 and ranges as 12-14.',
+    'One action per step, in the imperative ("Mix…", "Bake…"), with a blank line between steps.',
+    'Leave out the story, ads, nutrition, ratings and comments. Keep the author’s tips as > notes under the step they belong to.',
+    'If something on the page is unclear or missing, don’t guess: say so in a > note.',
+  ];
+
+  // A small recipe in the house style. The test parses it.
+  const EXAMPLE = `---
+title: Brown Butter Cornbread
+servings: 8
+source: https://example.com/brown-butter-cornbread
+notes: |-
+  Keeps 2 days wrapped at room temperature.
+  Reheat slices in a dry pan.
+---
+
+= Batter
+
+Preheat the #oven{} to ^{425%F} with a #cast-iron skillet{} inside.
+
+Cook @butter{113%g} in a #saucepan{} until it smells nutty and browns, ~{5-6%min}.
+
+> Watch it closely once it foams; it burns fast.
+
+Whisk @cornmeal{150%g}, @all-purpose flour{125%g}, @sugar{50%g}, @baking powder{2%tsp} and @salt{1%tsp} in a #bowl{}.
+
+Whisk @buttermilk{360%ml}, @eggs{2} and most of the brown butter, then stir into the dry mix until just combined.
+
+= Bake
+
+Swirl the rest of the butter around the hot skillet and pour in the batter.
+
+Bake for ~{20-25%min} until golden and a toothpick comes out clean.
+
+Cool for ~{10%min} and serve with @honey{}(warmed).
+`;
+
+  function build({ url = '' } = {}) {
+    const link = String(url || '').trim();
+    const syntax = SYNTAX.map((item) => `- \`${item.code}\` — ${item.rule}`).join('\n');
+    const metadata = METADATA.map((item) => `- \`${item.code}\` — ${item.rule}`).join('\n');
+    const style = HOUSE_STYLE.map((rule) => `- ${rule}`).join('\n');
+    const what = link
+      ? `Turn the recipe at this link into Cooklang for AjiLab, my recipe app:\n${link}`
+      : 'Turn the recipe I give you (pasted after this message, or in a photo) into Cooklang for AjiLab, my recipe app.';
+    const reply = [
+      'Reply with only the recipe, in one ```cooklang code block. No introduction, no summary after it.',
+      // An assistant that can't browse will otherwise invent one.
+      link ? "If you can't open the link, say so and stop. Don't write the recipe from memory or make one up." : '',
+    ].filter(Boolean).join('\n');
+    return `${what}
+
+${reply}
+
+## The format
+
+The recipe starts with metadata between --- lines, then the steps.
+
+Metadata:
+${metadata}
+
+In the steps:
+${syntax}
+
+## House style
+
+${style}
+
+## Example
+
+\`\`\`cooklang
+${EXAMPLE}\`\`\`
+`;
+  }
+
+  // The assistant's reply → the recipe text: the first code block if there is
+  // one (assistants add chatter around it), else the whole reply.
+  function fromReply(reply) {
+    const text = String(reply || '').replace(/\r\n/g, '\n');
+    const fenced = text.match(/```[^\n]*\n([\s\S]*?)\n?```/);
+    const body = (fenced ? fenced[1] : text).trim();
+    return body ? `${body}\n` : '';
+  }
+
+  // What the parsed reply holds, for the check before creating it.
+  function summarize(parsed) {
+    const steps = parsed?.steps || [];
+    const plain = (step) => (step.every((token) => token.type === 'text') ? step.map((token) => token.value).join('') : null);
+    const sections = steps.filter((step) => /^\s*=\s+/.test(plain(step) ?? '')).length;
+    const notes = steps.filter((step) => (step.length === 1 && step[0]?.type === 'comment') || /^\s*>\s/.test(plain(step) ?? '')).length;
+    return {
+      title: parsed?.metadata?.title || '',
+      ingredients: new Set((parsed?.ingredients || []).map((item) => String(item.name || '').toLowerCase())).size,
+      steps: steps.length - sections - notes,
+      sections,
+      error: parsed?.error || '',
+    };
+  }
+
+  return { SYNTAX, METADATA, NOT_FOR_IMPORT, HOUSE_STYLE, EXAMPLE, build, fromReply, summarize };
+})();
