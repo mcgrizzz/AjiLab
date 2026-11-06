@@ -537,3 +537,15 @@ when a newer version exists. Kept below for the record.
 - Branches: stay API-only, untouched; tests live on the main branch.
 - Multi-user: one owner.
 - Undo for adopt beyond the existing version delete.
+
+**Figures per cook (Nov 6).**
+- The cooks table opens with the recipe's shown figures (hydration, salt %),
+  for the base, the sheet and each cook, every cook at the sheet's 1× (a 2×
+  cook is parsed back at ½). A sheet with a range ("365-380 g water") shows
+  its figure as a range (73-76%); a cook's figure inside that range is a
+  choice the sheet allowed and isn't marked changed. One outside it is.
+  (`CookSheet.metricRows`.)
+- Setting an amount from a figure ("make it 75%") was considered and left
+  out: it means solving formulas backwards (which ingredient moves, two
+  figures sharing one, scaling, cook edits). The range plus each cook's
+  figure covers the need.

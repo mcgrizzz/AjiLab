@@ -319,3 +319,33 @@ test("a version adopted from a cook of a test lists the tested change, then the 
   const notes = CookSheet.adoptFromCookNotes(tested, CookSheet.cookChangeList(cook.fields, 2, ["ingredient|water|0"]), "Cook 1");
   assert.equal(notes, "salt: 2 → 1 g (tested); water: 75 → 85 g (Cook 1)");
 });
+
+test("each cook's figures, at the sheet's 1×, with a choice inside the sheet's range not a change", () => {
+  const SHEET = `---
+metric.total_flour: bread_flour.g + whole_wheat_flour.g | g | hidden
+metric.hydration: water.g / metric.total_flour * 100 | %
+metric.dough: metric.total_flour + water.g | g
+---
+
+Mix @bread flour{450%g}, @whole wheat flour{50%g} and @water{365-380%g}.
+`;
+  const BASE = SHEET.replace("365-380", "350");
+  const metrics = (text) => parseCooklang(text).metrics;
+  // Cook 1 chose 372 g; cook 2 went past the range; cook 3 cooked at 2× and
+  // chose 760 g (380 at 1×), parsed back at 1× as the test page does.
+  const cook3 = parseCooklang(scaleCooklangText(scaleCooklangText(SHEET, 2).replace("730-760", "760"), 0.5)).metrics;
+  const rows = plain(CookSheet.metricRows({
+    base: { metrics: metrics(BASE) },
+    sheet: { metrics: metrics(SHEET) },
+    cooks: [{ metrics: metrics(SHEET.replace("365-380", "372")) }, { metrics: metrics(SHEET.replace("365-380", "400")) }, { metrics: cook3 }],
+  }));
+  assert.deepEqual(rows.map((r) => r.name), ["hydration", "dough"], "hidden figures stay out");
+  const [hydration, dough] = rows;
+  assert.deepEqual([hydration.base, hydration.sheet], ["70%", "73-76%"]);
+  assert.deepEqual(hydration.cells.map((c) => `${c.display} ${c.kind}`), ["74.4% same", "80% changed", "76% same"]);
+  assert.deepEqual(dough.cells.map((c) => `${c.display} ${c.kind}`), ["872 g same", "900 g changed", "880 g same"]);
+  // No figure in a cook, or one that fails, shows as a gap.
+  const gaps = plain(CookSheet.metricRows({ base: null, sheet: { metrics: metrics(SHEET) }, cooks: [{ metrics: [] }, { metrics: [{ name: "hydration", error: "bad", hidden: false }] }] }));
+  assert.deepEqual(gaps[0].cells.map((c) => c.kind), ["none", "error"]);
+  assert.equal(gaps[0].base, null);
+});

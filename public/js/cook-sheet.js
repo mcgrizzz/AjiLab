@@ -375,6 +375,43 @@ const CookSheet = (() => {
     return { rows, stepRows };
   }
 
+  // The recipe's figures (hydration, salt %) for each cook, as rows for the
+  // cooks table. Every shown figure gets a row, changed or not: they're what
+  // cooks are compared by. A cook's figure counts as changed when it differs
+  // from the sheet's and isn't inside the sheet's range (74.4% of 73-76% is
+  // a choice the sheet allowed, not a change).
+  //   base, sheet, cooks[]: { metrics } (parsed, cooks at the sheet's 1×)
+  function metricRows({ base, sheet, cooks }) {
+    const shown = (metrics) => new Map((metrics || []).filter((m) => !m.hidden).map((m) => [m.name, m]));
+    const sheetBy = shown(sheet?.metrics);
+    const baseBy = base ? shown(base.metrics) : new Map();
+    const cookBy = cooks.map((cook) => shown(cook.metrics));
+    const names = [...new Set([...sheetBy.keys(), ...baseBy.keys(), ...cookBy.flatMap((m) => [...m.keys()])])];
+    const text = (m) => (m && !m.error ? m.display : null);
+    const ends = (m) => (m.range ? [m.range.min, m.range.max] : [m.value, m.value]);
+    const allowed = (m, ref) => {
+      if (!m || !ref || m.error || ref.error || !ref.range) return false;
+      const [lo, hi] = ends(m);
+      const eps = 1e-9;
+      return lo >= ref.range.min - eps && hi <= ref.range.max + eps;
+    };
+    return names.map((name) => {
+      const ref = sheetBy.get(name);
+      return {
+        name,
+        base: text(baseBy.get(name)),
+        sheet: text(ref),
+        cells: cookBy.map((by) => {
+          const m = by.get(name);
+          if (!m) return { kind: 'none', display: null };
+          if (m.error) return { kind: 'error', display: null, error: m.error };
+          const same = text(m) === text(ref) || allowed(m, ref);
+          return { kind: same ? 'same' : 'changed', display: m.display };
+        }),
+      };
+    });
+  }
+
   // "water: 140 → 150 g" for the version notes.
   function changeText(label, from, to, isTemp) {
     if (!from) return `added ${label}: ${formatAmount(to, isTemp)}`;
@@ -429,7 +466,7 @@ const CookSheet = (() => {
   }
 
   return { shownAmount, savedAmount, displayNote, cookOrder, changeList, cookChangeList, adoptFromCookNotes,
-    stepList, atSheetScale, comparison, changeSummary, cookChangeSummary, keyForChange,
+    stepList, atSheetScale, comparison, metricRows, changeSummary, cookChangeSummary, keyForChange,
     noteAdded, replaceNote, buildFields, ingredientRows, listedFieldIds, formatAmount, parseTyped, changeKind, keyId,
     joinedNotes, localDay, localTime, dateChoices, cookedAt, stepInfo };
 })();

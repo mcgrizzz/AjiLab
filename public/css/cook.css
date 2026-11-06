@@ -468,6 +468,11 @@
 
 .ct-none { color: var(--ink3); }
 
+/* The recipe's figures, above the amounts. */
+.ct-metric .ct-label { color: var(--ink2); }
+
+.ct-metric-last th, .ct-metric-last td { border-bottom: 1px solid var(--border2); }
+
 .ct-step-text,
 .ct-text { font-family: var(--font-sans); white-space: normal; min-width: 140px; color: var(--ink); }
 

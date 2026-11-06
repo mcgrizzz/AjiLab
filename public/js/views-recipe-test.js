@@ -93,14 +93,25 @@ Object.assign(RecipeView, {
           intended: log.intended || [],
         })),
       });
+      // Each cook's figures at the sheet's 1×, like its amounts: a 2× cook
+      // has twice the grams, not twice the dough weight per loaf.
+      const cookMetrics = await Promise.all(logs.map((log, i) => {
+        const scale = Number(log.scale) || 1;
+        return scale === 1 ? cookParsed[i].metrics : this.parseText(log.cooklang_text, { scale: 1 / scale }).then((p) => p.metrics);
+      }));
+      const metrics = CookSheet.metricRows({
+        base: baseParsed ? { metrics: baseParsed.metrics } : null,
+        sheet: { metrics: sheetParsed.metrics },
+        cooks: cookMetrics.map((m) => ({ metrics: m })),
+      });
       if (document.getElementById('test-cooks') !== el) return;
-      el.innerHTML = this.cookTableHtml(test, baseEntry, logs, table);
+      el.innerHTML = this.cookTableHtml(test, baseEntry, logs, table, metrics);
     } catch (e) {
       el.innerHTML = `<p class="text-muted">Couldn't load the cooks: ${escHtml(e.message)}</p>`;
     }
   },
 
-  cookTableHtml(test, baseEntry, logs, table) {
+  cookTableHtml(test, baseEntry, logs, table, metrics = []) {
     const amount = (a, isTemp) => (a ? escHtml(CookSheet.formatAmount(a, isTemp)) : '—');
     const cols = logs.length + (baseEntry ? 2 : 1);
     const head = `<tr>
@@ -119,6 +130,19 @@ Object.assign(RecipeView, {
       const kindLabel = cell.kind === 'same' ? '<span class="visually-hidden"> (same amount)</span>' : (cell.kind === 'changed' ? '<span class="visually-hidden"> (changed)</span>' : '');
       return `<td class="ct-cell ct-${cell.kind}${cell.intended ? ' ct-intended' : ''}"${title}>${amount(cell.amount, row.isTemp)}${kindLabel}${cell.intended ? ' <span class="ct-meant" title="I meant this">✓</span>' : ''}</td>`;
     };
+    // The recipe's figures first: hydration and the like are what you read
+    // a cook by.
+    const metricCell = (cell) => {
+      if (cell.kind === 'error') return `<td class="ct-cell ct-none" title="${escHtml(cell.error)}">—</td>`;
+      if (cell.kind === 'none') return '<td class="ct-cell ct-none">—</td>';
+      return `<td class="ct-cell${cell.kind === 'changed' ? ' ct-changed' : ''}">${escHtml(cell.display)}${cell.kind === 'changed' ? '<span class="visually-hidden"> (changed)</span>' : ''}</td>`;
+    };
+    const metricRows = metrics.map((row, i) => `<tr class="ct-metric${i === metrics.length - 1 ? ' ct-metric-last' : ''}">
+        <th scope="row" class="ct-label">${escHtml(row.name)}</th>
+        ${baseEntry ? `<td class="ct-cell ct-sheet">${escHtml(row.base || '—')}</td>` : ''}
+        <td class="ct-cell ct-sheet">${escHtml(row.sheet || '—')}</td>
+        ${row.cells.map(metricCell).join('')}
+      </tr>`).join('');
     const valueRows = table.rows.length
       ? table.rows.map((row) => `<tr class="${row.tested ? 'ct-tested' : ''}">
           <th scope="row" class="ct-label">${escHtml(row.label)}${row.tested ? ' <span class="ct-tested-tag">tested</span>' : ''}</th>
@@ -151,10 +175,11 @@ Object.assign(RecipeView, {
           </td>`;
         }).join('')}
       </tr>`;
-    const legend = '<p class="ct-legend">Amounts at the sheet’s 1×; a cook at another scale shows what it used on hover. <span class="ct-key ct-changed">changed</span> <span class="ct-key ct-same">same amount, written differently</span> <span class="ct-key">✓ I meant this</span></p>';
+    const legend = '<p class="ct-legend">Amounts and figures at the sheet’s 1×; a cook at another scale shows what it used on hover. <span class="ct-key ct-changed">changed</span> <span class="ct-key ct-same">same amount, written differently</span> <span class="ct-key">✓ I meant this</span></p>';
     return `<div class="cook-table-wrap"><table class="cook-table">
         <thead>${head}</thead>
         <tbody>
+          ${metricRows}
           ${valueRows}
           ${stepRows}
           ${textRow('Outcome', (log) => log.outcome)}
