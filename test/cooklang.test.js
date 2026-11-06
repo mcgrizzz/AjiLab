@@ -1074,3 +1074,39 @@ Mix @water{365-380%g}(at ^{90-95%F}) in a #pot{}(hot, ^{100%C}), then @milk{100%
   // Step text keeps its own temperature tokens.
   assert.ok(parseCooklang("Bake at ^{230%C}.").steps[0].some((t) => t.kind === "temperature"));
 });
+
+test("a range in the recipe gives a range in its metrics", () => {
+  // "Choose your hydration": 365-380 g water over 500 g flour.
+  const recipe = (water, flour = "@bread flour{450%g}") => parseCooklang(`---
+metric.total_flour: bread_flour.g + whole_wheat_flour.g | g | hidden
+metric.hydration: water.g / metric.total_flour * 100 | %
+metric.salt: salt.g / metric.total_flour * 100 | %
+---
+
+Mix ${flour}, @whole wheat flour{50%g}, @water{${water}%g} and @salt{10.5%g}.
+`).metrics;
+  const [flour, hydration, salt] = recipe("365-380");
+  assert.equal(flour.display, "500 g");
+  assert.equal(flour.range, undefined);
+  assert.equal(hydration.error, null);
+  assert.equal(hydration.display, "73-76%");
+  assert.deepEqual(hydration.range, { min: 73, max: 76 });
+  assert.equal(salt.display, "2.1%", "a figure the range doesn't touch stays one number");
+  // A range below the line flips: more flour, lower hydration. Still low-high.
+  const [, flipped] = recipe("375", "@bread flour{450-500%g}");
+  assert.equal(flipped.display, "68.2-75%");
+  // Ends that round alike show one number, with no range.
+  const [, close] = recipe("375-375.1");
+  assert.equal(close.display, "75%");
+  assert.equal(close.range, undefined);
+  // Fractions at either end.
+  const fraction = parseCooklang("---\nmetric.w: water.g | g\n---\n\nAdd @water{1 1/2-2%kg}.\n").metrics[0];
+  assert.equal(fraction.display, "1500-2000 g");
+});
+
+test("a range with a mixed number reads as a range (~{1 1/2-2%hours})", () => {
+  const timer = parseCooklang("Rise ~{1 1/2-2%hours}.\n").steps[0].find((t) => t.type === "timer");
+  assert.deepEqual(timer.range, { min: 1.5, max: 2 });
+  const ingredient = parseCooklang("Add @flour{1 1/2-2%cups}.\n").ingredients[0];
+  assert.deepEqual(ingredient.range, { min: 1.5, max: 2 });
+});

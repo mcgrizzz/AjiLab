@@ -658,3 +658,11 @@ test("synthesize: a ticked change after a bare ingredient lands on the right one
   assert.deepEqual(id, ["step-token:0:1:ingredient:1"]);
   assert.equal(synthesizePromotedRecipe(src, log, new Set(id)), log);
 });
+
+test("a metric that is a range shows both values but no single change", () => {
+  const metrics = (water) => parseCooklang(`---\nmetric.hydration: water.g / flour.g * 100 | %\n---\n\nMix @flour{500%g} and @water{${water}%g}.\n`).metrics;
+  const [toRange] = diffMetrics(metrics("375"), metrics("365-380"));
+  assert.deepEqual([toRange.kind, toRange.from_display, toRange.to_display, toRange.delta_display], ["changed", "75%", "73-76%", null]);
+  const [plain] = diffMetrics(metrics("375"), metrics("380"));
+  assert.equal(plain.delta_display, "+1 pts");
+});

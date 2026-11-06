@@ -75,7 +75,11 @@ export function extractComputedMetrics(
   // Previously-computed metric values, keyed by normalized name. Lets later
   // metrics reference earlier ones via `metric.<name>` in their formula —
   // resolved in declaration order, so forward refs fail.
-  const metricValues = new Map<string, number>();
+  // Each is [low, high]: a range in the recipe (`@water{365-380%g}`, "choose
+  // your hydration") gives a range out. The formula is worked out once with
+  // every range at its low end and once at its high end, the recipe as made
+  // at either end, so hydration reads 73-76%.
+  const metricValues = new Map<string, [number, number]>();
 
   const metrics: ComputedMetric[] = [];
   for (const rawKey of metricKeys) {
@@ -104,7 +108,7 @@ export function extractComputedMetrics(
       continue;
     }
 
-    const ctx = {
+    const ctxAt = (end: 0 | 1) => ({
       lookup(path: string[]): number | string | null {
         // Metric reference: `metric.<name>` resolves to a previously-computed
         // metric. The metric must have been declared earlier in the file.
@@ -121,7 +125,7 @@ export function extractComputedMetrics(
               ? `metric '${path.slice(1).join(".")}' is referenced before it's defined`
               : `unknown metric '${path.slice(1).join(".")}'`;
           }
-          return v;
+          return v[end];
         }
         // Ingredient lookup: path is `[name]` (no unit) or `[name, unit]`.
         if (path.length > 2) {
@@ -131,7 +135,8 @@ export function extractComputedMetrics(
         const unit = path[1] || null;
         const ing = lookupByName.get(normalizeMetricIngredientName(ingredientName));
         if (!ing) return null;
-        const qty = parseSortableNumber(ing.quantity);
+        const bounds = quantityBounds(ing.quantity);
+        const qty = bounds ? bounds[end] : null;
         if (qty === null) {
           return `ingredient '${ingredientName}' has no numeric quantity`;
         }
@@ -146,37 +151,60 @@ export function extractComputedMetrics(
         }
         return converted;
       },
-    };
+    });
 
-    const evald = evaluateExpression(formulaText, ctx);
-    if (!evald.ok) {
-      metrics.push({ name, formula: formulaText, format_unit: formatUnit, hidden, value: null, display: null, error: evald.error });
+    const low = evaluateExpression(formulaText, ctxAt(0));
+    const high = low.ok ? evaluateExpression(formulaText, ctxAt(1)) : low;
+    if (!low.ok || !high.ok) {
+      const error = !low.ok ? low.error : (high as { error: string }).error;
+      metrics.push({ name, formula: formulaText, format_unit: formatUnit, hidden, value: null, display: null, error });
       continue;
     }
-    metricValues.set(normalizeMetricIngredientName(name), evald.value);
-    metrics.push({
+    metricValues.set(normalizeMetricIngredientName(name), [low.value, high.value]);
+    // A ratio can fall as an amount rises (more flour, lower hydration).
+    const min = Math.min(low.value, high.value);
+    const max = Math.max(low.value, high.value);
+    const display = formatMetricDisplay(min, formatUnit, max);
+    const metric: ComputedMetric = {
       name,
       formula: formulaText,
       format_unit: formatUnit,
       hidden,
-      value: evald.value,
-      display: formatMetricDisplay(evald.value, formatUnit),
+      value: min,
+      display,
       error: null,
-    });
+    };
+    if (display !== formatMetricDisplay(min, formatUnit)) metric.range = { min, max };
+    metrics.push(metric);
   }
   return metrics;
 }
 
-function formatMetricDisplay(value: number, formatUnit: string | null): string {
+// A range shows both ends ("73-76%"), or one number when they round alike.
+function formatMetricDisplay(value: number, formatUnit: string | null, high: number = value): string {
   const u = formatUnit ? formatUnit.trim() : "";
-  if (u === "%") return `${stripTrailingZeros(value.toFixed(1))}%`;
-  // Mass/volume display as whole numbers when possible.
-  if (METRIC_UNIT_TABLE[metricUnitKey(u)]) {
-    const rounded = Math.round(value * 10) / 10;
-    return `${stripTrailingZeros(rounded.toFixed(1))} ${u}`;
-  }
-  if (u) return `${stripTrailingZeros(value.toFixed(2))} ${u}`;
-  return stripTrailingZeros(value.toFixed(2));
+  const number = (v: number) => {
+    if (u === "%") return stripTrailingZeros(v.toFixed(1));
+    // Mass/volume display as whole numbers when possible.
+    if (METRIC_UNIT_TABLE[metricUnitKey(u)]) return stripTrailingZeros((Math.round(v * 10) / 10).toFixed(1));
+    return stripTrailingZeros(v.toFixed(2));
+  };
+  const shown = number(value) === number(high) ? number(value) : `${number(value)}-${number(high)}`;
+  if (u === "%") return `${shown}%`;
+  return u ? `${shown} ${u}` : shown;
+}
+
+// An amount's low and high ends: [n, n] for one number, [365, 380] for
+// "365-380", fractions allowed at either end ("1 1/2-2"). Null if it isn't a
+// number at all.
+function quantityBounds(quantity: string | number): [number, number] | null {
+  const single = parseSortableNumber(quantity);
+  if (single !== null) return [single, single];
+  const range = String(quantity ?? "").trim().match(/^(.+?)\s*[-–]\s*(.+)$/);
+  if (!range) return null;
+  const lo = parseSortableNumber(range[1]);
+  const hi = parseSortableNumber(range[2]);
+  return lo !== null && hi !== null ? [lo, hi] : null;
 }
 
 function stripTrailingZeros(s: string): string {

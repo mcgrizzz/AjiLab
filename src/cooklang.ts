@@ -108,7 +108,8 @@ export interface ComputedMetric {
   hidden: boolean;          // computed but not rendered as a chip — useful as
                             // an intermediate referenced by later metrics
   value: number | null;     // null when error is set
-  display: string | null;   // pre-formatted '70%' / '850 g' / '0.7'
+  display: string | null;   // pre-formatted '70%' / '850 g' / '0.7' / '73-76%'
+  range?: { min: number; max: number }; // set when a range in the recipe gives a range ('73-76%'); value is min
   error: string | null;     // human-readable cause when evaluation fails
 }
 

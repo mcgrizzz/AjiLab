@@ -79,7 +79,7 @@ Wraps `@cooklang/cooklang` and adds AjiLab-specific syntax on top:
 
 ### Computed metrics (`src/metric-expr.ts` + `cooklang.ts::extractComputedMetrics`)
 
-`metric.<name>: <formula> | <unit>` keys in YAML frontmatter. Formula refs ingredients as `flour.g`, earlier metrics as `metric.<name>`, and gets evaluated against the parsed ingredient summary (normalized to base units via `convertMetricQuantity`). A metric ending in `| hidden` (`metric.total_flour: … | g | hidden`) isn't shown but is available to later formulas. A formula sees one total per ingredient name, so a repeated ingredient needs `@&` to add up.
+`metric.<name>: <formula> | <unit>` keys in YAML frontmatter. Formula refs ingredients as `flour.g`, earlier metrics as `metric.<name>`, and gets evaluated against the parsed ingredient summary (normalized to base units via `convertMetricQuantity`). A range in the recipe (`@water{365-380%g}`) gives a range out (`73-76%`, with `range` set): the formula runs once with every range at its low end and once at its high end. A metric ending in `| hidden` (`metric.total_flour: … | g | hidden`) isn't shown but is available to later formulas. A formula sees one total per ingredient name, so a repeated ingredient needs `@&` to add up.
 
 ### Diff (`src/compare.ts`)
 

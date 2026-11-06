@@ -29,6 +29,8 @@ function shownValue(metric: ComputedMetric): number | null {
 }
 
 function delta(from: ComputedMetric, to: ComputedMetric): string | null {
+  // 73-76% → 75%: no one number says how far it moved; the two values do.
+  if (from.range || to.range) return null;
   const a = shownValue(from);
   const b = shownValue(to);
   if (a === null || b === null) return null;

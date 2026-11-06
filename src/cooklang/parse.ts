@@ -333,12 +333,23 @@ function extractQty(quantity: any): string | number {
 // Accepts either a Quantity (has `.value`) or a raw Value object.
 // The Cooklang WASM library nests range endpoints as `{ type: "regular",
 // value: <num> }` — earlier draft read the wrong field and always got NaN.
+// One end of a parsed range: a plain number, or a fraction like the 1 1/2
+// of `~{1 1/2-2%hours}` ({ whole: 1, num: 1, den: 2 }).
+function rangeEndValue(end: any): number {
+  const inner = end?.value ?? end;
+  if (end?.type === "fraction" || (inner && typeof inner === "object" && "den" in inner)) {
+    const { whole = 0, num = 0, den = 0 } = inner || {};
+    return den ? Number(whole) + Number(num) / Number(den) : NaN;
+  }
+  return Number(inner);
+}
+
 export function extractRange(quantity: any): QuantityRange | null {
   const value = quantity?.value ?? null;
   if (!value || value.type !== "range") return null;
   const r = value.value;
-  const min = Number(r?.start?.value ?? r?.start);
-  const max = Number(r?.end?.value ?? r?.end);
+  const min = rangeEndValue(r?.start);
+  const max = rangeEndValue(r?.end);
   if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
   return { min, max };
 }

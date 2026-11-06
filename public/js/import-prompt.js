@@ -87,6 +87,7 @@ const ImportPrompt = (() => {
       'A helper figure the sheet shouldn’t show ends in `| hidden`. A later figure can use it as `metric.<name>`; define it first.',
       'Count what is inside a mixed ingredient: a starter at 100% hydration is half flour, half water (use the author’s figure if they give one).',
       'Metrics only work with weights or metric volumes (g, kg, ml, l). If the recipe is in cups or spoons, leave them out.',
+      'If an amount is a range because the author lets you choose (“365-380 g water”), keep the range; the figure shows as a range too (73-76%).',
     ],
   };
 
