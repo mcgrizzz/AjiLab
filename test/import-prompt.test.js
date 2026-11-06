@@ -83,6 +83,39 @@ test("the sample recipe is as brief as the prompt asks", () => {
   assert.match(prompt, /Leave out common sense/);
 });
 
+test("the metrics example computes, with the figures a baker would expect", () => {
+  const parsed = parseCooklang(ImportPrompt.METRIC_EXAMPLE);
+  assert.equal(parsed.error, undefined);
+  const byName = Object.fromEntries(parsed.metrics.map((m) => [m.name, m]));
+  for (const m of parsed.metrics) assert.equal(m.error, null, `${m.name}: ${m.error}`);
+  // 500 g flour + half the 100 g levain; 350 + 25 g water + the other half.
+  assert.equal(byName.total_flour.value, 550);
+  assert.equal(byName.total_water.value, 425);
+  assert.deepEqual([byName.hydration.display, byName.salt.display, byName.levain.display], ["77.3%", "1.8%", "18.2%"]);
+  assert.deepEqual(parsed.metrics.filter((m) => m.hidden).map((m) => m.name), ["total_flour", "total_water"]);
+  // It is as brief as the other example.
+  const body = ImportPrompt.METRIC_EXAMPLE.split(/\n---\n/)[1];
+  const steps = body.split(/\n\s*\n/).map((b) => b.trim()).filter((b) => b && !/^(=|>)\s/.test(b));
+  const words = (b) => b.replace(/[@#~^&]*\{[^}]*\}/g, "").split(/\s+/).filter(Boolean).length;
+  for (const step of steps) assert.ok(words(step) <= ImportPrompt.EXAMPLE_LIMITS.wordsPerStep, `too long: ${step}`);
+});
+
+test("@& is why a repeated ingredient adds up in metrics", () => {
+  const metric = (steps) => parseCooklang(`---\nmetric.w: water.g | g\n---\n\n${steps}\n`).metrics[0].value;
+  assert.equal(metric("Mix @water{350%g}.\n\nAdd @&water{25%g}."), 375);
+  // Without it the formula sees only one of them, which the prompt warns about.
+  assert.notEqual(metric("Mix @water{350%g}.\n\nAdd @water{25%g}."), 375);
+});
+
+test("the prompt teaches metrics for more than bread, and how to write them", () => {
+  const prompt = ImportPrompt.build({});
+  for (const rule of [...ImportPrompt.METRICS.when, ...ImportPrompt.METRICS.how]) assert.ok(prompt.includes(rule));
+  assert.match(prompt, /Ferments, cures and brines/);
+  assert.match(prompt, /most everyday recipes need none/);
+  assert.ok(prompt.includes(ImportPrompt.METRIC_EXAMPLE));
+  assert.match(prompt, /## Example with metrics\n\n```cooklang\n---\ntitle: Country Loaf/);
+});
+
 test("every metadata key the prompt teaches is one the app reads", () => {
   const known = ["title", "servings", "source", "notes"];
   for (const item of ImportPrompt.METADATA) {
@@ -141,4 +174,11 @@ test("summarize counts what a reply holds, and passes a parse error on", () => {
   assert.deepEqual(plain(ImportPrompt.summarize(parsed)), { title: "Toast", ingredients: 2, steps: 2, sections: 0, error: "" });
   assert.equal(ImportPrompt.summarize({ error: "bad", steps: [] }).error, "bad");
   assert.equal(ImportPrompt.summarize(null).steps, 0);
+});
+
+test("a formula reads an ingredient in the unit it's written in, not across weight and volume", () => {
+  const metric = (formula) => parseCooklang(`---\nmetric.x: ${formula}\n---\n\nAdd @milk{250%ml} and @flour{0.5%kg}.\n`).metrics[0];
+  assert.equal(metric("milk.ml").value, 250);
+  assert.equal(metric("flour.g").value, 500);
+  assert.ok(metric("milk.g").error, "ml to g fails, as the prompt says");
 });

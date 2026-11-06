@@ -19,6 +19,8 @@ const ImportPrompt = (() => {
       rule: 'An ingredient with no amount: to taste, for dusting, for the pan.' },
     { code: '@butter{15%g}(melted)', example: '@butter{15%g}(melted)', kind: 'ingredient',
       rule: 'Preparation goes in parentheses straight after the braces.' },
+    { code: '@&water{25%g}', example: '@&water{25%g}', kind: 'ingredient',
+      rule: 'The same ingredient used again (more flour or water in a later step): the amounts add up to one line in the ingredient list, and metrics see the total. Something different that shares a name, like water for boiling, gets its own name instead: @boiling water{2%l}.' },
     { code: '@?sesame seeds{1%tbsp}', example: '@?sesame seeds{1%tbsp}', kind: 'ingredient',
       rule: 'An optional ingredient.' },
     { code: '#cookware{}', example: '#dutch oven{}', kind: 'cookware', help: true,
@@ -45,13 +47,12 @@ const ImportPrompt = (() => {
     { code: 'notes: Your notes', key: 'notes', help: true,
       rule: 'Only facts about the whole recipe worth keeping, like yield or storage, one short line each, as a block (notes: |-). Leave it out if there are none.' },
     { code: 'metric.hydration: water.g / flour.g * 100 | %', key: 'metric.hydration', help: true,
-      rule: 'A computed figure. Leave these out; I add them myself.' },
+      rule: 'A computed figure, shown on the sheet. See Metrics below.' },
   ];
 
   // AjiLab syntax the prompt deliberately doesn't teach, and why.
   const NOT_FOR_IMPORT = {
     '!+ / !-': 'cook records only: an added or skipped step',
-    '@&': 'merges an amount with an earlier ingredient; plain repeats are clearer',
     '@&(=N)': 'something made in an earlier section; written by hand',
     '@-': 'hidden from the ingredient list; written by hand',
     '@./': 'a link to another AjiLab recipe; the assistant can’t know them',
@@ -63,12 +64,31 @@ const ImportPrompt = (() => {
     'Each step is one or two short sentences. Fold small actions that go together into one step; start a new one at a wait or a change of stage. Fewer, tighter steps beat many small ones.',
     'Keep only what changes the result: amounts, times, temperatures, doneness cues ("until doubled", "until golden"), and real warnings. Leave out common sense (“be careful, it’s hot”, “gather your ingredients”, “enjoy”) and anything a home cook already knows.',
     'Write each ingredient inline, in the step where it is used. Don’t write a separate ingredient list; AjiLab builds it from the steps.',
-    'If an ingredient is used in two steps, give each use its own amount where it is used.',
+    'If an ingredient is used in two steps, give each use its own amount where it is used, and write the later ones with @& so they add up.',
     'Keep the author’s amounts and units exactly. Don’t convert, round, scale or improve anything. When the source gives both weights and cups, use the weights.',
     'Use short unit names: g, kg, ml, l, tsp, tbsp, cup, oz, lb. Write fractions as 1/2 and ranges as 12-14. Put a blank line between steps.',
     'Leave out the story, ads, nutrition, ratings, comments and serving suggestions. Of the author’s tips, keep only the ones that would change the result if missed.',
     'If something on the page is unclear or missing, don’t guess: say so in a > note.',
   ];
+
+  // When a recipe gets metrics, and how to write them. Not only bread: any
+  // recipe where a ratio is what you'd check or adjust.
+  const METRICS = {
+    when: [
+      'Add a few computed figures when a ratio defines the recipe and a cook would check or adjust it between tries. Usually one to three; most everyday recipes need none.',
+      'Breads and doughs: hydration (all the water over all the flour), salt, and a starter or preferment, each as a % of the flour.',
+      'Ferments, cures and brines: salt (and sugar, if any) as a % of the vegetables, the meat or the water. Cultured butter: salt as a % of the butter.',
+      'Others when they matter: sugar or fat in an ice cream base, oil to acid in a dressing, water to rice.',
+      'If the author states a figure ("75% hydration", "a 2% brine"), include it, and make sure your formula gives the same number.',
+    ],
+    how: [
+      'In the metadata: `metric.<name>: <formula> | <unit>`. `| %` shows a percentage; a plain ratio needs no unit.',
+      'Refer to an ingredient by its name in the steps, with spaces as underscores, plus the unit it is written in: `whole_wheat_flour.g` if weighed, `milk.ml` if measured by volume (formulas don’t convert between the two). Use + - * / and parentheses.',
+      'A helper figure the sheet shouldn’t show ends in `| hidden`. A later figure can use it as `metric.<name>`; define it first.',
+      'Count what is inside a mixed ingredient: a starter at 100% hydration is half flour, half water (use the author’s figure if they give one).',
+      'Metrics only work with weights or metric volumes (g, kg, ml, l). If the recipe is in cups or spoons, leave them out.',
+    ],
+  };
 
   // Limits the sample recipe keeps to (checked by the test), so it shows the
   // brevity it asks for.
@@ -103,11 +123,42 @@ Swirl the rest of the butter in the hot skillet, pour in the batter and bake ~{2
 Sprinkle with @flaky salt{} and cool ~{10%min} in the skillet.
 `;
 
+  // A dough with metrics, the way they're written. The test checks the figures.
+  const METRIC_EXAMPLE = `---
+title: Country Loaf
+source: https://example.com/country-loaf
+metric.total_flour: bread_flour.g + whole_wheat_flour.g + levain.g * 0.5 | g | hidden
+metric.total_water: water.g + levain.g * 0.5 | g | hidden
+metric.hydration: metric.total_water / metric.total_flour * 100 | %
+metric.salt: salt.g / metric.total_flour * 100 | %
+metric.levain: levain.g / metric.total_flour * 100 | %
+---
+
+= Mix
+
+Mix @bread flour{450%g}, @whole wheat flour{50%g} and @water{350%g} in a #bowl{}. Rest ~{1%hour}.
+
+Add @levain{100%g}(100% hydration), @salt{10%g} and @&water{25%g}, and squeeze in until even.
+
+= Bulk
+
+Ferment at ^{24-26%C} for ~{4-5%hours}, folding 4 times in the first 2 hours, until risen by half.
+
+= Shape and Bake
+
+Shape into a boule and refrigerate in a floured #banneton{} for ~{12-16%hours}.
+
+Preheat a #dutch oven{} at ^{500%F} for ~{45%min}.
+
+Score and bake covered ~{20%min}, then uncovered at ^{450%F} for ~{20-25%min}, until deep brown.
+`;
+
   function build({ url = '' } = {}) {
     const link = String(url || '').trim();
     const syntax = SYNTAX.map((item) => `- \`${item.code}\` — ${item.rule}`).join('\n');
     const metadata = METADATA.map((item) => `- \`${item.code}\` — ${item.rule}`).join('\n');
     const style = HOUSE_STYLE.map((rule) => `- ${rule}`).join('\n');
+    const list = (rules) => rules.map((rule) => `- ${rule}`).join('\n');
     const what = link
       ? `Turn the recipe at this link into Cooklang for AjiLab, my recipe app:\n${link}`
       : 'Turn the recipe I give you (pasted after this message, or in a photo) into Cooklang for AjiLab, my recipe app.';
@@ -134,10 +185,22 @@ ${syntax}
 
 ${style}
 
+## Metrics
+
+${list(METRICS.when)}
+
+How to write them:
+${list(METRICS.how)}
+
 ## Example
 
 \`\`\`cooklang
 ${EXAMPLE}\`\`\`
+
+## Example with metrics
+
+\`\`\`cooklang
+${METRIC_EXAMPLE}\`\`\`
 `;
   }
 
@@ -165,5 +228,5 @@ ${EXAMPLE}\`\`\`
     };
   }
 
-  return { SYNTAX, METADATA, NOT_FOR_IMPORT, HOUSE_STYLE, EXAMPLE, EXAMPLE_LIMITS, build, fromReply, summarize };
+  return { SYNTAX, METADATA, NOT_FOR_IMPORT, HOUSE_STYLE, METRICS, EXAMPLE, METRIC_EXAMPLE, EXAMPLE_LIMITS, build, fromReply, summarize };
 })();

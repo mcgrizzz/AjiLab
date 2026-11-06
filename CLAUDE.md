@@ -79,7 +79,7 @@ Wraps `@cooklang/cooklang` and adds AjiLab-specific syntax on top:
 
 ### Computed metrics (`src/metric-expr.ts` + `cooklang.ts::extractComputedMetrics`)
 
-`metric.<name>: <formula> | <unit>` keys in YAML frontmatter. Formula refs ingredients as `flour.g`, earlier metrics as `metric.<name>`, and gets evaluated against the parsed ingredient summary (normalized to base units via `convertMetricQuantity`). Underscored metric names (`metric._total`) are hidden from the UI but available to other formulas.
+`metric.<name>: <formula> | <unit>` keys in YAML frontmatter. Formula refs ingredients as `flour.g`, earlier metrics as `metric.<name>`, and gets evaluated against the parsed ingredient summary (normalized to base units via `convertMetricQuantity`). A metric ending in `| hidden` (`metric.total_flour: … | g | hidden`) isn't shown but is available to later formulas. A formula sees one total per ingredient name, so a repeated ingredient needs `@&` to add up.
 
 ### Diff (`src/compare.ts`)
 
@@ -89,7 +89,7 @@ Three layers: ingredient diff (unit-normalized via `metric-expr` conversions), s
 
 Vanilla JS SPA, ES modules. Files prefixed `views-*` are screens (`views-index`, `views-recipe-overview`, `views-recipe-editor`, `views-recipe-viewer`, `views-recipe-versions`, `views-recipe-cook-logs`, `views-cook` (recording a cook, with its pure value model in `cook-sheet.js`), `views-recipe-test` (a test's page: what it changes, its cooks side by side, adopt), `views-print`). `cooklang-render.js` is the renderer used by all viewers; `cooklang-editor.js` is the CodeMirror editor with custom Cooklang syntax highlighting. `api.js` is the thin fetch wrapper.
 
-`import-prompt.js` holds the syntax list, written once: the editor's Syntax help shows the entries marked `help`, and "Import from a link" (New recipe dialog, `app.js`) builds a prompt from all of it for a chat assistant, then reads the reply back (checked through `POST /api/parse` before anything is created). **When you add or change syntax or a house-style convention, update `import-prompt.js`** (or list the syntax in `NOT_FOR_IMPORT` with the reason). `test/import-prompt.test.js` parses every example and the sample recipe with the real parser, and fails on a CLAUDE.md extension that's in neither list.
+`import-prompt.js` holds the syntax list, written once: the editor's Syntax help shows the entries marked `help`, and "Import from a link" (New recipe dialog, `app.js`) builds a prompt from all of it for a chat assistant, then reads the reply back (checked through `POST /api/parse` before anything is created). **When you add or change syntax, a house-style convention or how metrics work, update `import-prompt.js`** (or list the syntax in `NOT_FOR_IMPORT` with the reason). `test/import-prompt.test.js` parses every example and the sample recipe with the real parser, and fails on a CLAUDE.md extension that's in neither list.
 
 The CodeMirror bundle is built separately into `public/vendor/codemirror.js` — re-run `npm run build:editor` after touching `src/browser/codemirror-vendor.js`.
 
