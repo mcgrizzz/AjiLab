@@ -24,7 +24,7 @@ import type {
   QuantityRange,
 } from "../cooklang.ts";
 import { extractComputedMetrics } from "./metrics.ts";
-import { extractTemperatures, splitTextWithTemperatures } from "./temperature.ts";
+import { extractTemperatures, splitTextWithTemperatures, restoreTemperaturePlaceholders } from "./temperature.ts";
 import {
   splitTextIntoParsedSteps,
   makeStepId,
@@ -601,9 +601,10 @@ export function parseCooklang(text: string): ParsedRecipe {
       }
     }
 
+    restoreTemperaturePlaceholders(metadata, temperatureExtractions);
     const metrics = extractComputedMetrics(metadata, ingredientSummary);
 
-    return {
+    return restoreTemperaturePlaceholders({
       ingredients,
       ingredient_summary: ingredientSummary,
       cookwares,
@@ -611,7 +612,7 @@ export function parseCooklang(text: string): ParsedRecipe {
       metrics,
       steps,
       editable_tokens: editableTokens,
-    };
+    }, temperatureExtractions);
   } catch (e: any) {
     return {
       ingredients: [],

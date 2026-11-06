@@ -201,6 +201,26 @@ test("values without an amount still count, as the server counts them", () => {
   assert.equal(updateStepQuantity("Add @oil, then stir.", 0, 1, "ingredient", 0, "0", ""), "Add oil, then stir.");
 });
 
+test("a temperature in an ingredient's note is part of the note, not a value", () => {
+  // Your bug: `(at ^{90-95%F})` showed placeholder characters, and the cook
+  // screen counted it as a value, so editing the oven temperature after it
+  // would have changed the wrong thing.
+  for (const scale of [1, 2]) {
+    const text = scaleCooklangText("Mix @flour{450%g} and @water{365-380%g}(at ^{90-95%F}) in a #bowl{}(warm, 30°C), then heat to ^{230%C} for ~{5%min}.", scale);
+    const parsed = parseCooklang(text);
+    assert.doesNotMatch(JSON.stringify(parsed), /[\uE000-\uF8FF]/);
+    assert.equal(parsed.ingredients[1].note, "at 90-95°F");
+    const fields = fieldsOf(text);
+    assert.deepEqual(fields.map((f) => `${f.kind}#${f.index}`), ["ingredient#0", "ingredient#1", "inlineQuantity#0", "timer#0"]);
+    for (const field of fields) {
+      const next = updateStepQuantity(text, field.sectionIndex, field.stepNumber, field.kind, field.index, "777", field.current.units);
+      const after = fieldsOf(next);
+      after.forEach((other, i) => assert.equal(other.current.quantity, other.id === field.id ? "777" : fields[i].current.quantity, `${field.kind}#${field.index} at ${scale}×`));
+      assert.match(next, /\(at \^\{90-95%F\}\)/, "the note is untouched");
+    }
+  }
+});
+
 // A sheet and its cooks, parsed the way the test page parses them.
 const sheetOf = (text) => { const parsed = parseCooklang(text); return { fields: CookSheet.buildFields(parsed.steps), steps: parsed.steps, text }; };
 function cookOf(sheetText, cookedText, scale, intended = []) {

@@ -1051,3 +1051,26 @@ test("a bare C in an ingredient amount is a cup; ^{…%C} stays Celsius", () => 
   const tok = parsed.editable_tokens.find((t) => t.kind === "ingredient");
   assert.equal("Warm @milk{1%C} to ^{40%C}.".slice(tok.rangeStart, tok.rangeEnd), "1");
 });
+
+test("^{} and %{} read back as words wherever the parser puts them", () => {
+  const parsed = parseCooklang(`---
+title: Bread at ^{200%F}
+---
+
+= Bake at ^{220%C}
+
+Mix @water{365-380%g}(at ^{90-95%F}) in a #pot{}(hot, ^{100%C}), then @milk{100%ml}(warm, %{1%cup}).
+
+> Cool to ^{40%C} first.
+`);
+  assert.doesNotMatch(JSON.stringify(parsed), /[\uE000-\uF8FF]/, "no placeholder characters anywhere");
+  assert.equal(parsed.metadata.title, "Bread at 200°F");
+  assert.equal(parsed.steps[0][0].value, "= Bake at 220°C");
+  const tokens = parsed.steps[1];
+  assert.equal(tokens.find((t) => t.name === "water").note, "at 90-95°F");
+  assert.equal(tokens.find((t) => t.name === "pot").note, "hot, 100°C");
+  assert.equal(tokens.find((t) => t.name === "milk").note, "warm, 1 cup");
+  assert.equal(parsed.steps[2][0].value, "Cool to 40°C first.");
+  // Step text keeps its own temperature tokens.
+  assert.ok(parseCooklang("Bake at ^{230%C}.").steps[0].some((t) => t.kind === "temperature"));
+});

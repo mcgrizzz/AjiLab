@@ -195,8 +195,20 @@ export function scanAnnotations(text: string): AnnotationMatch[] {
       prose: { start, end },
     });
   }
-  out.sort((a, b) => a.sigil_start - b.sigil_start);
-  return out;
+  // A temperature inside a component's note (`@water{380%g}(at ^{90%F})`,
+  // `#pot{}(at 200°F)`) is part of the note, not a value of the step: the
+  // parser makes no token for it, so counting it would shift every value
+  // after it and an edit would land on the wrong one.
+  const noteSpans: Array<[number, number]> = [];
+  const NOTE_RE = /[@#][^@#~\n{}]*\{[^}\n]*\}\(([^)\n]*)\)/g;
+  let nm: RegExpExecArray | null;
+  while ((nm = NOTE_RE.exec(text))) {
+    const end = nm.index + nm[0].length;
+    noteSpans.push([end - nm[1].length - 2, end]);
+  }
+  const inNote = (a: AnnotationMatch) => a.kind === "inlineQuantity"
+    && noteSpans.some(([s, e]) => a.sigil_start > s && a.sigil_start < e);
+  return out.filter((a) => !inNote(a)).sort((a, b) => a.sigil_start - b.sigil_start);
 }
 
 function composeBraceContent(quantity: string, units: string): string {

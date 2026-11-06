@@ -155,3 +155,27 @@ export function splitTextWithTemperatures(
   }
   return tokens.length ? tokens : splitTextIntoParsedSteps(text, meta);
 }
+
+// The parser only gives step text back to splitTextWithTemperatures. A `^{}`
+// or `%{}` anywhere else (an ingredient's note `@water{380%g}(at ^{90%F})`,
+// a `>` note, a section name, the metadata) would keep its placeholder, which
+// shows as unreadable characters. Put the readable value back there: the
+// renderer finds "90°F" in prose and converts it like any written temperature.
+export function restoreTemperaturePlaceholders<T>(value: T, extractions: TemperatureExtraction[]): T {
+  if (!extractions.length) return value;
+  const seen = new WeakSet<object>();
+  const restore = (text: string) => (text.includes(TEMP_MARK_START)
+    ? text.replace(TEMP_PLACEHOLDER_RE, (whole, index) => extractions[Number(index)]?.display ?? whole)
+    : text);
+  const walk = (node: any): any => {
+    if (typeof node === "string") return restore(node);
+    if (!node || typeof node !== "object" || seen.has(node)) return node;
+    seen.add(node);
+    for (const key of Object.keys(node)) {
+      const next = walk(node[key]);
+      if (next !== node[key]) node[key] = next;
+    }
+    return node;
+  };
+  return walk(value);
+}

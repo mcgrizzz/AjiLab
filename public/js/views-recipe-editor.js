@@ -636,6 +636,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
           ${renderIngredientSummaryToggle(preview, this.ingredientSummaryMode)}
         </div>${CL.renderIngredientSummary(preview.ingredient_summary, 1, {
           mode: this.ingredientSummaryMode,
+          temperatureUnit: this.temperatureUnit,
           resolveIngredientToken: ingredientResolver,
         })}`;
       }

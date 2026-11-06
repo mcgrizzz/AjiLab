@@ -34,7 +34,7 @@ const CL = {
           ? ` data-orig="${escHtml(String(ing.quantity))}" data-unit="${escHtml(unit)}" data-shown-unit="${escHtml(presented ? presented.unit : unit)}" data-name="${escHtml(ing.name || '')}" onclick="RecipeView.editIngredientQty(this)" title="${escHtml(writtenHint + scaleHint)}"`
           : '');
       const nameHtml = renderIngredientName(ing);
-      const noteHtml = ing.note ? ` <span class="ing-note">(${escHtml(ing.note)})</span>` : '';
+      const noteHtml = ing.note ? ` <span class="ing-note">(${proseHtml(ing.note, options.temperatureUnit)})</span>` : '';
       const optionalHtml = ing.optional ? ' <span class="ing-optional">(optional)</span>' : '';
       const itemCls = ing.optional ? 'ingredient-item ingredient-item-optional' : 'ingredient-item';
       // Cook-log diff overlay: when the summary annotation attached source_*
@@ -93,7 +93,7 @@ const CL = {
         if (/^\s*=\s+/.test(plainText)) {
           const sectionId = step?.[0]?.section_id;
           const sectionAttr = sectionId ? ` data-section-id="${escHtml(sectionId)}"` : '';
-          const sectionName = escHtml(plainText.replace(/^\s*=\s+/, ''));
+          const sectionName = proseHtml(plainText.replace(/^\s*=\s+/, ''), options.temperatureUnit);
           return `<li class="step-section"${sectionAttr}><span class="step-section-name">${sectionName}</span></li>`;
         }
         if (/^\s*(>\s|--\s?)/.test(plainText)) {
@@ -113,7 +113,7 @@ const CL = {
           case 'ingredient': {
             const prepRef = buildPrepReferenceAttrs(token);
             const amtHtml = ingredientAmountHtml(token, token.fixed ? 1 : scale, showAmounts, options.units);
-            const noteHtml = token.note ? ` <span class="s-component-note">(${escHtml(token.note)})</span>` : '';
+            const noteHtml = token.note ? ` <span class="s-component-note">(${proseHtml(token.note, options.temperatureUnit)})</span>` : '';
             const optHtml = token.optional ? ' <span class="s-component-optional">(optional)</span>' : '';
             if (token.recipe_reference) {
               return renderRecipeReferenceChip(token) + amtHtml + noteHtml + optHtml;
@@ -124,7 +124,7 @@ const CL = {
             return `<span class="s-ingredient${token.optional ? ' s-ingredient-optional' : ''}">${escHtml(token.name)}${amtHtml}</span>${noteHtml}${optHtml}`;
           }
           case 'cookware': {
-            const noteHtml = token.note ? ` <span class="s-component-note">(${escHtml(token.note)})</span>` : '';
+            const noteHtml = token.note ? ` <span class="s-component-note">(${proseHtml(token.note, options.temperatureUnit)})</span>` : '';
             return `<span class="s-cookware">${escHtml(token.name)}</span>${noteHtml}`;
           }
           case 'timer': {
@@ -339,6 +339,12 @@ function renderTextWithBreaks(text, preferredUnit) {
     .split(/\r?\n/)
     .map(part => highlightTemps(part, preferredUnit))
     .join('<br>');
+}
+
+// Words with a temperature in them (a note, a section name): shown in the
+// reader's unit when we know it, as written when we don't.
+function proseHtml(text, preferredUnit) {
+  return preferredUnit ? highlightTemps(text, preferredUnit) : escHtml(text);
 }
 
 function highlightTemps(text, preferredUnit = 'F') {

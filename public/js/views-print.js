@@ -146,7 +146,7 @@ const PrintView = {
           <div class="print-meta">${meta.map((m) => `<span>${escHtml(m)}</span>`).join('<span aria-hidden="true">·</span>')}</div>
           ${servings ? `<div class="print-servings">Serves ${escHtml(servings)}</div>` : ''}
           ${CL.renderMetrics(parsed.metrics)}
-          ${parsed.ingredients?.length ? `<div class="section-head">Ingredients</div>${CL.renderIngredientSummary(parsed.ingredient_summary, scale, { mode: ingredientSummaryMode, units: RecipeView.unitView(slug) })}` : ''}
+          ${parsed.ingredients?.length ? `<div class="section-head">Ingredients</div>${CL.renderIngredientSummary(parsed.ingredient_summary, scale, { mode: ingredientSummaryMode, units: RecipeView.unitView(slug), temperatureUnit: RecipeView.temperatureUnit })}` : ''}
           ${parsed.steps?.length ? `<div class="section-head mt16">Steps</div>${CL.renderSteps(parsed.steps, scale, parsed.metadata, true, {
             temperatureUnit: RecipeView.temperatureUnit,
             units: RecipeView.unitView(slug),

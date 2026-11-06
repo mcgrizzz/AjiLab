@@ -40,6 +40,7 @@ Object.assign(RecipeView, {
           ${ingredientToggle}
           <div id="ing-list">${CL.renderIngredientSummary(parsed.ingredient_summary, this.scale, {
             mode: this.ingredientSummaryMode,
+            temperatureUnit: this.temperatureUnit,
             units: this.unitView(),
           })}</div>
         </div>` : ''}
@@ -177,6 +178,7 @@ Object.assign(RecipeView, {
     if (ingList) {
       ingList.innerHTML = CL.renderIngredientSummary(this.parsed.ingredient_summary, this.scale, {
         mode: this.ingredientSummaryMode,
+        temperatureUnit: this.temperatureUnit,
         units: this.unitView(),
       });
     }
