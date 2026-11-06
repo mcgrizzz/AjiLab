@@ -30,7 +30,7 @@ const ImportPrompt = (() => {
     { code: '= Section', example: '= Dough', kind: 'section', help: true,
       rule: 'A stage of the recipe (Dough, Shape, Bake), on its own line. Leave sections out of a short, one-stage recipe.' },
     { code: '> note', example: '> Wear gloves.', kind: 'note', help: true,
-      rule: 'A tip, warning or cue that belongs to the step just above it.' },
+      rule: 'A warning or cue for the step above it, one short sentence. Only when it matters; most recipes need none or one or two.' },
     { code: '@salt{=1%tsp}', example: '@salt{=1%tsp}', kind: 'ingredient', fixed: true, help: true,
       rule: 'An amount that stays the same when the recipe is scaled. Rarely needed.' },
   ];
@@ -43,7 +43,7 @@ const ImportPrompt = (() => {
     { code: 'source: URL or book', key: 'source', help: true,
       rule: 'Where it came from: the link, or the book and author.' },
     { code: 'notes: Your notes', key: 'notes', help: true,
-      rule: 'Facts about the whole recipe worth keeping on the sheet: expected yield, storage, make-ahead. Written as a block (notes: |-) with one point per line.' },
+      rule: 'Only facts about the whole recipe worth keeping, like yield or storage, one short line each, as a block (notes: |-). Leave it out if there are none.' },
     { code: 'metric.hydration: water.g / flour.g * 100 | %', key: 'metric.hydration', help: true,
       rule: 'A computed figure. Leave these out; I add them myself.' },
   ];
@@ -59,14 +59,20 @@ const ImportPrompt = (() => {
   };
 
   const HOUSE_STYLE = [
+    'Be brief. Write it like a cook’s own sheet, not the blog post: short imperative sentences ("Mix…", "Bake…"), no filler ("carefully", "go ahead and", "you’ll want to").',
+    'Each step is one or two short sentences. Fold small actions that go together into one step; start a new one at a wait or a change of stage. Fewer, tighter steps beat many small ones.',
+    'Keep only what changes the result: amounts, times, temperatures, doneness cues ("until doubled", "until golden"), and real warnings. Leave out common sense (“be careful, it’s hot”, “gather your ingredients”, “enjoy”) and anything a home cook already knows.',
     'Write each ingredient inline, in the step where it is used. Don’t write a separate ingredient list; AjiLab builds it from the steps.',
     'If an ingredient is used in two steps, give each use its own amount where it is used.',
     'Keep the author’s amounts and units exactly. Don’t convert, round, scale or improve anything. When the source gives both weights and cups, use the weights.',
-    'Use short unit names: g, kg, ml, l, tsp, tbsp, cup, oz, lb. Write fractions as 1/2 and ranges as 12-14.',
-    'One action per step, in the imperative ("Mix…", "Bake…"), with a blank line between steps.',
-    'Leave out the story, ads, nutrition, ratings and comments. Keep the author’s tips as > notes under the step they belong to.',
+    'Use short unit names: g, kg, ml, l, tsp, tbsp, cup, oz, lb. Write fractions as 1/2 and ranges as 12-14. Put a blank line between steps.',
+    'Leave out the story, ads, nutrition, ratings, comments and serving suggestions. Of the author’s tips, keep only the ones that would change the result if missed.',
     'If something on the page is unclear or missing, don’t guess: say so in a > note.',
   ];
+
+  // Limits the sample recipe keeps to (checked by the test), so it shows the
+  // brevity it asks for.
+  const EXAMPLE_LIMITS = { wordsPerStep: 30, notes: 1 };
 
   // A small recipe in the house style. The test parses it.
   const EXAMPLE = `---
@@ -82,21 +88,19 @@ notes: |-
 
 Preheat the #oven{} to ^{425%F} with a #cast-iron skillet{} inside.
 
-Cook @butter{113%g} in a #saucepan{} until it smells nutty and browns, ~{5-6%min}.
+Brown @butter{113%g}(cubed) in a #saucepan{} until nutty, ~{5-6%min}.
 
-> Watch it closely once it foams; it burns fast.
+> It burns fast once it foams.
 
 Whisk @cornmeal{150%g}, @all-purpose flour{125%g}, @sugar{50%g}, @baking powder{2%tsp} and @salt{1%tsp} in a #bowl{}.
 
-Whisk @buttermilk{360%ml}, @eggs{2} and most of the brown butter, then stir into the dry mix until just combined.
+Whisk in @buttermilk{360%ml}, @eggs{2} and most of the butter until just combined.
 
 = Bake
 
-Swirl the rest of the butter around the hot skillet and pour in the batter.
+Swirl the rest of the butter in the hot skillet, pour in the batter and bake ~{20-25%min}, until golden.
 
-Bake for ~{20-25%min} until golden and a toothpick comes out clean.
-
-Cool for ~{10%min} and serve with @honey{}(warmed).
+Sprinkle with @flaky salt{} and cool ~{10%min} in the skillet.
 `;
 
   function build({ url = '' } = {}) {
@@ -161,5 +165,5 @@ ${EXAMPLE}\`\`\`
     };
   }
 
-  return { SYNTAX, METADATA, NOT_FOR_IMPORT, HOUSE_STYLE, EXAMPLE, build, fromReply, summarize };
+  return { SYNTAX, METADATA, NOT_FOR_IMPORT, HOUSE_STYLE, EXAMPLE, EXAMPLE_LIMITS, build, fromReply, summarize };
 })();

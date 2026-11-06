@@ -56,7 +56,7 @@ test("the sample recipe parses, with its metadata where the app reads it", () =>
   assert.equal(meta.servings, "8");
   assert.match(meta.notes, /Keeps 2 days[\s\S]*\nReheat/);
   const sum = plain(ImportPrompt.summarize(parsed));
-  assert.deepEqual(sum, { title: "Brown Butter Cornbread", ingredients: 9, steps: 7, sections: 2, error: "" });
+  assert.deepEqual(sum, { title: "Brown Butter Cornbread", ingredients: 9, steps: 6, sections: 2, error: "" });
   // It uses what it teaches, so the assistant sees each in use.
   assert.match(ImportPrompt.EXAMPLE, /^= \w/m);
   assert.match(ImportPrompt.EXAMPLE, /#[\w -]+\{\}/);
@@ -66,6 +66,21 @@ test("the sample recipe parses, with its metadata where the app reads it", () =>
   assert.match(ImportPrompt.EXAMPLE, /@\w[\w ]*\{\}/);
   assert.match(ImportPrompt.EXAMPLE, /^> /m);
   assert.doesNotMatch(ImportPrompt.EXAMPLE, /°[FC]/, "temperatures are ^{}, not plain text");
+});
+
+test("the sample recipe is as brief as the prompt asks", () => {
+  // Steps are the blocks after the metadata that aren't sections or notes.
+  const body = ImportPrompt.EXAMPLE.split(/\n---\n/)[1];
+  const blocks = body.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
+  const steps = blocks.filter((b) => !/^(=|>)\s/.test(b));
+  const words = (b) => b.replace(/[@#~^]\{[^}]*\}|\{[^}]*\}/g, "").split(/\s+/).filter(Boolean).length;
+  for (const step of steps) assert.ok(words(step) <= ImportPrompt.EXAMPLE_LIMITS.wordsPerStep, `too long: ${step}`);
+  const notes = blocks.filter((b) => /^>\s/.test(b));
+  assert.ok(notes.length >= 1 && notes.length <= ImportPrompt.EXAMPLE_LIMITS.notes, "one important note, no more");
+  for (const note of notes) assert.ok(words(note) <= 12, `note too long: ${note}`);
+  const prompt = ImportPrompt.build({});
+  assert.match(prompt, /Be brief/);
+  assert.match(prompt, /Leave out common sense/);
 });
 
 test("every metadata key the prompt teaches is one the app reads", () => {
