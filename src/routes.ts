@@ -8,6 +8,7 @@ import { parseCooklang, annotateCookLogDiff, annotateIngredientSummaryDiff, appl
 import { buildInlineDiffLines, diffStepBlocks, diffMetadata, diffMetrics, classifyCookLogVsSource, synthesizePromotedRecipe, diffIngredients } from "./compare.ts";
 import {
   applyBranchSync,
+  attachCookPhoto,
   attachRecipeImage,
   collectUnresolvedReferences,
   createCookLog,
@@ -569,6 +570,23 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     const log = await getCookLog(recipe.slug, c.req.param("id"), activeBranch(c));
     if (!log) return c.json({ error: "cook log not found" }, 404);
     return c.json(log);
+  });
+
+  // A photo of the cook. multipart/form-data with field `image`; returns the
+  // cook, with its photos. Delete one with DELETE /images/:id.
+  api.post(`${prefix}/cook-logs/:id/photos`, async (c) => {
+    const recipe = await getRecipeBySlug(c.req.param("slug"), activeBranch(c));
+    if (!recipe) return c.json({ error: "not found" }, 404);
+    const upload = await readImageUpload(c);
+    if ("error" in upload) return c.json({ error: upload.error }, 400);
+    try {
+      return c.json(await attachCookPhoto(recipe.slug, c.req.param("id"), {
+        filename: upload.file.name || "photo", mime_type: upload.file.type, data: upload.buffer,
+      }, activeBranch(c)), 201);
+    } catch (error: any) {
+      const message = error?.message || "upload failed";
+      return c.json({ error: message }, message === "cook log not found" ? 404 : 400);
+    }
   });
 
   api.put(`${prefix}/cook-logs/:id`, async (c) => {

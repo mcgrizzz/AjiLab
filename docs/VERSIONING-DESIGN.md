@@ -233,7 +233,8 @@ actions across a modal and a second screen, ending in a native `prompt()`.
 - **Differences:** each changed value shows "was 375 g", greyed when ≈ same,
   plus an "I meant this" toggle.
 - **Editing a cook later** opens the same screen.
-- **Later, optional:** a photo of the marked-up sheet on the cook.
+- **Photos** (optional, any number) are added under Notes. Adding one records
+  the cook, like any change. See "Photos belong to cooks (Nov 6)" below.
 
 **Adopt dialog** (phase 4; a simplified version in phase 1).
 - Title: "Adopt Test 4 as v1.2".
@@ -549,3 +550,13 @@ when a newer version exists. Kept below for the record.
   out: it means solving formulas backwards (which ingredient moves, two
   figures sharing one, scaling, cook edits). The range plus each cook's
   figure covers the need.
+
+**Photos belong to cooks (Nov 6).**
+- A photo is of a cook: added on the cook screen (optional, several at
+  once; a big phone photo is shrunk to 2000 px JPEG first), shown on the
+  cook's card, as a thumbnail over its column in the test's cooks table,
+  and in the photo strip of the sheet it was cooked from, captioned with the
+  cook. Deleting the cook deletes its photos (the confirm says so).
+- Upload to a sheet (and to the working copy, whose photos were deleted on
+  release) is gone. Photos already attached to a sheet stay and still show
+  in its strip. The recipe's cover stays its own upload in Settings.

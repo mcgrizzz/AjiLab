@@ -121,6 +121,7 @@ Object.assign(RecipeView, {
       ${logs.map((log, i) => `<th scope="col" class="ct-cook-col">
         <button type="button" class="link-btn" onclick="RecipeView.openCook('${escJs(log.id)}')" title="Open this cook">Cook ${i + 1}</button>
         <span class="ct-cook-meta">${escHtml(shortDate(log.cooked_at))}${(Number(log.scale) || 1) !== 1 ? ` · ${escHtml(formatEditableQuantity(Number(log.scale)))}×` : ''}</span>
+        ${log.photos?.length ? `<a class="ct-cook-photo image-thumb" href="/api/images/${escHtml(log.photos[0])}" target="_blank" rel="noreferrer" title="${log.photos.length === 1 ? 'Photo' : `1 of ${log.photos.length} photos`}: open it"><img src="/api/images/${escHtml(log.photos[0])}" alt="Cook ${i + 1}" loading="lazy" />${log.photos.length > 1 ? `<span class="ct-cook-photo-more">+${log.photos.length - 1}</span>` : ''}</a>` : ''}
       </th>`).join('')}
     </tr>`;
     const cellHtml = (cell, row) => {

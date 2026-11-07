@@ -690,21 +690,28 @@ export async function listRecipeImages(slug: string, versionString?: string | nu
     if (!v) throw new Error("version not found");
     entryId = v.id;
   }
+  // A sheet's photos: its cooks' photos, newest cook first, then any
+  // attached to the sheet itself (before photos belonged to cooks).
   const rows = await sql<{
-    id: string; recipe_id: string; entry_id: string | null;
-    filename: string; mime_type: string; created_at: Date;
+    id: string; recipe_id: string; entry_id: string | null; cook_log_id: string | null;
+    cooked_at: Date | null; filename: string; mime_type: string; created_at: Date;
   }[]>`
-    SELECT id, recipe_id, entry_id, filename, mime_type, created_at
-    FROM images
-    WHERE recipe_id = ${recipe.id}
-      AND ${entryId === null ? sql`entry_id IS NULL` : sql`entry_id = ${entryId}`}
-      AND is_thumbnail = false
-    ORDER BY created_at DESC
+    SELECT i.id, i.recipe_id, i.entry_id, i.cook_log_id, cl.cooked_at, i.filename, i.mime_type, i.created_at
+    FROM images i
+    LEFT JOIN cook_logs cl ON cl.id = i.cook_log_id
+    WHERE i.recipe_id = ${recipe.id}
+      AND ${entryId === null
+        ? sql`i.entry_id IS NULL AND i.cook_log_id IS NULL`
+        : sql`(i.entry_id = ${entryId} OR cl.source_entry_id = ${entryId})`}
+      AND i.is_thumbnail = false
+    ORDER BY (i.cook_log_id IS NULL), cl.cooked_at DESC, i.created_at
   `;
   return rows.map((r) => ({
     id: r.id,
     recipe_id: r.recipe_id,
     version_id: r.entry_id,
+    cook_log_id: r.cook_log_id,
+    cooked_at: r.cooked_at ? r.cooked_at.toISOString() : null,
     branch_slug: branchSlug,
     version_key: versionString || null,
     filename: r.filename,
@@ -737,6 +744,22 @@ export async function attachRecipeImage(
     id, filename: image.filename, version_id: entryId,
     branch_slug: branchSlug, version_key: image.version_string || null,
   };
+}
+
+// A photo of a cook. Returns the cook, with its photos.
+export async function attachCookPhoto(
+  slug: string,
+  cookLogId: string,
+  image: { filename: string; mime_type: string; data: Buffer },
+  branchSlug = MAIN_BRANCH_SLUG,
+): Promise<CookLogRecord> {
+  const log = await getCookLog(slug, cookLogId, branchSlug);
+  if (!log) throw new Error("cook log not found");
+  await sql`
+    INSERT INTO images (id, recipe_id, cook_log_id, filename, mime_type, data)
+    VALUES (${generateId()}, ${log.recipe_id}, ${log.id}, ${image.filename}, ${image.mime_type}, ${image.data})
+  `;
+  return (await getCookLog(slug, cookLogId, branchSlug))!;
 }
 
 export async function setRecipeThumbnail(
@@ -839,7 +862,8 @@ async function loadCookLogsForBranch(branchId: string, filter?: { version: strin
              cl.source_entry_id, cl.source_kind, cl.source_version,
              cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
              cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
-             cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.display, cl.created_at, cl.updated_at
+             cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.display, cl.created_at, cl.updated_at,
+           ARRAY(SELECT i.id FROM images i WHERE i.cook_log_id = cl.id ORDER BY i.created_at) AS photo_ids
       FROM cook_logs cl
       JOIN branches b ON b.id = cl.branch_id
       WHERE cl.branch_id = ${branchId} AND cl.source_version = ${filter.version}
@@ -851,7 +875,8 @@ async function loadCookLogsForBranch(branchId: string, filter?: { version: strin
            cl.source_entry_id, cl.source_kind, cl.source_version,
            cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
            cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
-           cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.display, cl.created_at, cl.updated_at
+           cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.display, cl.created_at, cl.updated_at,
+           ARRAY(SELECT i.id FROM images i WHERE i.cook_log_id = cl.id ORDER BY i.created_at) AS photo_ids
     FROM cook_logs cl
     JOIN branches b ON b.id = cl.branch_id
     WHERE cl.branch_id = ${branchId}
@@ -881,7 +906,8 @@ export async function getCookLog(slug: string, id: string, branchSlug = MAIN_BRA
            cl.source_entry_id, cl.source_kind, cl.source_version,
            cl.cooklang_text, cl.source_cooklang_text, cl.tags, cl.scale,
            cl.cooked_at, cl.outcome, cl.what_worked, cl.problems_found,
-           cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.display, cl.created_at, cl.updated_at
+           cl.changes_to_try_next, cl.freeform_notes, cl.intended, cl.display, cl.created_at, cl.updated_at,
+           ARRAY(SELECT i.id FROM images i WHERE i.cook_log_id = cl.id ORDER BY i.created_at) AS photo_ids
     FROM cook_logs cl
     JOIN branches b ON b.id = cl.branch_id
     WHERE cl.id = ${id} AND cl.branch_id = ${branchId}

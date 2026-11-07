@@ -127,6 +127,10 @@ CREATE INDEX IF NOT EXISTS idx_entries_search ON entries USING GIN (search_vecto
 CREATE INDEX IF NOT EXISTS idx_entries_tags ON entries USING GIN (tags);
 CREATE INDEX IF NOT EXISTS idx_images_recipe ON images(recipe_id);
 CREATE INDEX IF NOT EXISTS idx_images_entry ON images(entry_id);
+-- A photo of a cook belongs to the cook (entry_id stays NULL); deleting the
+-- cook deletes its photos. Older photos attached to a sheet keep entry_id.
+ALTER TABLE images ADD COLUMN IF NOT EXISTS cook_log_id UUID REFERENCES cook_logs(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_images_cook_log ON images(cook_log_id);
 CREATE INDEX IF NOT EXISTS idx_cook_logs_branch_recent ON cook_logs(branch_id, cooked_at DESC);
 CREATE INDEX IF NOT EXISTS idx_cook_logs_source ON cook_logs(source_entry_id);
 CREATE INDEX IF NOT EXISTS idx_references_to ON recipe_references(to_recipe_id);

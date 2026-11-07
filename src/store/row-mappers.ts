@@ -157,6 +157,7 @@ export type CookLogRow = {
   freeform_notes: string;
   intended: CookIntendedKey[] | null;
   display?: SheetDisplay | null;
+  photo_ids?: string[] | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -181,6 +182,7 @@ export function cookLogRowToRecord(row: CookLogRow): CookLogRecord {
     freeform_notes: row.freeform_notes || "",
     intended: Array.isArray(row.intended) ? row.intended : [],
     display: row.display && typeof row.display === "object" ? row.display : {},
+    photos: Array.isArray(row.photo_ids) ? row.photo_ids.map(String) : [],
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
   };

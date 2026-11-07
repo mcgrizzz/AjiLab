@@ -110,7 +110,8 @@ A cook log records one cooking session. It captures both the recipe text as it w
 | `POST` | `…/cook-logs` | Create. Body below |
 | `GET` | `…/versions/:v/cook-logs` | Cook logs filtered to a specific version |
 | `PUT` | `…/cook-logs/:id` | Update fields |
-| `DELETE` | `…/cook-logs/:id` | Delete |
+| `DELETE` | `…/cook-logs/:id` | Delete (and its photos) |
+| `POST` | `…/cook-logs/:id/photos` | Add a photo of the cook. `multipart/form-data` with field `image`; returns the cook, whose `photos` lists its image ids. Delete one with `DELETE /images/:id` |
 | `POST` | `…/cook-logs/:id/fork-to-draft` | Copy this log's cooklang into the draft (at 1×) |
 | `POST` | `…/cook-logs/:id/promote` | Promote directly to a released version (at 1×). Body: `{ version_string, status?, changelog? }` |
 | `GET` | `…/cook-logs/:id/classify` | Log vs source (at the log's scale), classified per change |
@@ -147,8 +148,8 @@ Everything that compares a log with its source (`classify`, the `cooklog-source:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `…/images` | List images. Optional `?version=v1.0` or `?version=draft` to filter |
-| `POST` | `…/images` | Upload. `multipart/form-data` with field `image` and optional `version` |
+| `GET` | `…/images` | List images. With `?version=v1.0`: that sheet's cooks' photos (with `cook_log_id`, `cooked_at`), newest cook first, then any attached to the sheet itself. Without: the recipe's own (none attached to a sheet or a cook) |
+| `POST` | `…/images` | Upload to a sheet (the app no longer does; photos go on a cook). `multipart/form-data` with field `image` and optional `version` |
 | `POST` | `/recipes/:slug/thumbnail` | Set the recipe thumbnail. Same multipart format. Replaces any existing thumbnail |
 | `DELETE` | `/recipes/:slug/thumbnail` | Remove the thumbnail |
 | `GET` | `/images/:id` | Serve the binary. Returns the raw image with its `Content-Type` and a 1-day cache header |

@@ -1197,3 +1197,5 @@ button.ing-qty {
   background: var(--bg3);
 }
 
+
+.cook-log-photos { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }

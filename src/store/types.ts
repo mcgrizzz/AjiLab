@@ -104,6 +104,8 @@ export interface CookLogRecord {
   intended: CookIntendedKey[];
   // How the paper showed the amounts (from the print it was started from).
   display: SheetDisplay;
+  // Its photos' image ids, oldest first (served at /api/images/:id).
+  photos: string[];
   created_at: string;
   updated_at: string;
 }

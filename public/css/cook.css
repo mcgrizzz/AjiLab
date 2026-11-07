@@ -438,6 +438,20 @@
 
 .ct-cook-meta { display: block; font-weight: 400; letter-spacing: 0; color: var(--ink3); }
 
+.ct-cook-photo { display: block; width: 48px; margin-top: 6px; }
+
+.ct-cook-photo-more {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  padding: 0 4px;
+  border-radius: var(--r);
+  background: var(--scrim);
+  color: var(--on-scrim);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
 .ct-label { font-weight: 600; color: var(--ink); white-space: nowrap; }
 
 .ct-tested-tag {
@@ -492,3 +506,17 @@
 .rel-source { margin-top: 12px; border: none; padding: 0; }
 
 .rel-source-option { display: flex; align-items: baseline; gap: 8px; padding: 4px 0; font-size: 0.88rem; color: var(--ink); cursor: pointer; }
+
+.cook-photos { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+.cook-photo { width: 88px; }
+
+.cook-photo a { display: block; width: 100%; height: 100%; }
+
+.cook-photo-busy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  color: var(--ink3);
+}

@@ -517,3 +517,29 @@ test("a print keeps how it showed the amounts, and a cook keeps its print's", as
   assert.deepEqual(log.display, { temp: "C" });
   assert.deepEqual((await store.createCookLog(slug, { kind: "version", version_string: "v1.0" }, { outcome: "" })).display, {});
 });
+
+test("a cook's photos belong to it: listed on its sheet, gone with the cook", async () => {
+  const { store } = ctx;
+  const slug = await recipeWithVersion("Photographed");
+  const photo = (name) => ({ filename: name, mime_type: "image/png", data: Buffer.from(name) });
+  const older = await store.createCookLog(slug, { kind: "version", version_string: "v1.0" }, { outcome: "", cooked_at: "2026-11-01T12:00:00Z" });
+  const newer = await store.createCookLog(slug, { kind: "version", version_string: "v1.0" }, { outcome: "", cooked_at: "2026-11-05T12:00:00Z" });
+  assert.deepEqual(older.photos, []);
+  await store.attachCookPhoto(slug, older.id, photo("crumb"));
+  const withTwo = await store.attachCookPhoto(slug, older.id, photo("crust"));
+  assert.equal(withTwo.photos.length, 2);
+  await store.attachCookPhoto(slug, newer.id, photo("loaf"));
+  // One attached to the sheet itself, from before photos belonged to cooks.
+  await store.attachRecipeImage(slug, { ...photo("old"), version_string: "v1.0" });
+  const listed = await store.listRecipeImages(slug, "v1.0");
+  assert.deepEqual(listed.map((i) => i.filename), ["loaf", "crumb", "crust", "old"]);
+  assert.equal(listed[0].cook_log_id, newer.id);
+  assert.equal(listed[3].cook_log_id, null);
+  // Not the recipe's own photos (no sheet), and every list of cooks carries them.
+  assert.deepEqual(await store.listRecipeImages(slug, null), []);
+  const logs = await store.listVersionCookLogs(slug, "v1.0");
+  assert.deepEqual(logs.map((l) => l.photos.length), [1, 2]);
+  await assert.rejects(store.attachCookPhoto(slug, "00000000-0000-0000-0000-000000000000", photo("x")), /cook log not found/);
+  await store.deleteCookLog(slug, older.id);
+  assert.deepEqual((await store.listRecipeImages(slug, "v1.0")).map((i) => i.filename), ["loaf", "old"]);
+});

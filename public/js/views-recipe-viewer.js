@@ -91,19 +91,19 @@ Object.assign(RecipeView, {
         <div class="empty-state" style="padding:32px 0">
           <p>This version is empty. <button class="btn btn-sm" onclick="RecipeView.setTab('editor')">Open Editor →</button></p>
         </div>` : ''}
+      ${version?.is_draft && !this.images.length ? '' : `
       <div class="media-strip-card">
         <div class="media-strip-head">
           <div>
             <div class="section-head notes-head">${escHtml(photosLabel)}</div>
-            <div class="media-strip-meta">${this.images.length} photo${this.images.length === 1 ? '' : 's'}</div>
+            ${this.images.length ? `<div class="media-strip-meta">${this.images.length} photo${this.images.length === 1 ? '' : 's'}</div>` : ''}
           </div>
-          <div class="media-strip-actions">
-            <button class="btn btn-sm" onclick="document.getElementById('img-file').click()">${this.images.length ? 'Add photo' : 'Upload photo'}</button>
-            ${this.images.length ? `<button class="btn btn-sm btn-ghost" onclick="RecipeView.togglePhotosExpanded()">${this.photosToggleLabel()}</button>` : ''}
-          </div>
+          ${this.images.length ? `<div class="media-strip-actions">
+            <button class="btn btn-sm btn-ghost" id="photos-toggle" aria-expanded="${this.photosExpanded}" onclick="RecipeView.togglePhotosExpanded()">${this.photosToggleLabel()}</button>
+          </div>` : ''}
         </div>
         <div id="img-section"></div>
-      </div>`;
+      </div>`}`;
   },
 
   renderHeaderThumbnail() {

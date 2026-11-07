@@ -5,7 +5,8 @@
 // required: the cook is recorded at the first change (or "Cooked as
 // written"), and every change saves in the background, in order, without
 // repainting the page. Structural changes (a note or an added step) repaint
-// the sheet once they're saved.
+// the sheet once they're saved. Photos are optional; adding one records the
+// cook too.
 //
 // Keyboard: Tab / Shift-Tab move between values (and steps that have none),
 // Enter confirms and moves on, Esc puts a value back, Alt+S skips the step,
@@ -50,6 +51,7 @@ const CookView = {
     this.startShown = false;
     // How the paper showed the amounts ({ temp, units }); values show the same.
     this.display = {};
+    this.uploading = 0;
   },
 
   // opts: { id } for an existing cook; for a new one { sheet, scale, pick }
@@ -181,6 +183,10 @@ const CookView = {
             <label class="field-label" for="cook-notes">Notes</label>
             <textarea id="cook-notes" class="field-input" data-reflect="notes" rows="3" placeholder="What worked, what didn't">${escHtml(CookSheet.joinedNotes(log))}</textarea>
           </div>
+          <div class="field-group">
+            <span class="field-label" id="cook-photos-label">Photos</span>
+            <div class="cook-photos" id="cook-photos" role="group" aria-labelledby="cook-photos-label">${this.photosHtml()}</div>
+          </div>
         </section>
         <div class="cook-done-bar">
           <span class="cook-done-note">Saved as you go.</span>
@@ -210,6 +216,59 @@ const CookView = {
       if (e.target.dataset?.justFocused) delete e.target.dataset.justFocused;
     });
     this.setStatus();
+  },
+
+  photosHtml() {
+    const ids = this.log?.photos || [];
+    const thumbs = ids.map((id) => `<div class="image-thumb cook-photo">
+        <a href="/api/images/${escHtml(id)}" target="_blank" rel="noreferrer"><img src="/api/images/${escHtml(id)}" alt="Photo of this cook" loading="lazy" /></a>
+        <button class="del-img" data-act="remove-photo" data-photo="${escHtml(id)}" aria-label="Delete this photo" title="Delete this photo">✕</button>
+      </div>`).join('');
+    const busy = Array.from({ length: this.uploading }, () => '<div class="image-thumb cook-photo cook-photo-busy" role="status">Adding…</div>').join('');
+    return `${thumbs}${busy}
+      <button class="btn btn-sm cook-photo-add" data-act="add-photo">${ids.length ? 'Add more' : 'Add photos'}</button>
+      <input type="file" id="cook-photo-file" accept="image/*" multiple hidden />`;
+  },
+
+  paintPhotos() {
+    const el = document.getElementById('cook-photos');
+    if (el && this.active) el.innerHTML = this.photosHtml();
+  },
+
+  // Each photo goes up in turn, after whatever is already saving. A photo
+  // that can't be added says so without stopping the rest of the cook.
+  addPhotos(input) {
+    const files = [...(input.files || [])].filter((f) => f.type.startsWith('image/'));
+    input.value = '';
+    if (!files.length) return;
+    this.uploading += files.length;
+    this.paintPhotos();
+    for (const file of files) {
+      this.enqueue(async () => {
+        try {
+          const fd = new FormData();
+          fd.append('image', await shrinkImageFile(file));
+          const log = await API.postForm(`${this.base()}/cook-logs/${encodeURIComponent(this.log.id)}/photos`, fd);
+          this.log.photos = log.photos;
+        } catch (e) {
+          showToast(`Couldn't add ${file.name || 'the photo'}: ${e.message}`);
+        } finally {
+          this.uploading -= 1;
+          this.paintPhotos();
+        }
+      });
+    }
+  },
+
+  async removePhoto(id) {
+    const ok = await confirmModal({ title: 'Delete this photo?', bodyHtml: '<p>It can’t be undone.</p>', confirmLabel: 'Delete', danger: true });
+    if (!ok) return;
+    this.enqueue(async () => {
+      await API.delete(`/images/${encodeURIComponent(id)}`);
+      this.log.photos = (this.log.photos || []).filter((p) => p !== id);
+      this.paintPhotos();
+      document.querySelector('#cook-photos .cook-photo-add')?.focus();
+    });
   },
 
   sheetLabel() {
@@ -704,6 +763,7 @@ const CookView = {
     const el = e.target;
     if (el.classList.contains('ck-input')) this.commitInput(el);
     else if (el.id === 'cook-day') this.setDay(el.value);
+    else if (el.id === 'cook-photo-file') this.addPhotos(el);
     else if (el.id === 'cook-time') {
       this.time = el.value || '';
       if (this.log) this.enqueue(() => this.putLog({ cooked_at: this.cookedAtIso() }));
@@ -778,6 +838,8 @@ const CookView = {
     else if (act === 'edit-note' && !e.target.closest('textarea')) this.editNote(target);
     else if (act === 'day') this.setDay(target.dataset.day);
     else if (act === 'as-written') this.cookedAsWritten();
+    else if (act === 'add-photo') document.getElementById('cook-photo-file')?.click();
+    else if (act === 'remove-photo') this.removePhoto(target.dataset.photo);
     else if (act === 'change-sheet') { this.changingSheet = true; document.getElementById('cook-sheet-line').innerHTML = this.sheetLineHtml(); document.getElementById('cook-pick-sheet')?.focus(); }
     else if (act === 'cancel-sheet') { this.changingSheet = false; document.getElementById('cook-sheet-line').innerHTML = this.sheetLineHtml(); }
     else if (act === 'apply-sheet') this.applySheet();

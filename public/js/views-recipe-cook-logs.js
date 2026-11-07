@@ -1,5 +1,15 @@
 // ── Cook logs tab — list, cards, log CRUD, promote, compare ──────────────────
 
+// A cook's photos as a row of thumbnails, each opening the full photo.
+function cookPhotosHtml(log) {
+  const ids = log?.photos || [];
+  if (!ids.length) return '';
+  return `<div class="cook-log-photos">${ids.map((id) => `
+    <a class="image-thumb image-thumb-link image-thumb-compact" href="/api/images/${escHtml(id)}" target="_blank" rel="noreferrer">
+      <img src="/api/images/${escHtml(id)}" alt="Photo of this cook" loading="lazy" />
+    </a>`).join('')}</div>`;
+}
+
 // Cherry-pick promote helpers (module-private). cherryRow renders one row of
 // the change-selection checkbox list; composeAmountLabel formats `from`/`to`
 // strings the same way the renderer does, including ranges. tokenLabel maps
@@ -192,6 +202,7 @@ Object.assign(RecipeView, {
         <div class="cook-log-outcome">${escHtml(log.outcome || '(no outcome)')}</div>
         <div class="cook-log-meta">${fmtDate(log.cooked_at)} · <span class="badge ${versionBadgeClass(this.recipe, log.source_kind === 'draft' ? null : log.source_version_string)}">${escHtml(this.cookLogSourceLabel(log))}</span>${cookLogScaleBadge(log)}${adoptedAs ? ` <span class="badge badge-released">Adopted as ${escHtml(adoptedAs)}</span>` : ''}</div>
       </div>
+      ${cookPhotosHtml(log)}
       ${nextHtml}
       ${recipeHtml}
       ${detailHtml}
@@ -476,7 +487,8 @@ Object.assign(RecipeView, {
   },
 
   async deleteCookLogConfirm(id) {
-    if (!confirm('Delete this cook?')) return;
+    const photos = ((this.cookLogs || []).find((l) => l.id === id)?.photos || []).length;
+    if (!confirm(`Delete this cook${photos ? ` and its ${photos === 1 ? 'photo' : `${photos} photos`}` : ''}?`)) return;
     try {
       await API.delete(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/cook-logs/${encodeURIComponent(id)}`);
       await this.refreshRecipe();

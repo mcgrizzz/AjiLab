@@ -450,3 +450,27 @@ function openActionMenu(event, btn, items) {
   setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
   menu.querySelector('.step-action-item')?.focus();
 }
+
+// A phone photo, made small enough to store and load quickly: at most 2000 px
+// on its long side, as JPEG. A type the server doesn't take (HEIC) is turned
+// into JPEG where the browser can draw it. Small files, GIFs and anything the
+// browser can't draw go up as they are.
+const STORED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+async function shrinkImageFile(file, { maxEdge = 2000, minBytes = 1_500_000 } = {}) {
+  const stored = STORED_IMAGE_TYPES.includes(file?.type);
+  if (!file || file.type === 'image/gif' || (stored && file.size < minBytes) || !window.createImageBitmap) return file;
+  try {
+    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const ratio = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * ratio);
+    canvas.height = Math.round(bitmap.height * ratio);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+    if (!blob || (stored && blob.size >= file.size)) return file;
+    return new File([blob], (file.name || 'photo').replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
+  } catch {
+    return file;
+  }
+}

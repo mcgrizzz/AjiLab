@@ -771,6 +771,11 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
   togglePhotosExpanded() {
     this.photosExpanded = !this.photosExpanded;
     this.renderImageManager();
+    const toggle = document.getElementById('photos-toggle');
+    if (toggle) {
+      toggle.textContent = this.photosToggleLabel();
+      toggle.setAttribute('aria-expanded', String(this.photosExpanded));
+    }
   },
 
   photosToggleLabel() {
@@ -785,58 +790,33 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       this.photosExpanded = false;
       this.photosExpandedVersionKey = versionKey;
     }
+    // Photos belong to cooks; one from before that is the sheet's own.
+    const from = (img) => (img.cook_log_id ? `Cook of ${shortDate(img.cooked_at)}` : this.imageTargetLabel());
     const previewImages = this.images.slice(0, 4).map((img) => `
-      <a class="image-thumb image-thumb-link image-thumb-compact" href="/api/images/${img.id}" target="_blank" rel="noreferrer">
-        <img src="/api/images/${img.id}" alt="${escHtml(img.filename)}" loading="lazy" />
+      <a class="image-thumb image-thumb-link image-thumb-compact" href="/api/images/${img.id}" target="_blank" rel="noreferrer" title="${escHtml(from(img))}">
+        <img src="/api/images/${img.id}" alt="${escHtml(from(img))}" loading="lazy" />
       </a>`).join('');
     const grid = this.images.map((img) => `
-      <div class="image-thumb" id="img-${img.id}">
-        <img src="/api/images/${img.id}" alt="${escHtml(img.filename)}" loading="lazy" />
-        <button class="del-img" onclick="RecipeView.deleteImage('${escJs(img.id)}')" aria-label="Delete image">✕</button>
-      </div>`).join('');
+      <figure class="image-figure" id="img-${img.id}">
+        <div class="image-thumb">
+          <a class="image-thumb-link" href="/api/images/${img.id}" target="_blank" rel="noreferrer"><img src="/api/images/${img.id}" alt="${escHtml(from(img))}" loading="lazy" /></a>
+          <button class="del-img" onclick="RecipeView.deleteImage('${escJs(img.id)}')" aria-label="Delete this photo" title="Delete this photo">✕</button>
+        </div>
+        <figcaption>${img.cook_log_id
+          ? `<button type="button" class="link-btn" onclick="RecipeView.openCook('${escJs(img.cook_log_id)}')">${escHtml(from(img))}</button>`
+          : escHtml(from(img))}</figcaption>
+      </figure>`).join('');
     if (!this.images.length) {
-      section.innerHTML = `
-        <input type="file" id="img-file" accept="image/*" style="display:none" onchange="RecipeView.uploadImage(this)" />
-        <div class="media-strip-empty">No photos attached to ${escHtml(this.imageTargetLabel())} yet.</div>`;
+      section.innerHTML = `<div class="media-strip-empty">Photos you add to a cook of ${escHtml(this.imageTargetLabel())} show here.</div>`;
       return;
     }
     section.innerHTML = `
-      <input type="file" id="img-file" accept="image/*" style="display:none" onchange="RecipeView.uploadImage(this)" />
-      <div class="media-strip-preview">${previewImages}</div>
-      ${this.photosExpanded ? `<div class="image-grid media-strip-grid">${grid}</div>` : ''}`;
+      ${this.photosExpanded ? `<div class="image-grid media-strip-grid">${grid}</div>` : `<div class="media-strip-preview">${previewImages}</div>`}`;
   },
 
   activeImageVersionKey() {
     if (this.activeVersion?.is_draft) return 'draft';
     return this.activeVersion?.version_string || null;
-  },
-
-  async uploadVersionImage(file) {
-    if (!file) return;
-    const fd = new FormData();
-    fd.append('image', file);
-    const versionKey = this.activeImageVersionKey();
-    if (versionKey) fd.append('version', versionKey);
-    try {
-      await API.postForm(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/images`, fd);
-      await this.loadImages();
-      this.photosExpanded = true;
-      this.renderImageManager();
-      showToast('Image uploaded');
-    } catch (e) {
-      showToast('Upload error: ' + e.message);
-    }
-  },
-
-  async uploadImage(input) {
-    await this.uploadVersionImage(input.files[0]);
-    input.value = '';
-  },
-
-  async handleDrop(e) {
-    e.preventDefault();
-    e.currentTarget.classList.remove('drag');
-    await this.uploadVersionImage(e.dataTransfer.files[0]);
   },
 
   async uploadThumbnail(input) {
@@ -876,11 +856,13 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
   },
 
   async deleteImage(id) {
+    const ok = await confirmModal({ title: 'Delete this photo?', bodyHtml: '<p>It can’t be undone.</p>', confirmLabel: 'Delete', danger: true });
+    if (!ok) return;
     try {
       await API.delete(`/images/${id}`);
       await this.loadImages();
       this.renderImageManager();
-      showToast('Image deleted');
+      showToast('Photo deleted');
     } catch (e) {
       showToast('Error: ' + e.message);
     }

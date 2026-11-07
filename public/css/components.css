@@ -304,6 +304,12 @@ button.s-timer-start:hover { text-decoration: underline; text-underline-offset: 
 
 .image-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
+.image-thumb .image-thumb-link { width: 100%; height: 100%; }
+
+.image-figure { margin: 0; }
+
+.image-figure figcaption { margin-top: 4px; font-size: 0.78rem; color: var(--ink3); }
+
 .image-thumb .del-img {
   position: absolute;
   top: 4px;
