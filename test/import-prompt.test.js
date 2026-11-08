@@ -86,12 +86,16 @@ const SEQUENCING = /\b(then|next|now|after that|once)\b/i;
 test("the prompt teaches the writing principles, with real edits", () => {
   const prompt = ImportPrompt.build({});
   ImportPrompt.PRINCIPLES.forEach((rule, i) => assert.ok(prompt.includes(`${i + 1}. ${rule}`), rule));
-  assert.match(prompt, /Narration is wasted text/);
-  assert.match(prompt, /Sections are units of work/);
+  assert.ok(prompt.includes(`## How to write it\n\n${ImportPrompt.PURPOSE}\n\n1. `));
+  assert.match(prompt, /Instructions, not narration/);
+  assert.match(prompt, /Sections are stages of work/);
   const words = (t) => t.split(/\s+/).filter(Boolean).length;
   for (const { before, after } of ImportPrompt.BEFORE_AFTER) {
     assert.ok(prompt.includes(`Not:\n${before}\n\nBut:\n${after}`));
     for (const text of [before, after]) assert.equal(parseCooklang(`${text}\n`).error, undefined, text);
+    // Every amount, time and temperature in the original survives the edit.
+    const values = (t) => (t.match(/[@~^]\{[^}]+\}/g) || []).filter((v) => !/\{\}$/.test(v)).sort();
+    for (const v of values(before)) assert.ok(after.includes(v), `${v} lost in: ${after}`);
     assert.ok(words(after) < words(before) / 2, `not much shorter: ${after}`);
     assert.doesNotMatch(after, SEQUENCING, after);
   }

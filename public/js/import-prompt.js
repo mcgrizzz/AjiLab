@@ -59,18 +59,25 @@ const ImportPrompt = (() => {
     '%{}': 'an amount with no ingredient, used in metrics; written by hand',
   };
 
-  // How a recipe reads: the writing philosophy, in the order it's taught.
+  // How a recipe reads: the writing philosophy. PURPOSE is the reason for
+  // every rule, so the assistant can judge cases the rules don't name.
+  const PURPOSE = 'The sheet is read mid-cook, at a glance, with busy hands. Every word should be an action, an amount, a time, a temperature or a cue for when it’s done. Anything else costs reading and gives nothing.';
+
   const PRINCIPLES = [
-    'Narration is wasted text. Write what to do, not a story about doing it ("Once the covered loaf is in the oven, …").',
-    'Concise, listed actions are always better: short imperative clauses joined by commas and "and" ("Cover and rest ~{10%min}."). No filler ("carefully", "go ahead and", "you’ll want to"). Most steps are one or two short sentences.',
-    'Don’t write "then", "next", "now", "after that" or "once…". The order of the sentence already gives the order of the actions.',
-    'If something doesn’t need to be said, don’t say it: common sense (“be careful, it’s hot”, “enjoy”), technique a home cook knows, what an earlier step already implies (the pot is hot because it was preheated), and alternatives that don’t change the result (keep the first). Keep what changes the result: amounts, times, temperatures, doneness cues (“until doubled”) and real warnings. If something doesn’t need its own step, fold it into the step it belongs to.',
-    'If something is better as its own step, make it one: a wait, a change of heat or vessel, an action a cook would check off on its own.',
-    'Sections are units of work, not just headings for readability: each holds the steps done together as one stage (Mix, Bulk, Shape, Bake).',
+    'Instructions, not narration. Start with the verb. Don’t describe what the cook can see or has just done (“Once the covered loaf is in the oven, …”).',
+    'One action per sentence, and a full stop between actions in sequence: “Cover and rest ~{10%min}. Shape into a boule.” Join with “and” only what is done together. Never write “then”, “next”, “now”, “after that” or “once…”: the order of the sentences is the order of the work.',
+    'Drop the words the action already implies: “cover”, not “cover with its lid”; “reduce temperature”, not “reduce the oven temperature”; “on a floured surface”, not “scrape onto a surface dusted with flour”. Leave out filler (“carefully”, “go ahead and”, “you’ll want to”).',
+    'Say what to do and how you know it’s done, not how a cook does it: “Tighten the surface.”, “until no dry flour remains”. Leave out technique a home cook knows (“with a bench scraper, drawing the loaf toward you”).',
+    'One way to do it: the author’s main method. Leave out the alternatives (“or slide onto a baking stone and cover with a bowl”, “a boule or batard”).',
+    'Say a thing once. Don’t restate what an earlier step did (the pot is hot because it was preheated), and call each thing by one short name throughout (“the dough”, not the dough, the mass and the mixture).',
+    'Words only for what numbers can’t carry: doneness cues (“until doubled”) and warnings that would ruin the dish if missed (“without deflating”). Explain why only when the reason changes what the cook does. Most recipes need no notes.',
+    'A step is what you do in one go. It usually ends at a wait (its timer is the last thing in it), a move to a new place or heat, or a point the cook would check off. Fold small actions into the step they belong to; split a step that has two waits.',
+    'Sections are stages of work done in one stretch (Mix, Bulk, Shape, Bake), not headings for readability. A short, one-stage recipe has none.',
   ];
 
-  // Real edits of an assistant's steps into the house style (checked by the
-  // test: both parse, the edit is shorter, and it never says "then").
+  // Edits of an assistant's steps into the house style (checked by the test:
+  // both parse, the edit is under half the length, and it never says
+  // "then"). The first two are the owner's own edits.
   const BEFORE_AFTER = [
     {
       before: 'Transfer into the hot Dutch oven and cover with its lid, or slide onto the baking stone and cover with a #stainless steel bowl{} or #hotel pan{}. Once the covered loaf is in the oven, reduce the oven temperature to ^{450%F} and bake ~{30%min}.',
@@ -79,6 +86,10 @@ const ImportPrompt = (() => {
     {
       before: 'Scrape onto a surface dusted with @flour{}, fold into a boule or batard without deflating, and turn seam side down. Tighten the surface with a #bench scraper{} by drawing the loaf toward you and away, then cover and rest ~{10%min}.',
       after: 'On a floured surface fold into a boule without deflating. Tighten the surface. Cover and rest ~{10%min}.',
+    },
+    {
+      before: 'In a large #bowl{}, combine the @bread flour{450%g} and @water{350%g}. Using your hand, mix until no dry flour remains.\n\nCover the bowl with a towel and let it rest for ~{1%hour}. This rest, called the autolyse, gives the flour time to absorb the water and makes the dough easier to work.\n\nAfter the rest, add the @salt{10%g} to the bowl and squeeze it in until it is evenly distributed.',
+      after: 'Mix @bread flour{450%g} and @water{350%g} in a #bowl{} until no dry flour remains. Cover and rest ~{1%hour}.\n\nAdd @salt{10%g} and squeeze in until even.',
     },
   ];
 
@@ -139,7 +150,7 @@ Whisk in @buttermilk{360%ml}, @eggs{2} and most of the butter until just combine
 
 = Bake
 
-Swirl the rest of the butter in the skillet, pour in the batter and bake ~{20-25%min}, until golden.
+Swirl the rest of the butter in the skillet and pour in the batter. Bake ~{20-25%min} until golden.
 
 Sprinkle with @flaky salt{} and cool ~{10%min} in the skillet.
 `;
@@ -167,7 +178,7 @@ Ferment at ^{24-26%C} for ~{4-5%hours}, folding 4 times in the first 2 hours, un
 
 = Shape and Bake
 
-Shape into a boule and refrigerate in a floured #banneton{} for ~{12-16%hours}.
+Shape into a boule. Refrigerate in a floured #banneton{} ~{12-16%hours}.
 
 Preheat a #dutch oven{} at ^{500%F} for ~{45%min}.
 
@@ -207,6 +218,8 @@ In the steps:
 ${syntax}
 
 ## How to write it
+
+${PURPOSE}
 
 ${principles}
 
@@ -261,5 +274,5 @@ ${METRIC_EXAMPLE}\`\`\`
     };
   }
 
-  return { SYNTAX, METADATA, NOT_FOR_IMPORT, PRINCIPLES, BEFORE_AFTER, HOUSE_STYLE, METRICS, EXAMPLE, METRIC_EXAMPLE, EXAMPLE_LIMITS, build, fromReply, summarize };
+  return { SYNTAX, METADATA, NOT_FOR_IMPORT, PURPOSE, PRINCIPLES, BEFORE_AFTER, HOUSE_STYLE, METRICS, EXAMPLE, METRIC_EXAMPLE, EXAMPLE_LIMITS, build, fromReply, summarize };
 })();
