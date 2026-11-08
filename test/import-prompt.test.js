@@ -78,9 +78,32 @@ test("the sample recipe is as brief as the prompt asks", () => {
   const notes = blocks.filter((b) => /^>\s/.test(b));
   assert.ok(notes.length >= 1 && notes.length <= ImportPrompt.EXAMPLE_LIMITS.notes, "one important note, no more");
   for (const note of notes) assert.ok(words(note) <= 12, `note too long: ${note}`);
+});
+
+// Words the principles say order already gives.
+const SEQUENCING = /\b(then|next|now|after that|once)\b/i;
+
+test("the prompt teaches the writing principles, with real edits", () => {
   const prompt = ImportPrompt.build({});
-  assert.match(prompt, /Be brief/);
-  assert.match(prompt, /Leave out common sense/);
+  ImportPrompt.PRINCIPLES.forEach((rule, i) => assert.ok(prompt.includes(`${i + 1}. ${rule}`), rule));
+  assert.match(prompt, /Narration is wasted text/);
+  assert.match(prompt, /Sections are units of work/);
+  const words = (t) => t.split(/\s+/).filter(Boolean).length;
+  for (const { before, after } of ImportPrompt.BEFORE_AFTER) {
+    assert.ok(prompt.includes(`Not:\n${before}\n\nBut:\n${after}`));
+    for (const text of [before, after]) assert.equal(parseCooklang(`${text}\n`).error, undefined, text);
+    assert.ok(words(after) < words(before) / 2, `not much shorter: ${after}`);
+    assert.doesNotMatch(after, SEQUENCING, after);
+  }
+  // The principles come before the examples, so the examples read as them.
+  assert.ok(prompt.indexOf('## How to write it') < prompt.indexOf('## House style'));
+});
+
+test("the sample recipes follow the principles: no \"then\" or \"once\"", () => {
+  for (const recipe of [ImportPrompt.EXAMPLE, ImportPrompt.METRIC_EXAMPLE]) {
+    const body = recipe.split(/\n---\n/)[1];
+    assert.doesNotMatch(body, SEQUENCING);
+  }
 });
 
 test("the metrics example computes, with the figures a baker would expect", () => {

@@ -30,7 +30,7 @@ const ImportPrompt = (() => {
     { code: '^{450%F}', example: '^{230%C}', kind: 'temperature', help: true,
       rule: 'Every temperature (oven, oil, water, dough), in the unit the source uses. Ranges are fine: ^{21-23%C}. Never write a temperature as plain text like 450°F; AjiLab converts these.' },
     { code: '= Section', example: '= Dough', kind: 'section', help: true,
-      rule: 'A stage of the recipe (Dough, Shape, Bake), on its own line. Leave sections out of a short, one-stage recipe.' },
+      rule: 'A unit of work (Mix, Bulk, Shape, Bake), on its own line. Leave sections out of a short, one-stage recipe.' },
     { code: '> note', example: '> Wear gloves.', kind: 'note', help: true,
       rule: 'A warning or cue for the step above it, one short sentence. Only when it matters; most recipes need none or one or two.' },
     { code: '@salt{=1%tsp}', example: '@salt{=1%tsp}', kind: 'ingredient', fixed: true, help: true,
@@ -59,10 +59,30 @@ const ImportPrompt = (() => {
     '%{}': 'an amount with no ingredient, used in metrics; written by hand',
   };
 
+  // How a recipe reads: the writing philosophy, in the order it's taught.
+  const PRINCIPLES = [
+    'Narration is wasted text. Write what to do, not a story about doing it ("Once the covered loaf is in the oven, …").',
+    'Concise, listed actions are always better: short imperative clauses joined by commas and "and" ("Cover and rest ~{10%min}."). No filler ("carefully", "go ahead and", "you’ll want to"). Most steps are one or two short sentences.',
+    'Don’t write "then", "next", "now", "after that" or "once…". The order of the sentence already gives the order of the actions.',
+    'If something doesn’t need to be said, don’t say it: common sense (“be careful, it’s hot”, “enjoy”), technique a home cook knows, what an earlier step already implies (the pot is hot because it was preheated), and alternatives that don’t change the result (keep the first). Keep what changes the result: amounts, times, temperatures, doneness cues (“until doubled”) and real warnings. If something doesn’t need its own step, fold it into the step it belongs to.',
+    'If something is better as its own step, make it one: a wait, a change of heat or vessel, an action a cook would check off on its own.',
+    'Sections are units of work, not just headings for readability: each holds the steps done together as one stage (Mix, Bulk, Shape, Bake).',
+  ];
+
+  // Real edits of an assistant's steps into the house style (checked by the
+  // test: both parse, the edit is shorter, and it never says "then").
+  const BEFORE_AFTER = [
+    {
+      before: 'Transfer into the hot Dutch oven and cover with its lid, or slide onto the baking stone and cover with a #stainless steel bowl{} or #hotel pan{}. Once the covered loaf is in the oven, reduce the oven temperature to ^{450%F} and bake ~{30%min}.',
+      after: 'Transfer into #Dutch oven{}, cover and reduce temperature to ^{450%F}. Bake ~{30%min}.',
+    },
+    {
+      before: 'Scrape onto a surface dusted with @flour{}, fold into a boule or batard without deflating, and turn seam side down. Tighten the surface with a #bench scraper{} by drawing the loaf toward you and away, then cover and rest ~{10%min}.',
+      after: 'On a floured surface fold into a boule without deflating. Tighten the surface. Cover and rest ~{10%min}.',
+    },
+  ];
+
   const HOUSE_STYLE = [
-    'Be brief. Write it like a cook’s own sheet, not the blog post: short imperative sentences ("Mix…", "Bake…"), no filler ("carefully", "go ahead and", "you’ll want to").',
-    'Each step is one or two short sentences. Fold small actions that go together into one step; start a new one at a wait or a change of stage. Fewer, tighter steps beat many small ones.',
-    'Keep only what changes the result: amounts, times, temperatures, doneness cues ("until doubled", "until golden"), and real warnings. Leave out common sense (“be careful, it’s hot”, “gather your ingredients”, “enjoy”) and anything a home cook already knows.',
     'Write each ingredient inline, in the step where it is used. Don’t write a separate ingredient list; AjiLab builds it from the steps.',
     'If an ingredient is used in two steps, give each use its own amount where it is used, and write the later ones with @& so they add up.',
     'Keep the author’s amounts and units exactly. Don’t convert, round, scale or improve anything. When the source gives both weights and cups, use the weights.',
@@ -111,7 +131,7 @@ Preheat the #oven{} to ^{425%F} with a #cast-iron skillet{} inside.
 
 Brown @butter{113%g}(cubed) in a #saucepan{} until nutty, ~{5-6%min}.
 
-> It burns fast once it foams.
+> It burns fast after it foams.
 
 Whisk @cornmeal{150%g}, @all-purpose flour{125%g}, @sugar{50%g}, @baking powder{2%tsp} and @salt{1%tsp} in a #bowl{}.
 
@@ -119,7 +139,7 @@ Whisk in @buttermilk{360%ml}, @eggs{2} and most of the butter until just combine
 
 = Bake
 
-Swirl the rest of the butter in the hot skillet, pour in the batter and bake ~{20-25%min}, until golden.
+Swirl the rest of the butter in the skillet, pour in the batter and bake ~{20-25%min}, until golden.
 
 Sprinkle with @flaky salt{} and cool ~{10%min} in the skillet.
 `;
@@ -151,7 +171,9 @@ Shape into a boule and refrigerate in a floured #banneton{} for ~{12-16%hours}.
 
 Preheat a #dutch oven{} at ^{500%F} for ~{45%min}.
 
-Score and bake covered ~{20%min}, then uncovered at ^{450%F} for ~{20-25%min}, until deep brown.
+Score and bake covered ~{20%min}.
+
+Uncover, reduce to ^{450%F} and bake ~{20-25%min} until deep brown.
 `;
 
   function build({ url = '' } = {}) {
@@ -159,6 +181,8 @@ Score and bake covered ~{20%min}, then uncovered at ^{450%F} for ~{20-25%min}, u
     const syntax = SYNTAX.map((item) => `- \`${item.code}\` — ${item.rule}`).join('\n');
     const metadata = METADATA.map((item) => `- \`${item.code}\` — ${item.rule}`).join('\n');
     const style = HOUSE_STYLE.map((rule) => `- ${rule}`).join('\n');
+    const principles = PRINCIPLES.map((rule, i) => `${i + 1}. ${rule}`).join('\n');
+    const edits = BEFORE_AFTER.map((pair) => `Not:\n${pair.before}\n\nBut:\n${pair.after}`).join('\n\n');
     const list = (rules) => rules.map((rule) => `- ${rule}`).join('\n');
     const what = link
       ? `Turn the recipe at this link into Cooklang for AjiLab, my recipe app:\n${link}`
@@ -181,6 +205,14 @@ ${metadata}
 
 In the steps:
 ${syntax}
+
+## How to write it
+
+${principles}
+
+Edits that show it:
+
+${edits}
 
 ## House style
 
@@ -229,5 +261,5 @@ ${METRIC_EXAMPLE}\`\`\`
     };
   }
 
-  return { SYNTAX, METADATA, NOT_FOR_IMPORT, HOUSE_STYLE, METRICS, EXAMPLE, METRIC_EXAMPLE, EXAMPLE_LIMITS, build, fromReply, summarize };
+  return { SYNTAX, METADATA, NOT_FOR_IMPORT, PRINCIPLES, BEFORE_AFTER, HOUSE_STYLE, METRICS, EXAMPLE, METRIC_EXAMPLE, EXAMPLE_LIMITS, build, fromReply, summarize };
 })();
