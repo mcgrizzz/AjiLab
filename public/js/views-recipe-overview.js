@@ -297,19 +297,21 @@ Object.assign(RecipeView, {
   // working copy when you leave it.
   async fixTypo(versionString) {
     const entry = entryByKey(this.recipe, versionString);
-    if (!entry || entry.locked) return;
+    if (!entry || entry.locked) return false;
     if (entry.kind === 'test' && entry.last_printed_at) {
       const ok = await confirmModal({
         title: `Edit ${entry.label}?`,
         bodyHtml: `<p>${escHtml(entry.label)} went to the printer ${escHtml(shortDate(entry.last_printed_at))}. If it’s on paper, print it again after editing so the paper matches.</p>`,
         confirmLabel: 'Edit',
       });
-      if (!ok) return;
+      if (!ok) return false;
     }
     this.fixingVersion = versionString;
     this.activeVersion = entry;
     this.explicitVersionRequest = versionString;
     this.setTab('editor');
+    this.refreshStatusRow();
+    return true;
   },
 
   // ── Adopt / Release without testing ─────────────────────────────────────────

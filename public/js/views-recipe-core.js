@@ -215,7 +215,10 @@ const RecipeView = {
         : 'Cook';
       versionSelect = `<span class="badge" style="font-weight:500;cursor:default">${escHtml(sourceLabel)}</span>`;
     } else {
-      const workingCopyOption = selectedKey === 'draft' ? '<option value="draft" selected>Working copy</option>' : '';
+      // In the Editor the working copy is always a choice, to go back to it.
+      const workingCopyOption = selectedKey === 'draft'
+        ? '<option value="draft" selected>Working copy</option>'
+        : (this.activeTab === 'editor' && recipe.draft ? '<option value="draft">Working copy</option>' : '');
       versionSelect = groups.length > 0
         ? `<select class="version-select" onchange="RecipeView.switchVersion(this.value)" aria-label="Version or test">
             ${workingCopyOption}${sheetOptionsHtml(groups, selectedKey)}

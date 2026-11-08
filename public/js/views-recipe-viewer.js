@@ -365,6 +365,28 @@ Object.assign(RecipeView, {
   },
 
   async switchVersion(value) {
+    // In the Editor, the pick is what to edit: the working copy, a test not
+    // cooked yet, or a version (fixed in place, with the warning). A cooked
+    // test can't be edited, so it opens on the Overview.
+    if (this.activeTab === 'editor' && !this.cookLogEditingId) {
+      const entry = value && value !== 'draft' ? entryByKey(this.recipe, value) : null;
+      if (!entry) {
+        this.fixingVersion = null;
+        this.setTab('editor');
+        this.refreshStatusRow();
+        return;
+      }
+      if (!entry.locked) {
+        if (!(await this.fixTypo(value))) this.refreshStatusRow();
+        return;
+      }
+      showToast(`${entry.label} has been ${entry.cook_count ? 'cooked' : 'closed'}, so it can’t be edited. Make a new test from it instead.`);
+      this.fixingVersion = null;
+      this.explicitVersionRequest = value;
+      await this.renderDetail(document.getElementById('view-container'), value, { syncUrl: true });
+      this.setTab('overview');
+      return;
+    }
     // Remember the explicit pick so tab renderers (overview, editor) don't
     // override activeVersion back to their default.
     this.explicitVersionRequest = value || null;
