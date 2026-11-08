@@ -11,8 +11,8 @@ Object.assign(RecipeView, {
     if (cookLogTarget) {
       this.activeVersion = cookLogTarget;
     } else {
-      // Always the working copy, unless "Fix a typo in v1.1…" asked for that
-      // version. Tests are never edited.
+      // Always the working copy, unless "Fix a typo in v1.1…" or a test's
+      // "Edit" asked for that sheet.
       const target = this.getEditableVersion();
       if (target && target !== this.activeVersion) {
         // Back on the Overview, show the sheet that was there before.
@@ -45,8 +45,10 @@ Object.assign(RecipeView, {
     this.draftPreviewState = null;
     this.draftQuantityAnchor = null;
     const isEditingCookLog = !!editable?._cookLogId;
-    // Fixing a version in place (typo/note fixes), with the warning.
+    // Fixing a version in place (typo/note fixes), with the warning, or
+    // editing a test that hasn't been cooked.
     const isFixingVersion = !isEditingCookLog && !isEditingDraft;
+    const isEditingTest = isFixingVersion && editable.kind === 'test';
     const actions = isEditingCookLog
       ? `<button class="btn btn-sm" onclick="RecipeView.exitCookLogEdit()">← Back to cooks</button>
          <button class="btn btn-sm btn-outline" onclick="RecipeView.openPromoteLogModal('${escJs(editable._cookLogId)}')">Adopt changes…</button>`
@@ -62,7 +64,11 @@ Object.assign(RecipeView, {
       ? `<span class="editor-testing">Testing: ${escHtml(editable.testing)}</span>` : '';
     body.innerHTML = `
       <div class="editor-wrap">
-        ${isFixingVersion ? `
+        ${isEditingTest ? `
+        <div class="editor-release-warning">
+          <span>You’re editing <strong>${escHtml(editable.label)}</strong>, which you can do until it’s cooked.${editable.last_printed_at ? ` It went to the printer ${escHtml(shortDate(editable.last_printed_at))}: if it’s on paper, print it again after.` : ''} The working copy doesn’t change.</span>
+        </div>` : ''}
+        ${isFixingVersion && !isEditingTest ? `
         <div class="editor-release-warning">
           <span>⚠ You're fixing <strong>${escHtml(editable.label || editable.version_string)}</strong> in place: saving overwrites it, and printouts of it won't match any more. Good for a typo or a note; for a real change, start a new test.</span>
           <button class="btn btn-sm" onclick="RecipeView.openNewTestModal('${escJs(editable.version_string || '')}')">New test from ${escHtml(editable.label || 'this version')}…</button>
@@ -235,7 +241,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     if (!button || !session) return;
     const reason = this.saveTestBlockedReason(session.value);
     button.disabled = !!reason;
-    button.title = reason || `Save the working copy as ${this.recipe?.next_test_label}: a fixed sheet you can print and cook. You keep editing the working copy.`;
+    button.title = reason || `Save the working copy as ${this.recipe?.next_test_label}: a sheet you can print and cook. You keep editing the working copy.`;
   },
 
   saveTestBlockedReason(value) {
@@ -272,7 +278,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
   },
 
   // "Save as Test 5…": asks what's being tested (prefilled from "New test…"),
-  // saves the working copy as a fixed test, and opens it, ready to print.
+  // saves the working copy as a test, and opens it, ready to print.
   openSaveTestModal() {
     const draft = this.recipe?.draft;
     const reason = this.editorSaveSession ? this.saveTestBlockedReason(this.editorSaveSession.value) : '';
@@ -285,7 +291,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
         <input id="save-test-testing" class="field-input" placeholder="e.g. more water" maxlength="120" value="${escHtml(draft?.testing || '')}" />
         <small style="color:var(--ink2);font-size:0.78rem">One short phrase. It goes on the printout.</small>
       </div>
-      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">${number} is fixed once saved, so a printout always matches it. You can keep editing the working copy.</p>
+      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">You can still edit ${number} until it’s cooked; after that it stays as cooked. You keep editing the working copy.</p>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
         <button class="btn btn-primary" id="save-test-go">Save ${number}</button>

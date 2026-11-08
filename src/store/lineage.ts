@@ -99,6 +99,7 @@ export function decorateEntries(
     v.from_label = from ? from.label : null;
     const cook = cooks.get(v.id);
     v.cook_count = cook?.n || 0;
+    v.locked = v.kind === "test" && (v.cook_count > 0 || !!v.closed_as);
     v.last_cooked_at = cook?.cooked_at || null;
     v.last_recorded_at = cook?.recorded_at || null;
     v.last_outcome = cook?.outcome ?? null;

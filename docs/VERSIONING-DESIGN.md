@@ -12,12 +12,14 @@ three nouns and one rule.
 | | What it is | What Andrew does with it |
 |---|---|---|
 | **Version** (v1.0, v1.1 …) | Everything adopted so far. The newest is **the current version**. | Opens it, prints it, cooks it. The default everywhere. |
-| **Test** (Test 4 · more water) | A fixed copy of a version with one or a few things changed, and a "Testing:" line. Read-only once saved. | Prints it, cooks it one or more times, then adopts it or stops it. |
+| **Test** (Test 4 · more water) | A copy of a version with one or a few things changed, and a "Testing:" line. Editable until it's cooked, then fixed. | Prints it, cooks it one or more times, then adopts it or stops it. |
 | **Working copy** | The one editable scratch copy where the next test (or a quick fix) is set up. | Edits it in the Editor. It is never printed or cooked as is. |
 
-**The rule:** anything that can go on paper is fixed. A printout always matches
-something in the app, word for word, forever. Versions keep the one existing
-exception (a typo fix in place, with the warning).
+**The rule:** anything that has been cooked is fixed, so a cook always matches
+its sheet. A test can still be edited before its first cook (the app warns
+when it has gone to the printer; see "Tests editable until cooked (Nov 8)").
+Versions keep the one existing exception (a typo fix in place, with the
+warning).
 
 On top of the brief, this design adds three things (the reasons are in §4):
 
@@ -560,3 +562,13 @@ when a newer version exists. Kept below for the record.
 - Upload to a sheet (and to the working copy, whose photos were deleted on
   release) is gone. Photos already attached to a sheet stay and still show
   in its strip. The recipe's cover stays its own upload in Settings.
+
+**Tests editable until cooked (Nov 8).**
+- Locking a test the moment it was saved got in the way: a test saved, read
+  over and found wrong before it was ever printed couldn't be fixed, only
+  replaced by the next test number. And a print is recorded on the browser's
+  beforeprint, so even a cancelled print dialog counted as "on paper".
+- Now a test is `locked` once it has a cook (its cooks are compared with it)
+  or is closed. Before that, "Edit" on its page (and in the Versions menu)
+  opens it in the Editor; the working copy doesn't change. With a print
+  record, it asks first and the Editor says to print again after.

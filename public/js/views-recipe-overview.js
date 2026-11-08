@@ -110,6 +110,9 @@ Object.assign(RecipeView, {
     } else {
       actions.push(`<button class="btn btn-sm btn-primary" onclick="RecipeView.logThisCook()" title="Record a cook of ${escHtml(name)}${escHtml(scaleNote)}">Record a cook</button>`);
       actions.push(`<button class="btn btn-sm" onclick="RecipeView.openPrintView()" title="Print ${escHtml(name)}${escHtml(scaleNote)} (Ctrl+P)">Print</button>`);
+      if (primary.kind === 'test' && !primary.locked) {
+        actions.push(`<button class="btn btn-sm" onclick="RecipeView.fixTypo('${escJs(key)}')" title="You can edit ${escHtml(primary.label)} until it’s cooked">Edit</button>`);
+      }
       if (primary.kind === 'test') {
         if (primary.open) {
           actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openReleaseModal()" title="Make ${escHtml(recipe.next_version_string)} from ${escHtml(primary.label)}">Adopt as ${escHtml(recipe.next_version_string)}…</button>`);
@@ -288,11 +291,21 @@ Object.assign(RecipeView, {
     }
   },
 
-  // In-place edit of a version, with the warning. The Editor goes back to the
+  // In-place edit of a version (with the warning), or of a test that hasn't
+  // been cooked. A test with a print record asks first: the print dialog
+  // records one even when it's cancelled. The Editor goes back to the
   // working copy when you leave it.
-  fixTypo(versionString) {
+  async fixTypo(versionString) {
     const entry = entryByKey(this.recipe, versionString);
-    if (!entry || entry.kind !== 'version') return;
+    if (!entry || entry.locked) return;
+    if (entry.kind === 'test' && entry.last_printed_at) {
+      const ok = await confirmModal({
+        title: `Edit ${entry.label}?`,
+        bodyHtml: `<p>${escHtml(entry.label)} went to the printer ${escHtml(shortDate(entry.last_printed_at))}. If it’s on paper, print it again after editing so the paper matches.</p>`,
+        confirmLabel: 'Edit',
+      });
+      if (!ok) return;
+    }
     this.fixingVersion = versionString;
     this.activeVersion = entry;
     this.explicitVersionRequest = versionString;

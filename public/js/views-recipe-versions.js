@@ -92,6 +92,7 @@ Object.assign(RecipeView, {
     if (!entry) return;
     const isTest = entry.kind === 'test';
     openActionMenu(event, btn, [
+      isTest && !entry.locked ? { label: `Edit ${entry.label}`, title: 'You can edit a test until it’s cooked', onClick: () => this.fixTypo(versionString) } : null,
       { label: `New test from ${entry.label}…`, onClick: () => this.openNewTestModal(versionString) },
       isTest
         ? (entry.open

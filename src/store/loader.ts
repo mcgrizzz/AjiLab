@@ -110,7 +110,8 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
              e.version_string, e.status, e.cooklang_text, e.changelog,
              e.parent_version, e.current_beta_version, e.tags,
              e.created_at, e.updated_at,
-             e.test_number, e.test_base, e.test_seq, e.closed_as, e.closed_at, e.from_entry_id, e.from_cook_log_id
+             e.test_number, e.test_base, e.test_seq, e.closed_as, e.closed_at, e.from_entry_id, e.from_cook_log_id,
+             (SELECT MAX(p.printed_at) FROM prints p WHERE p.entry_id = e.id) AS last_printed_at
       FROM entries e
       JOIN branches b ON b.id = e.branch_id
       WHERE e.branch_id IN ${sql(branchIds)}

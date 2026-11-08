@@ -321,13 +321,30 @@ test("migration: old betas become numbered tests, closed where a version overtoo
   assert.equal(entry(recipe, "Test 1").open, true);
 });
 
-test("a test is fixed: its text and notes can't change, a version's can", async () => {
+test("a test can be edited until it's cooked or closed, printed or not; a version always", async () => {
   const { store } = ctx;
   const slug = await recipeWithVersion("Fixed test");
   await makeTest(slug, "more water", (t) => t.replace("375", "390"));
-  await assert.rejects(store.updateVersionContent(slug, "test-1", "changed"), store.TestFixedError);
-  await assert.rejects(store.updateVersionNotes(slug, "test-1", "a note"), store.TestFixedError);
-  assert.match(entry(await get(slug), "v1.0 · Test 1").cooklang_text, /390/);
+  // Saved, and even printed (a print is recorded when the dialog opens): editable.
+  await store.recordPrint(slug, "test-1", 1);
+  let test1 = entry(await get(slug), "v1.0 · Test 1");
+  assert.equal(test1.locked, false);
+  assert.ok(test1.last_printed_at);
+  await store.updateVersionContent(slug, "test-1", test1.cooklang_text.replace("390", "395"));
+  await store.updateVersionNotes(slug, "test-1", "a note");
+  test1 = entry(await get(slug), "v1.0 · Test 1");
+  assert.match(test1.cooklang_text, /395/);
+  assert.match(test1.cooklang_text, /a note/);
+  // Cooked: fixed, so its cooks keep matching it.
+  await store.createCookLog(slug, { kind: "version", version_string: "test-1" }, { outcome: "" });
+  assert.equal(entry(await get(slug), "v1.0 · Test 1").locked, true);
+  await assert.rejects(store.updateVersionContent(slug, "test-1", "changed"), /has been cooked/);
+  await assert.rejects(store.updateVersionNotes(slug, "test-1", "other"), store.TestFixedError);
+  assert.match(entry(await get(slug), "v1.0 · Test 1").cooklang_text, /395/);
+  // Closed, never cooked: fixed too.
+  await makeTest(slug, "less salt", (t) => t.replace("10%g", "9%g"));
+  await store.setTestOpen(slug, "test-2", false);
+  await assert.rejects(store.updateVersionContent(slug, "test-2", "changed"), /is closed/);
   // Its Testing line is a label, not part of the sheet.
   await store.updateTesting(slug, "test-1", "much more water");
   assert.equal(entry(await get(slug), "v1.0 · Test 1").testing, "much more water");

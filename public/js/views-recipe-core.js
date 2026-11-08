@@ -330,12 +330,12 @@ const RecipeView = {
   // ── Editor / cook-log bridge methods ────────────────────────────────────────
 
   // What the Editor edits: a cook's recipe (Mark differences), a version
-  // being fixed in place ("Fix a typo in v1.1…"), or else the working copy.
-  // Tests are never edited: they're fixed so printouts match them.
+  // being fixed in place ("Fix a typo in v1.1…"), a test not cooked yet
+  // ("Edit"), or else the working copy. A cooked or closed test is locked.
   getEditableVersion() {
     if (this.activeVersion?._cookLogId) return this.activeVersion;
     if (this.fixingVersion) {
-      const version = (this.recipe?.versions || []).find((v) => v.version_string === this.fixingVersion && v.kind === 'version');
+      const version = (this.recipe?.versions || []).find((v) => v.version_string === this.fixingVersion && !v.locked);
       if (version) return version;
     }
     return this.recipe?.draft || null;
@@ -356,6 +356,7 @@ const RecipeView = {
       const from = editable.from_label ? ` · from ${editable.from_label}` : '';
       return `Working copy${base}${from}`;
     }
+    if (editable.kind === 'test') return `Editing ${editable.label}${editable.testing ? ` — ${editable.testing}` : ''}`;
     return `Fixing ${editable.label || editable.version_string} in place`;
   },
 

@@ -50,9 +50,9 @@ Object.assign(RecipeView, {
           ${CL.renderCookware(parsed.cookwares)}
         </div>` : ''}
       </div>` : '';
-    // A test is fixed, notes included (they print); versions and the working
-    // copy take notes.
-    const notesFixed = this.activeVersion?.kind === 'test';
+    // A cooked or closed test is locked, notes included (they print);
+    // everything else takes notes.
+    const notesFixed = this.activeVersion?.kind === 'test' && this.activeVersion.locked;
     const inlineAddNotes = !notes && !notesFixed ? `<button class="notes-inline-add" onclick="RecipeView.openNotesModal()" title="Add notes">✎ Add notes</button>` : '';
     const stepsHtml = hasSteps ? `
       <div class="recipe-main">

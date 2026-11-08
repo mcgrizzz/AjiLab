@@ -76,6 +76,11 @@ export interface VersionRecord {
   adopted_as: string | null;  // a test: the version adopted from it
   from_label: string | null;  // a version: "Test 3"; a test: the test it was made from
   cook_count: number;
+  last_printed_at: string | null;
+  // A test that can't be edited any more: it has been cooked (its cooks are
+  // compared with it) or closed. Until then it can be, even if printed (the
+  // app asks first: a print is recorded when the print dialog opens).
+  locked: boolean;
   last_cooked_at: string | null;
   last_recorded_at: string | null; // when a cook of it was last saved
   last_outcome: string | null;

@@ -425,18 +425,20 @@ export async function updateDraftNotes(slug: string, notes: string, branchSlug =
   await updateDraft(slug, { cooklang_text: nextText }, {}, branchSlug);
 }
 
-// A test is fixed once saved, so the printouts and cooks of it match it.
-// Changing it means a new test.
+// A test can be edited until it's cooked (its cooks are compared with it) or
+// closed. After that, changing it means a new test.
 export class TestFixedError extends Error {
-  constructor(label: string) {
-    super(`${label} is fixed so it matches its printouts. Make a new test from it instead.`);
+  constructor(test: VersionRecord) {
+    super(test.cook_count > 0
+      ? `${test.label} has been cooked, so it stays as cooked. Make a new test from it instead.`
+      : `${test.label} is closed. Make a new test from it instead.`);
   }
 }
 
 function editableVersion(recipe: RecipeRecord, versionString: string): VersionRecord {
   const version = recipe.versions.find((v) => v.version_string === versionString);
   if (!version) throw new Error("version not found");
-  if (version.kind === "test") throw new TestFixedError(version.label);
+  if (version.locked) throw new TestFixedError(version);
   return version;
 }
 

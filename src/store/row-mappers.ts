@@ -37,6 +37,7 @@ export type EntryRow = {
   closed_at: Date | null;
   from_entry_id: string | null;
   from_cook_log_id: string | null;
+  last_printed_at?: Date | null;
 };
 
 export function entryKind(row: { version_string: string | null; status: string; test_number: number | null }) {
@@ -100,6 +101,8 @@ export function entryRowToVersion(row: EntryRow): VersionRecord {
     adopted_as: null,
     from_label: null,
     cook_count: 0,
+    last_printed_at: row.last_printed_at ? new Date(row.last_printed_at).toISOString() : null,
+    locked: false,
     last_cooked_at: null,
     last_recorded_at: null,
     last_outcome: null,
