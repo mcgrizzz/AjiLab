@@ -8,7 +8,7 @@ const CL = {
       return '<p class="text-muted">No ingredients listed.</p>';
     }
     const recipeScale = scale;
-    const items = ingredients.map(ing => {
+    const rows = ingredients.map(ing => {
       // `{=…}` amounts are fixed: they read the same at any scale.
       const scale = ing.fixed ? 1 : recipeScale;
       const rawQty = ing.quantity !== '' && ing.quantity !== null && ing.quantity !== undefined;
@@ -48,12 +48,17 @@ const CL = {
           // A real button so the amount popover is reachable by keyboard.
           ? `<button type="button" class="ing-qty ing-qty-editable"${actionAttr}>${amountHtml(qtyStr)}</button>`
           : `<span class="ing-qty${isSelectable ? ' ing-qty-selectable' : ''}"${actionAttr}>${amountHtml(qtyStr)}</span>`);
-      return `<li class="${itemCls}">
-        ${qtyHtml}
-        ${nameHtml}${noteHtml}${optionalHtml}
-      </li>`;
-    }).join('');
-    return `<ul class="ingredient-list">${items}</ul>`;
+      return { itemCls, qtyHtml, hasAmount: !!(qtyStr || wasLabel), rest: `${nameHtml}${noteHtml}${optionalHtml}` };
+    });
+    // With no amount anywhere in the list (salt, pepper, herbs: `@salt{}`),
+    // an amount column would only push the names in, so there is none. With
+    // some, it stays and keeps the names in a line.
+    const measured = rows.some(row => row.hasAmount);
+    const items = rows.map(row => `<li class="${row.itemCls}">
+        ${measured ? row.qtyHtml : ''}
+        ${row.rest}
+      </li>`).join('');
+    return `<ul class="ingredient-list${measured ? '' : ' ingredient-list-unmeasured'}">${items}</ul>`;
   },
 
   renderIngredientSummary(summary, scale = 1, options = {}) {

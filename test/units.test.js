@@ -216,3 +216,19 @@ test('a bare C is a cup in ingredient amounts and Celsius inside ^{…} / %{…}
   assert.equal(Units.sameAmount({ quantity: 450, units: 'F', type: 'inlineQuantity' }, { quantity: '450 °F', units: '°F', type: 'inlineQuantity' }), true);
   assert.equal(Units.percentChange(temp(450, 'F'), temp(500, 'F')), null);
 });
+
+test('a list with no amounts has no amount column; a mixed one keeps it', () => {
+  const { CL } = setup();
+  const seasonings = [{ name: 'salt', quantity: '' }, { name: 'pepper', quantity: null }];
+  const bare = CL.renderIngredients(seasonings, 1, {});
+  assert.match(bare, /^<ul class="ingredient-list ingredient-list-unmeasured">/);
+  assert.doesNotMatch(bare, /ing-qty/);
+  assert.match(bare, /salt/);
+
+  const mixed = CL.renderIngredients([{ name: 'flour', quantity: 500, units: 'g' }, ...seasonings], 1, {});
+  assert.match(mixed, /^<ul class="ingredient-list">/);
+  assert.equal(mixed.match(/class="ing-qty/g).length, 3, 'empty cells keep the names lined up');
+
+  // A unit alone (`@salt{%pinch}`) is an amount.
+  assert.match(CL.renderIngredients([{ name: 'salt', quantity: '', units: 'pinch' }], 1, {}), /^<ul class="ingredient-list">/);
+});
