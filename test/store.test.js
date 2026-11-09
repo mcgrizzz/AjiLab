@@ -617,3 +617,26 @@ test("a recipe's icon is one emoji or a bundled icon, and isn't versioned", asyn
   assert.deepEqual(recipe.versions.map((v) => `${v.id} ${v.updated_at}`), before, "no sheet changed");
   assert.equal((await store.listRecipes()).find((r) => r.slug === slug).icon, "🍞");
 });
+
+test("a sheet's icon: line is the recipe's icon until one is chosen", async () => {
+  const { store } = ctx;
+  const slug = await recipeWithVersion("Sheet Icon Loaf", `---\ntitle: Sheet Icon Loaf\nicon: 🥖\n---\n\nMix @flour{500%g}.`);
+  let recipe = await get(slug);
+  assert.equal(recipe.current_version.icon, "🥖");
+  assert.equal(recipe.default_icon, "🥖");
+  assert.equal(recipe.icon, "", "nothing chosen");
+
+  // The working copy's line, once it has one, is the newer word.
+  await store.updateDraft(slug, { cooklang_text: `---\nicon: lucide:wheat\n---\n\nMix @flour{500%g}.` });
+  assert.equal((await get(slug)).default_icon, "lucide:wheat");
+  // Not an icon: ignored, so the version's shows.
+  await store.updateDraft(slug, { cooklang_text: `---\nicon: bread\n---\n\nMix @flour{500%g}.` });
+  recipe = await get(slug);
+  assert.equal(recipe.draft.icon, null);
+  assert.equal(recipe.default_icon, "🥖");
+
+  await store.setRecipeIcon(slug, "🍞");
+  const listed = (await store.listRecipes()).find((r) => r.slug === slug);
+  assert.equal(listed.icon, "🍞");
+  assert.equal(listed.default_icon, "🥖", "both are there; the chosen one wins on screen");
+});

@@ -46,6 +46,8 @@ const ImportPrompt = (() => {
       rule: 'How many it serves or makes, if the source says.' },
     { code: 'source: URL or book', key: 'source', help: true,
       rule: 'Where it came from: the link, the book and author, or the person.' },
+    { code: 'icon: 🍞', key: 'icon', help: true,
+      rule: 'One emoji for the recipe, shown where there’s no photo of it. Pick the dish itself (🦃, 🥯, 🧈) over a general one (🍽️).' },
     { code: 'notes: Your notes', key: 'notes', help: true,
       rule: 'Only facts about the whole recipe worth keeping, like yield or storage, one short line each, as a block (notes: |-). Leave it out if there are none.' },
     { code: 'metric.hydration: water.g / flour.g * 100 | %', key: 'metric.hydration', help: true,
@@ -139,6 +141,7 @@ const ImportPrompt = (() => {
   // A small recipe in the house style. The test parses it.
   const EXAMPLE = `---
 title: Brown Butter Cornbread
+icon: 🌽
 servings: 8
 source: https://example.com/brown-butter-cornbread
 notes: |-
@@ -168,6 +171,7 @@ Sprinkle with @flaky salt{} and cool ~{10%min} in the skillet.
   // A dough with metrics, the way they're written. The test checks the figures.
   const METRIC_EXAMPLE = `---
 title: Country Loaf
+icon: 🍞
 source: https://example.com/country-loaf
 metric.total_flour: bread_flour.g + whole_wheat_flour.g + levain.g * 0.5 | g | hidden
 metric.total_water: water.g + levain.g * 0.5 | g | hidden

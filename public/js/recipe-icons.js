@@ -1,6 +1,8 @@
 // ── Icons for recipes and folders ────────────────────────────────────────────
 // A recipe with no cover photo can wear an icon instead: an emoji ("🦃") or
 // one of the bundled Lucide icons ("lucide:wheat", public/vendor/lucide-food.js).
+// The one chosen in the app wins; without one, the sheet's `icon:` line
+// (`default_icon`) shows.
 // Folders wear them too. The server checks the same rule (store/folders.ts
 // normalizeIcon); a name this bundle doesn't have shows as no icon.
 const RecipeIcons = (() => {
@@ -45,9 +47,14 @@ const RecipeIcons = (() => {
 
   const has = (icon) => !!(lucideName(icon) || isEmoji(icon));
 
-  // The picker. `onPick(icon)` gets the choice ('' for "No icon"); `onBack`
-  // runs on Back, so a picker opened from another dialog returns to it.
-  function pick({ title = 'Choose an icon', current = '', onPick, onBack }) {
+  // The icon a recipe shows: its chosen one, else its sheet's `icon:`.
+  const of = (recipe) => (has(recipe?.icon) ? recipe.icon : (has(recipe?.default_icon) ? recipe.default_icon : ''));
+
+  // The picker. `onPick(icon)` gets the choice ('' for the `noneHtml`
+  // button, offered when there's a current one; markup, so it can show an
+  // icon); `onBack` runs on Back, so a picker opened from another dialog
+  // returns to it.
+  function pick({ title = 'Choose an icon', current = '', noneHtml = 'No icon', onPick, onBack }) {
     const cell = (value, inner, label) => `<button type="button" class="ri-cell${value === current ? ' ri-cell-current' : ''}" data-icon="${escHtml(value)}" title="${escHtml(label)}" aria-label="${escHtml(label)}">${inner}</button>`;
     const icons = Object.keys(typeof LUCIDE_FOOD !== 'undefined' ? LUCIDE_FOOD : {})
       .map((name) => cell(`lucide:${name}`, svg(name), name.replace(/-/g, ' '))).join('');
@@ -68,7 +75,7 @@ const RecipeIcons = (() => {
         </div>
       </div>
       <div class="modal-actions">
-        ${current ? '<button type="button" class="btn btn-ghost ri-none" data-icon="">No icon</button>' : ''}
+        ${current ? `<button type="button" class="btn btn-ghost ri-none" data-icon="">${noneHtml}</button>` : ''}
         <button type="button" class="btn btn-ghost" id="ri-back">${onBack ? 'Back' : 'Cancel'}</button>
       </div>`);
     const root = document.getElementById('modal-content');
@@ -83,5 +90,5 @@ const RecipeIcons = (() => {
     document.getElementById('ri-back').addEventListener('click', () => (onBack ? onBack() : closeModal()));
   }
 
-  return { EMOJI, isEmoji, has, html, pick };
+  return { EMOJI, isEmoji, has, of, html, pick };
 })();

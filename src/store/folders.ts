@@ -1,5 +1,6 @@
 import { sql } from "../db.ts";
 import { requireRecipe } from "./loader.ts";
+import { iconOrNull } from "./icons.ts";
 
 // ── Folders and icons ────────────────────────────────────────────────────────
 // Both belong to the recipe, not to its text, so changing them makes no
@@ -20,17 +21,12 @@ export class FolderError extends Error {
   }
 }
 
-const graphemes = new Intl.Segmenter("en", { granularity: "grapheme" });
-
-// '' (none), one emoji ("🦃", "👩🏽‍🍳", "🇯🇵"), or a bundled icon
-// ("lucide:wheat"). Anything else is refused; the client shows unknown
-// icon names as no icon.
+// '' (none), or an icon (store/icons.ts). Anything else is refused; the
+// client shows unknown icon names as no icon.
 export function normalizeIcon(raw: unknown): string {
-  const icon = String(raw ?? "").trim();
-  if (!icon) return "";
-  if (/^lucide:[a-z0-9-]{1,40}$/.test(icon)) return icon;
-  const single = icon.length <= 32 && [...graphemes.segment(icon)].length === 1;
-  if (single && /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(icon)) return icon;
+  if (!String(raw ?? "").trim()) return "";
+  const icon = iconOrNull(raw);
+  if (icon) return icon;
   throw new FolderError("An icon is one emoji or one of the bundled icons.", 400);
 }
 

@@ -36,4 +36,7 @@ test("an icon renders as its svg or emoji; anything else is the fallback", () =>
     assert.equal(RecipeIcons.isEmoji(other), false, other);
   }
   assert.ok(RecipeIcons.isEmoji("👨‍🍳") && RecipeIcons.isEmoji("🇯🇵"));
+  assert.equal(RecipeIcons.of({ icon: "🍞", default_icon: "🥖" }), "🍞", "the chosen icon wins");
+  assert.equal(RecipeIcons.of({ icon: "", default_icon: "🥖" }), "🥖", "else the sheet's");
+  assert.equal(RecipeIcons.of({ icon: "", default_icon: null }), "");
 });

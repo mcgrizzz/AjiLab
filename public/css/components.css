@@ -504,3 +504,4 @@ button.s-timer-start:hover { text-decoration: underline; text-underline-offset: 
 .folder-pick-icon img { width: 100%; height: 100%; object-fit: cover; }
 .folder-pick-icon .ri-svg { width: 16px; height: 16px; }
 .folder-pick-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ri-inline { display: inline-flex; vertical-align: -0.15em; margin-left: 2px; }

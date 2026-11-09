@@ -11,6 +11,7 @@
 //      this convention before frontmatter existed.
 
 import { parseCooklang } from "../cooklang.ts";
+import { iconOrNull } from "./icons.ts";
 
 export function parseVersionMetadata(text: string) {
   const meta = parseCooklang(text).metadata || {};
@@ -23,6 +24,8 @@ export function parseVersionMetadata(text: string) {
     notes: frontmatterNotes || metadataNotes
       || [preambleNotes, legacySectionNotes].filter(Boolean).join("\n").trim() || null,
     servings: frontmatterServings || meta.servings || meta.Servings || meta.yield || meta.Yield || null,
+    // `icon: 🍞`: the recipe's icon when none is chosen in the app.
+    icon: iconOrNull(extractFrontmatterField(text, ["icon", "Icon"]) ?? meta.icon),
   };
 }
 

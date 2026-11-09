@@ -53,6 +53,7 @@ export interface VersionRecord {
   tags: string;            // JSON-stringified for routes.ts compat
   notes: string | null;    // derived from cooklang frontmatter
   servings: string | null; // derived from cooklang frontmatter
+  icon: string | null;     // `icon:` in the frontmatter, if it's an icon
   cooklang_text: string;
   created_at: string;
   updated_at: string;
@@ -179,8 +180,10 @@ export interface RecipeRecord {
   slug: string;
   title: string;
   thumbnail_image_id: string | null;
-  // Shown when there's no thumbnail: an emoji, "lucide:<name>", or ''.
+  // Shown when there's no thumbnail: an emoji, "lucide:<name>", or '' for
+  // none chosen, when the sheet's `icon:` (default_icon) shows instead.
   icon: string;
+  default_icon: string | null;
   // The folders it's in (folders.id), oldest first.
   folder_ids: string[];
   created_at: string;

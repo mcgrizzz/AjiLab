@@ -101,7 +101,7 @@ const Folders = {
         ${recipes.map((r) => `<li data-title="${escHtml(r.title.toLowerCase())}">
           <label class="folder-pick">
             <input type="checkbox" value="${escHtml(r.slug)}" ${chosen.has(r.slug) ? 'checked' : ''} />
-            <span class="folder-pick-icon">${r.thumbnail_image_id ? `<img src="/api/images/${r.thumbnail_image_id}" alt="" loading="lazy" />` : RecipeIcons.html(r.icon, '🍽')}</span>
+            <span class="folder-pick-icon">${r.thumbnail_image_id ? `<img src="/api/images/${r.thumbnail_image_id}" alt="" loading="lazy" />` : RecipeIcons.html(RecipeIcons.of(r), '🍽')}</span>
             <span class="folder-pick-title">${escHtml(r.title)}</span>
           </label>
         </li>`).join('')}

@@ -228,6 +228,8 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
     title: recipe.title,
     thumbnail_image_id: recipe.thumbnail_image_id,
     icon: recipe.icon,
+    // The working copy's `icon:`, else the current version's.
+    default_icon: branch.draft?.icon || branch.current_version?.icon || null,
     folder_ids: recipe.folder_ids,
     created_at: recipe.created_at.toISOString(),
     updated_at: recipe.updated_at.toISOString(),

@@ -80,6 +80,7 @@ export function entryRowToVersion(row: EntryRow): VersionRecord {
     tags: JSON.stringify(row.tags || []),
     notes: parsed.notes,
     servings: parsed.servings,
+    icon: parsed.icon,
     cooklang_text: row.cooklang_text || "",
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),

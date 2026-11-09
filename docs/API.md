@@ -12,7 +12,7 @@ Content type: `application/json` for everything except image uploads (multipart)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/recipes` | List recipes, most recent activity first. Supports `?q=<search>` (substring match across title, slug, draft, version text, tags) and `?folder=<id>` (only that folder's recipes). Each item has `icon` and `folder_ids`. Each item carries `last_activity_at` / `last_activity_kind` (`cooked`, `version`, `edited` or `created`: the latest of last cooked, last version taken, last draft edit, across all branches), plus `last_cooked_at`, `last_version`, `last_version_at`, `last_edited_at` and `cook_logs_total` |
+| `GET` | `/recipes` | List recipes, most recent activity first. Supports `?q=<search>` (substring match across title, slug, draft, version text, tags) and `?folder=<id>` (only that folder's recipes). Each item has `icon` (the one chosen in the app, or `''`), `default_icon` (the sheet's frontmatter `icon:`, shown when none is chosen) and `folder_ids`. Each item carries `last_activity_at` / `last_activity_kind` (`cooked`, `version`, `edited` or `created`: the latest of last cooked, last version taken, last draft edit, across all branches), plus `last_cooked_at`, `last_version`, `last_version_at`, `last_edited_at` and `cook_logs_total` |
 | `POST` | `/recipes` | Create. Body: `{ title }`. Returns `{ id, slug, title }` |
 | `GET` | `/recipes/:slug` | Full recipe with all branches, versions, draft, and counts |
 | `PUT` | `/recipes/:slug` | Update any of: `title` (the slug regenerates if needed), `icon` (one emoji, `lucide:<name>`, or `''` for none; 400 otherwise), `folder_ids` (exactly the folders it's in; 404 on an unknown one). Returns `{ ok, slug, icon?, folder_ids? }` |

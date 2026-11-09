@@ -144,7 +144,7 @@ test("the prompt teaches metrics for more than bread, and how to write them", ()
 });
 
 test("every metadata key the prompt teaches is one the app reads", () => {
-  const known = ["title", "servings", "source", "notes"];
+  const known = ["title", "servings", "source", "icon", "notes"];
   for (const item of ImportPrompt.METADATA) {
     assert.ok(known.includes(item.key) || item.key.startsWith("metric."), item.key);
     const parsed = parseCooklang(`---\n${item.code}\n---\n\nMix @water{70%g} and @flour{100%g}.\n`);

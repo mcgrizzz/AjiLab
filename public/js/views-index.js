@@ -244,7 +244,7 @@ const IndexView = {
         if (r.draft_change_label) badges.push(`<span class="badge badge-in-progress">${escHtml(r.draft_change_label)}</span>`);
         const thumb = r.thumbnail_image_id
           ? `<img src="/api/images/${r.thumbnail_image_id}" alt="${escHtml(r.title)}" loading="lazy" />`
-          : RecipeIcons.html(r.icon, '🍽');
+          : RecipeIcons.html(RecipeIcons.of(r), '🍽');
         const href = `/recipe/${encodeURIComponent(r.slug)}`;
         return `<a class="recipe-card" href="${escHtml(href)}" onclick="return IndexView.openRecipe(event, this)">
           <div class="recipe-thumb">${thumb}</div>

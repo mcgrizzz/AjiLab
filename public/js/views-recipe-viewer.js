@@ -116,8 +116,8 @@ Object.assign(RecipeView, {
         </div>`;
     } else {
       // No cover photo: its icon, or a place to choose one.
-      const icon = this.recipe?.icon || '';
-      const has = RecipeIcons.has(icon);
+      const icon = RecipeIcons.of(this.recipe);
+      const has = !!icon;
       slot.innerHTML = `
         <button type="button" class="header-thumb-card header-thumb-icon${has ? '' : ' header-thumb-card-empty'}" onclick="RecipeView.chooseIcon()" title="${has ? 'Change the icon' : 'Choose an icon'}" aria-label="${has ? 'Change the icon' : 'Choose an icon'}">
           ${RecipeIcons.html(icon, '<span class="header-thumb-glyph">🍽</span>')}
@@ -141,9 +141,12 @@ Object.assign(RecipeView, {
 
   // The icon picker, from the header or the recipe menu (`back` reopens it).
   chooseIcon(back = null) {
+    const fromSheet = RecipeIcons.has(this.recipe.default_icon) ? this.recipe.default_icon : '';
     RecipeIcons.pick({
       title: `Icon for ${this.recipe.title}`,
       current: this.recipe.icon || '',
+      // With an `icon:` line, clearing the chosen icon goes back to it.
+      noneHtml: fromSheet ? `Use the recipe's <span class="ri-inline">${RecipeIcons.html(fromSheet)}</span>` : 'No icon',
       onPick: async (icon) => {
         try {
           const res = await API.put(`/recipes/${this.slug}`, { icon });
@@ -691,11 +694,15 @@ Object.assign(RecipeView, {
       <div class="settings-section">
         <div class="settings-section-title">Icon</div>
         <div class="settings-thumb-row">
-          <div class="settings-icon">${RecipeIcons.html(recipe.icon, '<span class="settings-icon-none">None</span>')}</div>
+          <div class="settings-icon">${RecipeIcons.html(RecipeIcons.of(recipe), '<span class="settings-icon-none">None</span>')}</div>
           <div class="settings-thumb-actions">
-            <button class="btn btn-sm" onclick="RecipeView.chooseIcon(() => RecipeView.openSettingsModal())">${RecipeIcons.has(recipe.icon) ? 'Change' : 'Choose'}</button>
+            <button class="btn btn-sm" onclick="RecipeView.chooseIcon(() => RecipeView.openSettingsModal())">${RecipeIcons.of(recipe) ? 'Change' : 'Choose'}</button>
           </div>
-          <p class="settings-hint">Shown on the home page and here when there's no thumbnail.</p>
+          <p class="settings-hint">${RecipeIcons.has(recipe.icon)
+            ? 'Shown on the home page and here when there\'s no thumbnail.'
+            : RecipeIcons.has(recipe.default_icon)
+              ? 'From the recipe\'s <code>icon:</code> line. One chosen here wins over it.'
+              : 'Shown on the home page and here when there\'s no thumbnail. A recipe can also set one with an <code>icon:</code> line.'}</p>
         </div>
       </div>
       <div class="settings-section">

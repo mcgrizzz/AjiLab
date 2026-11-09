@@ -114,6 +114,7 @@ export async function listRecipes(search?: string, folderId?: string) {
       title: recipe.title,
       thumbnail_image_id: recipe.thumbnail_image_id,
       icon: recipe.icon,
+      default_icon: recipe.default_icon,
       folder_ids: recipe.folder_ids,
       created_at: recipe.created_at,
       updated_at: recipe.updated_at,
