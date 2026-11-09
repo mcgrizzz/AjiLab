@@ -1,6 +1,8 @@
-// ── Importing a recipe from a link: the prompt (pure) ───────────────────────
-// AjiLab has no AI of its own, so "Import from a link" hands you a prompt to
+// ── Importing a recipe: the prompt (pure) ────────────────────────────────────
+// AjiLab has no AI of its own, so "Import a recipe" hands you a prompt to
 // paste into a chat assistant, and reads back the recipe it replies with.
+// The recipe comes from a link, or from text you paste in (a family card
+// typed out), which goes at the end of the prompt.
 //
 // The syntax is written down once, here. The editor's Syntax help reads the
 // entries marked `help`, and the prompt reads all of them, so the two can't
@@ -43,7 +45,7 @@ const ImportPrompt = (() => {
     { code: 'servings: 4', key: 'servings', help: true,
       rule: 'How many it serves or makes, if the source says.' },
     { code: 'source: URL or book', key: 'source', help: true,
-      rule: 'Where it came from: the link, or the book and author.' },
+      rule: 'Where it came from: the link, the book and author, or the person.' },
     { code: 'notes: Your notes', key: 'notes', help: true,
       rule: 'Only facts about the whole recipe worth keeping, like yield or storage, one short line each, as a block (notes: |-). Leave it out if there are none.' },
     { code: 'metric.hydration: water.g / flour.g * 100 | %', key: 'metric.hydration', help: true,
@@ -100,6 +102,14 @@ const ImportPrompt = (() => {
     'Use short unit names: g, kg, ml, l, tsp, tbsp, cup, oz, lb. Write fractions as 1/2 and ranges as 12-14. Put a blank line between steps.',
     'Leave out the story, ads, nutrition, ratings, comments and serving suggestions. Of the author’s tips, keep only the ones that would change the result if missed.',
     'If something on the page is unclear or missing, don’t guess: say so in a > note.',
+  ];
+
+  // A recipe written down by hand or from memory, not a published page: it
+  // gives less, and the gaps are the cook's to fill, not the assistant's.
+  const WRITTEN = [
+    'Keep what it gives and add nothing it doesn’t. An amount it leaves out stays out (@salt{}); a time or temperature it leaves out stays out (“until golden”). Add a > note only for a gap that stops the cook, like no oven temperature.',
+    'Keep its units, even homely ones: @flour{2%teacups}, @butter{1%knob}.',
+    'If it says who it’s from, put that in source.',
   ];
 
   // When a recipe gets metrics, and how to write them. Not only bread: any
@@ -187,8 +197,17 @@ Score and bake covered ~{20%min}.
 Uncover, reduce to ^{450%F} and bake ~{20-25%min} until deep brown.
 `;
 
-  function build({ url = '' } = {}) {
+  // What was typed in the import box: a link on its own, or recipe text
+  // (which may itself mention a link).
+  function readSource(value) {
+    const text = String(value || '').replace(/\r\n/g, '\n').trim();
+    if (/^https?:\/\/\S+$/i.test(text)) return { url: text, text: '' };
+    return { url: '', text };
+  }
+
+  function build({ url = '', text = '' } = {}) {
     const link = String(url || '').trim();
+    const pasted = link ? '' : String(text || '').replace(/\r\n/g, '\n').trim();
     const syntax = SYNTAX.map((item) => `- \`${item.code}\` — ${item.rule}`).join('\n');
     const metadata = METADATA.map((item) => `- \`${item.code}\` — ${item.rule}`).join('\n');
     const style = HOUSE_STYLE.map((rule) => `- ${rule}`).join('\n');
@@ -197,7 +216,11 @@ Uncover, reduce to ^{450%F} and bake ~{20-25%min} until deep brown.
     const list = (rules) => rules.map((rule) => `- ${rule}`).join('\n');
     const what = link
       ? `Turn the recipe at this link into Cooklang for AjiLab, my recipe app:\n${link}`
-      : 'Turn the recipe I give you (pasted after this message, or in a photo) into Cooklang for AjiLab, my recipe app.';
+      : pasted
+        ? 'Turn the recipe at the end of this message into Cooklang for AjiLab, my recipe app.'
+        : 'Turn the recipe I give you (pasted after this message, or in a photo) into Cooklang for AjiLab, my recipe app.';
+    const written = link ? '' : `\n## If it was written by hand or from memory\n\n${list(WRITTEN)}\n`;
+    const recipe = pasted ? `\n## The recipe\n\n<recipe>\n${pasted}\n</recipe>\n` : '';
     const reply = [
       'Reply with only the recipe, in one ```cooklang code block. No introduction, no summary after it.',
       // An assistant that can't browse will otherwise invent one.
@@ -226,7 +249,7 @@ ${principles}
 Edits that show it:
 
 ${edits}
-
+${written}
 ## House style
 
 ${style}
@@ -247,7 +270,7 @@ ${EXAMPLE}\`\`\`
 
 \`\`\`cooklang
 ${METRIC_EXAMPLE}\`\`\`
-`;
+${recipe}`;
   }
 
   // The assistant's reply → the recipe text: the first code block if there is
@@ -274,5 +297,5 @@ ${METRIC_EXAMPLE}\`\`\`
     };
   }
 
-  return { SYNTAX, METADATA, NOT_FOR_IMPORT, PURPOSE, PRINCIPLES, BEFORE_AFTER, HOUSE_STYLE, METRICS, EXAMPLE, METRIC_EXAMPLE, EXAMPLE_LIMITS, build, fromReply, summarize };
+  return { SYNTAX, METADATA, NOT_FOR_IMPORT, PURPOSE, PRINCIPLES, BEFORE_AFTER, HOUSE_STYLE, WRITTEN, METRICS, EXAMPLE, METRIC_EXAMPLE, EXAMPLE_LIMITS, readSource, build, fromReply, summarize };
 })();

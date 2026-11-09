@@ -218,7 +218,7 @@ function openNewRecipe() {
       <label class="field-label" for="new-recipe-title">Recipe name</label>
       <input id="new-recipe-title" class="field-input" placeholder="e.g. Sourdough Bagels" autofocus />
     </div>
-    <button type="button" class="link-btn import-switch" onclick="openImportRecipe()">Import one from a link…</button>
+    <button type="button" class="link-btn import-switch" onclick="openImportRecipe()">Import one from a link or text…</button>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="createRecipe()">Create</button>
@@ -232,25 +232,26 @@ function openNewRecipe() {
   }, 80);
 }
 
-// ── Import from a link ───────────────────────────────────────────────────────
+// ── Import a recipe ──────────────────────────────────────────────────────────
 // No AI here: copy a prompt (import-prompt.js) into a chat assistant, paste
-// its reply back. The reply is parsed and summed up before anything is made.
+// its reply back. The prompt carries a link, or the recipe text pasted in. The reply is parsed and summed up before anything is made.
 let importCheckTimer;
 let importChecked = null;
+const IMPORT_SOURCE_HINT = 'Paste a link, or type or paste a written recipe (a family card, a note). For a photo, leave this empty and attach it in the chat.';
 
 function openImportRecipe() {
   importChecked = null;
   showModal(`
     <div class="modal-title">Import a recipe</div>
-    <p class="import-intro">Copy a prompt into a chat assistant (Claude, ChatGPT, …). It reads the page and replies with the recipe written the AjiLab way.</p>
+    <p class="import-intro">Copy a prompt into a chat assistant (Claude, ChatGPT, …). It reads the recipe and replies with it written the AjiLab way.</p>
     <ol class="import-steps">
       <li class="field-group">
-        <label class="field-label" for="import-url">Link to the recipe</label>
+        <label class="field-label" for="import-source">A link, or the recipe itself</label>
         <div class="import-row">
-          <input id="import-url" class="field-input" type="url" inputmode="url" placeholder="https://…" autocomplete="off" />
+          <textarea id="import-source" class="field-input import-source" rows="1" placeholder="https://… or paste the recipe" autocomplete="off"></textarea>
           <button type="button" class="btn" id="import-copy" onclick="copyImportPrompt()">Copy prompt</button>
         </div>
-        <span class="import-hint">No link? Leave it empty and paste the recipe into the chat after the prompt.</span>
+        <span class="import-hint" id="import-source-hint">${IMPORT_SOURCE_HINT}</span>
         <details class="import-prompt">
           <summary>See the prompt</summary>
           <textarea id="import-prompt-text" class="field-input" readonly aria-label="The prompt"></textarea>
@@ -271,22 +272,31 @@ function openImportRecipe() {
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="import-create" onclick="createImportedRecipe()" disabled>Create</button>
     </div>`);
-  const url = document.getElementById('import-url');
+  const source = document.getElementById('import-source');
   const refreshPrompt = () => {
-    document.getElementById('import-prompt-text').value = ImportPrompt.build({ url: url.value });
+    document.getElementById('import-prompt-text').value = ImportPrompt.build(ImportPrompt.readSource(source.value));
+    const { url, text } = ImportPrompt.readSource(source.value);
+    document.getElementById('import-source-hint').textContent = url
+      ? 'A link: the assistant opens the page.'
+      : text
+        ? 'A written recipe: it goes in the prompt, so copying the prompt is all you paste.'
+        : IMPORT_SOURCE_HINT;
+    // Grows with what's pasted, up to a scroll.
+    source.style.height = 'auto';
+    source.style.height = `${Math.min(source.scrollHeight + 2, 240)}px`;
   };
   refreshPrompt();
-  url.addEventListener('input', refreshPrompt);
+  source.addEventListener('input', refreshPrompt);
   document.getElementById('import-reply').addEventListener('input', () => {
     clearTimeout(importCheckTimer);
     importCheckTimer = setTimeout(checkImportReply, 250);
   });
   document.getElementById('import-title').addEventListener('input', updateImportCreate);
-  setTimeout(() => url.focus(), 80);
+  setTimeout(() => source.focus(), 80);
 }
 
 async function copyImportPrompt() {
-  const text = ImportPrompt.build({ url: document.getElementById('import-url')?.value });
+  const text = ImportPrompt.build(ImportPrompt.readSource(document.getElementById('import-source')?.value));
   const button = document.getElementById('import-copy');
   try {
     await navigator.clipboard.writeText(text);

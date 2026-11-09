@@ -188,6 +188,25 @@ test("the prompt carries the link, the format, the house style and the example",
   assert.doesNotMatch(noLink, /undefined|null/);
 });
 
+test("a written recipe goes in the prompt, at the end; a link on its own is a link", () => {
+  const link = ImportPrompt.readSource("  https://example.org/pie \n");
+  assert.equal(link.url, "https://example.org/pie");
+  assert.equal(link.text, "");
+  const card = "Grandma Rose's shortbread\r\n1 cup butter\r\n2 cups flour\r\nBake till pale gold.\r\nFrom https://example.org/notes";
+  const source = ImportPrompt.readSource(card);
+  assert.equal(source.url, "");
+  const prompt = ImportPrompt.build(source);
+  assert.match(prompt, /^Turn the recipe at the end of this message into Cooklang/);
+  assert.ok(prompt.endsWith(`## The recipe\n\n<recipe>\n${card.replace(/\r\n/g, "\n")}\n</recipe>\n`));
+  for (const rule of ImportPrompt.WRITTEN) assert.ok(prompt.includes(rule));
+  assert.doesNotMatch(prompt, /open the link|\n\n\n/);
+  // The written-recipe rules are for no link (pasted or a photo), not a page.
+  assert.ok(ImportPrompt.build({}).includes(ImportPrompt.WRITTEN[0]));
+  const linked = ImportPrompt.build({ url: "https://example.org/pie", text: "ignored" });
+  assert.ok(!linked.includes(ImportPrompt.WRITTEN[0]));
+  assert.ok(!linked.includes("ignored"));
+});
+
 test("the reply is read from its code block, chatter and all", () => {
   const recipe = "---\ntitle: Pie\n---\n\nBake ~{1%hour}.";
   assert.equal(ImportPrompt.fromReply(`Here you go!\n\n\`\`\`cooklang\n${recipe}\n\`\`\`\n\nEnjoy.`), `${recipe}\n`);
