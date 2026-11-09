@@ -179,6 +179,10 @@ export interface RecipeRecord {
   slug: string;
   title: string;
   thumbnail_image_id: string | null;
+  // Shown when there's no thumbnail: an emoji, "lucide:<name>", or ''.
+  icon: string;
+  // The folders it's in (folders.id), oldest first.
+  folder_ids: string[];
   created_at: string;
   updated_at: string;
   branches: RecipeBranchRecord[];

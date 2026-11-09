@@ -78,6 +78,7 @@
   align-items: center;
   justify-content: center;
   font-size: 24px;
+  color: var(--ink2);
 }
 
 .recipe-thumb img { width: 100%; height: 100%; object-fit: cover; }
@@ -103,3 +104,58 @@
   align-items: center;
   flex-wrap: wrap;
 }
+
+/* Folders: a row of chips under the search, scrolling sideways when long. */
+.folder-bar {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.folder-bar::-webkit-scrollbar { display: none; }
+
+@media (min-width: 960px) {
+  .folder-bar, .folder-head { max-width: 880px; margin-left: auto; margin-right: auto; }
+  .folder-bar { flex-wrap: wrap; overflow-x: visible; }
+}
+
+.folder-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink2);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.folder-chip:hover { border-color: var(--ink3); color: var(--ink); }
+.folder-chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+.folder-chip-icon { display: inline-flex; font-size: 1rem; line-height: 1; }
+.folder-chip-icon .ri-svg { width: 16px; height: 16px; }
+.folder-chip-count { font-size: 0.75rem; opacity: 0.7; }
+.folder-chip-new { border-style: dashed; color: var(--ink3); background: none; }
+
+.folder-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.folder-head[hidden] { display: none; }
+.folder-head-icon { display: inline-flex; font-size: 1.5rem; line-height: 1; color: var(--ink2); }
+.folder-head-icon .ri-svg { width: 24px; height: 24px; }
+.folder-head-name { font-family: var(--font-serif); font-size: 1.25rem; font-weight: 600; color: var(--ink); margin: 0; }
+.folder-head-actions { margin-left: auto; display: flex; gap: 6px; }
+
+.recipe-thumb .ri-svg { width: 26px; height: 26px; }

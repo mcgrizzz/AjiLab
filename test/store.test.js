@@ -560,3 +560,60 @@ test("a cook's photos belong to it: listed on its sheet, gone with the cook", as
   await store.deleteCookLog(slug, older.id);
   assert.deepEqual((await store.listRecipeImages(slug, "v1.0")).map((i) => i.filename), ["loaf", "old"]);
 });
+
+test("folders group recipes: several per recipe, renamed, emptied, deleted without the recipes", async () => {
+  const { store } = ctx;
+  const turkey = (await store.createRecipe("Deboned Roast Turkey")).slug;
+  const loaf = (await store.createRecipe("Folder Loaf")).slug;
+  const butter = (await store.createRecipe("Folder Butter")).slug;
+
+  const holiday = await store.createFolder({ name: "  Thanksgiving ", icon: "🦃" });
+  assert.equal(holiday.name, "Thanksgiving");
+  assert.equal(holiday.recipe_count, 0);
+  await assert.rejects(store.createFolder({ name: "thanksgiving" }), (e) => e.status === 409 && e.message.includes("“Thanksgiving”"));
+  await assert.rejects(store.createFolder({ name: " " }), (e) => e.status === 400);
+  const baking = await store.createFolder({ name: "Baking", icon: "lucide:wheat" });
+
+  // From the folder: exactly these recipes.
+  assert.equal((await store.setFolderRecipes(holiday.id, [turkey, loaf])).recipe_count, 2);
+  await assert.rejects(store.setFolderRecipes(holiday.id, ["no-such-recipe"]), (e) => e.status === 404);
+  assert.equal((await store.listFolders()).find((f) => f.id === holiday.id).recipe_count, 2, "a refused change changes nothing");
+  // From the recipe: exactly these folders, in the order they were added.
+  assert.deepEqual(await store.setRecipeFolders(loaf, [holiday.id, baking.id]), [holiday.id, baking.id]);
+  assert.deepEqual((await get(loaf)).folder_ids, [holiday.id, baking.id]);
+  await assert.rejects(store.setRecipeFolders(loaf, ["00000000-0000-0000-0000-000000000000"]), (e) => e.status === 404);
+
+  const inHoliday = (await store.listRecipes(undefined, holiday.id)).map((r) => r.slug).sort();
+  assert.deepEqual(inHoliday, [loaf, turkey].sort());
+  assert.deepEqual((await store.listRecipes("loaf", baking.id)).map((r) => r.slug), [loaf]);
+  assert.ok((await store.listRecipes()).some((r) => r.slug === butter), "the unfiled are still in All");
+
+  const renamed = await store.updateFolder(holiday.id, { name: "Holidays" });
+  assert.equal(renamed.icon, "🦃", "a rename keeps the icon");
+  await assert.rejects(store.updateFolder(holiday.id, { name: "BAKING" }), (e) => e.status === 409);
+  assert.equal((await store.setFolderRecipes(holiday.id, [])).recipe_count, 0);
+  assert.deepEqual((await get(loaf)).folder_ids, [baking.id]);
+
+  await store.deleteFolder(baking.id);
+  assert.deepEqual((await get(loaf)).folder_ids, []);
+  assert.ok(await get(loaf), "the recipe stays");
+  await assert.rejects(store.deleteFolder(baking.id), (e) => e.status === 404);
+  await assert.rejects(store.updateFolder("not-a-uuid", { name: "x" }), (e) => e.status === 404);
+});
+
+test("a recipe's icon is one emoji or a bundled icon, and isn't versioned", async () => {
+  const { store } = ctx;
+  const slug = await recipeWithVersion("Icon Loaf");
+  const before = (await get(slug)).versions.map((v) => `${v.id} ${v.updated_at}`);
+  for (const icon of ["🦃", "👩🏽‍🍳", "🇯🇵", "lucide:cooking-pot", ""]) {
+    assert.equal(await store.setRecipeIcon(slug, icon), icon);
+  }
+  for (const bad of ["turkey", "🦃🦃", "<b>", "lucide:Wheat", "lucide:../x"]) {
+    await assert.rejects(store.setRecipeIcon(slug, bad), (e) => e.status === 400, bad);
+  }
+  await store.setRecipeIcon(slug, " 🍞 ");
+  const recipe = await get(slug);
+  assert.equal(recipe.icon, "🍞");
+  assert.deepEqual(recipe.versions.map((v) => `${v.id} ${v.updated_at}`), before, "no sheet changed");
+  assert.equal((await store.listRecipes()).find((r) => r.slug === slug).icon, "🍞");
+});

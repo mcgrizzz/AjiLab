@@ -254,6 +254,7 @@ const RecipeView = {
           <div class="recipe-header-copy">
             <h1 class="recipe-title-lg">${escHtml(recipe.title)}</h1>
             <div class="recipe-status-row">${this.statusRowHtml()}</div>
+            <div id="header-folders" class="recipe-folders"></div>
           </div>
           <div class="recipe-header-actions">
             <button class="header-gear-btn" onclick="RecipeView.openSettingsModal()" aria-label="Recipe menu" title="Recipe menu">

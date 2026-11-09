@@ -32,6 +32,14 @@ import {
   setTestOpen,
   AdoptConflictError,
   TestFixedError,
+  FolderError,
+  listFolders,
+  createFolder,
+  updateFolder,
+  deleteFolder,
+  setFolderRecipes,
+  setRecipeFolders,
+  setRecipeIcon,
   recordPrint,
   previewAdopt,
   getRecipeBranch,
@@ -78,6 +86,16 @@ function editError(c: any, error: any) {
   if (error instanceof TestFixedError) return c.json({ error: "test is fixed", message: error.message }, 409);
   const message = error?.message || "update failed";
   return c.json({ error: message }, message === "version not found" ? 404 : 400);
+}
+
+// A refused folder or icon change carries its own status.
+async function folderAction(c: any, action: () => Promise<unknown>, status = 200) {
+  try {
+    return c.json(await action(), status);
+  } catch (error: any) {
+    if (error instanceof FolderError) return c.json({ error: error.message }, error.status);
+    throw error;
+  }
 }
 
 async function readImageUpload(c: any) {
@@ -138,7 +156,7 @@ async function compareVersions(recipe: any, branch: string, fromStr: string, toS
 
 function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
   if (includeRecipeCrud) {
-    api.get("/recipes", async (c) => c.json(await listRecipes(c.req.query("q"))));
+    api.get("/recipes", async (c) => c.json(await listRecipes(c.req.query("q"), c.req.query("folder") || undefined)));
 
     api.post("/recipes", async (c) => {
       const body = await c.req.json();
@@ -163,8 +181,14 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
       const recipe = await getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH);
       if (!recipe) return c.json({ error: "not found" }, 404);
       const body = await c.req.json();
-      if (body.title?.trim()) return c.json(await updateRecipeTitle(recipe.slug, body.title.trim()));
-      return c.json({ ok: true });
+      // The icon and folders first: a new title can change the slug.
+      return folderAction(c, async () => {
+        const out: Record<string, unknown> = { ok: true, slug: recipe.slug };
+        if (body.icon !== undefined) out.icon = await setRecipeIcon(recipe.slug, body.icon);
+        if (body.folder_ids !== undefined) out.folder_ids = await setRecipeFolders(recipe.slug, body.folder_ids);
+        if (body.title?.trim()) Object.assign(out, await updateRecipeTitle(recipe.slug, body.title.trim()));
+        return out;
+      });
     });
 
     api.delete("/recipes/:slug", async (c) => {
@@ -843,6 +867,27 @@ api.delete("/recipes/:slug/thumbnail", async (c) => {
   const recipe = await getRecipeBySlug(c.req.param("slug"), MAIN_BRANCH);
   if (!recipe) return c.json({ error: "not found" }, 404);
   return c.json(await setRecipeThumbnail(recipe.slug, null));
+});
+
+// ── Folders ──────────────────────────────────────────────────────────────────
+// Recipe-level, so not branch routes. A recipe's own folders and icon are set
+// through PUT /recipes/:slug ({ folder_ids, icon }).
+api.get("/folders", async (c) => c.json(await listFolders()));
+api.post("/folders", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  return folderAction(c, () => createFolder(body), 201);
+});
+api.put("/folders/:id", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  return folderAction(c, () => updateFolder(c.req.param("id"), body));
+});
+api.delete("/folders/:id", async (c) => folderAction(c, async () => {
+  await deleteFolder(c.req.param("id"));
+  return { ok: true };
+}));
+api.put("/folders/:id/recipes", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  return folderAction(c, () => setFolderRecipes(c.req.param("id"), body.slugs));
 });
 
 api.get("/images/:id", async (c) => {

@@ -75,10 +75,11 @@ export function selectActiveExperiment(
 export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_BRANCH_SLUG): Promise<RecipeRecord | null> {
   const recipeRows = await sql<{
     id: string; slug: string; title: string; created_at: Date; updated_at: Date;
-    thumbnail_image_id: string | null;
+    thumbnail_image_id: string | null; icon: string; folder_ids: string[];
   }[]>`
-    SELECT r.id, r.slug, r.title, r.created_at, r.updated_at,
-           (SELECT i.id FROM images i WHERE i.recipe_id = r.id AND i.is_thumbnail LIMIT 1) AS thumbnail_image_id
+    SELECT r.id, r.slug, r.title, r.created_at, r.updated_at, r.icon,
+           (SELECT i.id FROM images i WHERE i.recipe_id = r.id AND i.is_thumbnail LIMIT 1) AS thumbnail_image_id,
+           ARRAY(SELECT rf.folder_id::text FROM recipe_folders rf WHERE rf.recipe_id = r.id ORDER BY rf.added_at) AS folder_ids
     FROM recipes r WHERE r.slug = ${slug}
   `;
   if (recipeRows.length === 0) return null;
@@ -226,6 +227,8 @@ export async function loadRecipeRecord(slug: string, branchSlug: string = MAIN_B
     slug: recipe.slug,
     title: recipe.title,
     thumbnail_image_id: recipe.thumbnail_image_id,
+    icon: recipe.icon,
+    folder_ids: recipe.folder_ids,
     created_at: recipe.created_at.toISOString(),
     updated_at: recipe.updated_at.toISOString(),
     branches,

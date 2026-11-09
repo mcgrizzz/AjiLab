@@ -84,13 +84,15 @@ export function recipeActivity(recipe: RecipeRecord) {
   };
 }
 
-export async function listRecipes(search?: string) {
+// folderId: only the recipes in that folder.
+export async function listRecipes(search?: string, folderId?: string) {
   const needle = search?.trim().toLowerCase();
   const recipes = await sql<{ slug: string }[]>`SELECT slug FROM recipes ORDER BY updated_at DESC`;
   const records = (await Promise.all(
     recipes.map((r) => loadRecipeRecord(r.slug, MAIN_BRANCH_SLUG))
   )).filter((r): r is RecipeRecord => !!r);
   return records
+    .filter((recipe) => !folderId || recipe.folder_ids.includes(folderId))
     .filter((recipe) => {
       if (!needle) return true;
       const haystack = [
@@ -111,6 +113,8 @@ export async function listRecipes(search?: string) {
       slug: recipe.slug,
       title: recipe.title,
       thumbnail_image_id: recipe.thumbnail_image_id,
+      icon: recipe.icon,
+      folder_ids: recipe.folder_ids,
       created_at: recipe.created_at,
       updated_at: recipe.updated_at,
       latest_released: recipe.latest_released,

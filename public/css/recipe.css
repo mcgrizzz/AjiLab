@@ -1199,3 +1199,42 @@ button.ing-qty {
 
 
 .cook-log-photos { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+/* No cover photo: the recipe's icon, a button to choose or change it. */
+.header-thumb-icon {
+  border: none;
+  padding: 0;
+  color: var(--ink2);
+  font-size: 2.1rem;
+  cursor: pointer;
+}
+.header-thumb-icon .ri-svg { width: 34px; height: 34px; }
+.header-thumb-icon.header-thumb-card-empty { border: 1px dashed var(--border2); }
+.header-thumb-icon:hover { color: var(--ink); }
+
+/* The recipe's folders, under its status row. */
+.recipe-folders { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; }
+.recipe-folders:empty { display: none; }
+.recipe-folder-link { display: inline-flex; align-items: center; gap: 5px; font-size: 0.82rem; color: var(--ink2); text-decoration: none; }
+.recipe-folder-link:hover { color: var(--ink); text-decoration: underline; }
+.recipe-folder-icon { display: inline-flex; font-size: 0.95rem; line-height: 1; }
+.recipe-folder-icon .ri-svg { width: 14px; height: 14px; }
+
+.settings-icon {
+  width: 72px;
+  height: 72px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--bg3);
+  color: var(--ink2);
+  font-size: 2.1rem;
+}
+.settings-icon .ri-svg { width: 34px; height: 34px; }
+.settings-icon-none { font-size: 0.75rem; color: var(--ink3); }
+.settings-hint { margin: 0; font-size: 0.8rem; color: var(--ink3); line-height: 1.4; flex: 1; min-width: 0; }
+.settings-folders { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.settings-folders .settings-folder-list { align-self: stretch; }
+.settings-folders-empty { margin: 0; font-size: 0.85rem; }

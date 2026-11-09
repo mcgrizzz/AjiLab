@@ -11,6 +11,29 @@ CREATE TABLE IF NOT EXISTS recipes (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- What stands in for the cover photo when there's none: an emoji ("🦃") or
+-- a bundled icon ("lucide:wheat"). '' is none. Not versioned: it's the
+-- recipe's, not its text's.
+ALTER TABLE recipes ADD COLUMN IF NOT EXISTS icon TEXT NOT NULL DEFAULT '';
+
+-- Folders group recipes on the index (Thanksgiving, Baking). Flat; a recipe
+-- can be in several, or none. Deleting a folder keeps its recipes.
+CREATE TABLE IF NOT EXISTS folders (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       TEXT NOT NULL,
+  icon       TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_name ON folders (lower(name));
+
+CREATE TABLE IF NOT EXISTS recipe_folders (
+  recipe_id UUID NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  folder_id UUID NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+  added_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (recipe_id, folder_id)
+);
+CREATE INDEX IF NOT EXISTS idx_recipe_folders_folder ON recipe_folders(folder_id);
+
 CREATE TABLE IF NOT EXISTS branches (
   id                            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   recipe_id                     UUID NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,

@@ -70,6 +70,19 @@ export {
   deleteRecipe,
 } from "./store/recipes.ts";
 
+export {
+  FolderError,
+  normalizeIcon,
+  listFolders,
+  createFolder,
+  updateFolder,
+  deleteFolder,
+  setFolderRecipes,
+  setRecipeFolders,
+  setRecipeIcon,
+} from "./store/folders.ts";
+export type { FolderRecord } from "./store/folders.ts";
+
 function nowIso(): string {
   return new Date().toISOString();
 }

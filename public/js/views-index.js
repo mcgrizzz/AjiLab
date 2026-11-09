@@ -1,5 +1,10 @@
 // ── View: Recipe Index ────────────────────────────────────────────────────────
 const IndexView = {
+  // The folder being shown ('' is All), from `/?folder=<id>`.
+  folderId: '',
+  folders: [],
+  listToken: 0,
+
   // Plain clicks navigate in-app; modified/middle clicks fall through to the
   // browser so Cmd/Ctrl-click opens a new tab.
   openRecipe(event, link) {
@@ -34,6 +39,7 @@ const IndexView = {
   },
 
   async render(container) {
+    this.folderId = new URL(location.href).searchParams.get('folder') || '';
     container.innerHTML = `
       <div class="search-bar">
         <div class="search-wrap">
@@ -43,7 +49,9 @@ const IndexView = {
           </svg>
           <input type="search" id="search-input" placeholder="Search recipes…" autocomplete="off" />
         </div>
+        <nav id="folder-bar" class="folder-bar" aria-label="Folders"></nav>
       </div>
+      <div id="folder-head" class="folder-head" hidden></div>
       <div id="recipe-list" class="recipe-list"></div>`;
 
     let debounce;
@@ -52,7 +60,95 @@ const IndexView = {
       debounce = setTimeout(() => this.loadList(e.target.value.trim()), 280);
     });
 
+    await this.renderFolders();
     await this.loadList('');
+  },
+
+  query() {
+    return document.getElementById('search-input')?.value.trim() || '';
+  },
+
+  currentFolder() {
+    return this.folders.find((f) => f.id === this.folderId) || null;
+  },
+
+  // The chips (All, each folder, New folder) and the open folder's header.
+  async renderFolders() {
+    try {
+      this.folders = await Folders.list(true);
+    } catch {
+      this.folders = [];
+    }
+    if (this.folderId && !this.currentFolder()) {
+      // A folder that's gone (deleted elsewhere, an old link): show All.
+      this.folderId = '';
+      history.replaceState({}, '', '/');
+    }
+    const bar = document.getElementById('folder-bar');
+    if (bar) {
+      const chip = (id, inner, label) => `<button type="button" class="folder-chip" aria-pressed="${this.folderId === id}" onclick="IndexView.openFolder('${escHtml(id)}')" aria-label="${escHtml(label)}">${inner}</button>`;
+      bar.innerHTML = [
+        chip('', '<span class="folder-chip-name">All</span>', 'All recipes'),
+        ...this.folders.map((f) => chip(f.id,
+          `<span class="folder-chip-icon">${Folders.iconHtml(f)}</span><span class="folder-chip-name">${escHtml(f.name)}</span><span class="folder-chip-count">${f.recipe_count}</span>`,
+          `${f.name}, ${f.recipe_count} recipe${f.recipe_count === 1 ? '' : 's'}`)),
+        '<button type="button" class="folder-chip folder-chip-new" onclick="IndexView.newFolder()">+ New folder</button>',
+      ].join('');
+    }
+    const head = document.getElementById('folder-head');
+    const folder = this.currentFolder();
+    if (head) {
+      head.hidden = !folder;
+      head.innerHTML = folder ? `
+        <span class="folder-head-icon">${Folders.iconHtml(folder)}</span>
+        <h2 class="folder-head-name">${escHtml(folder.name)}</h2>
+        <div class="folder-head-actions">
+          <button type="button" class="btn btn-sm" onclick="IndexView.chooseRecipes()">Choose recipes</button>
+          <button type="button" class="btn btn-sm btn-ghost" onclick="IndexView.editFolder()">Edit folder</button>
+        </div>` : '';
+    }
+  },
+
+  async openFolder(id) {
+    this.folderId = id || '';
+    history.replaceState({}, '', this.folderId ? `/?folder=${encodeURIComponent(this.folderId)}` : '/');
+    await this.renderFolders();
+    await this.loadList(this.query());
+  },
+
+  newFolder() {
+    Folders.edit({
+      onDone: async (folder) => {
+        closeModal();
+        await this.openFolder(folder.id);
+      },
+    });
+  },
+
+  editFolder() {
+    const folder = this.currentFolder();
+    if (!folder) return;
+    Folders.edit({
+      folder,
+      onDone: async (saved) => {
+        closeModal();
+        if (!saved) showToast(`Deleted “${folder.name}”. Its recipes are still in All.`);
+        await this.openFolder(saved ? saved.id : '');
+      },
+    });
+  },
+
+  async chooseRecipes() {
+    const folder = this.currentFolder();
+    if (!folder) return;
+    try {
+      await Folders.chooseRecipes(folder, async () => {
+        closeModal();
+        await this.openFolder(folder.id);
+      });
+    } catch (e) {
+      showToast('Error: ' + e.message);
+    }
   },
 
   async handleBackupFile(input) {
@@ -93,9 +189,26 @@ const IndexView = {
 
   async loadList(q) {
     const list = document.getElementById('recipe-list');
+    if (!list) return;
+    // Only the newest request paints: typing and switching folders overlap.
+    const token = ++this.listToken;
     list.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
     try {
-      const recipes = await API.get(`/recipes${q ? '?q=' + encodeURIComponent(q) : ''}`);
+      const params = new URLSearchParams();
+      if (q) params.set('q', q);
+      if (this.folderId) params.set('folder', this.folderId);
+      const recipes = await API.get(`/recipes${params.size ? `?${params}` : ''}`);
+      if (token !== this.listToken) return;
+      const folder = this.currentFolder();
+      if (recipes.length === 0 && folder) {
+        list.innerHTML = q
+          ? `<div class="empty-state"><h2>Nothing in ${escHtml(folder.name)} matches “${escHtml(q)}”</h2>
+              <button class="btn mt12" onclick="IndexView.openFolder('')">Search all recipes</button></div>`
+          : `<div class="empty-state"><h2>Nothing in ${escHtml(folder.name)} yet</h2>
+              <p>Choose recipes to put in it. A recipe's menu (⚙) has its folders too.</p>
+              <button class="btn btn-primary mt12" onclick="IndexView.chooseRecipes()">Choose recipes</button></div>`;
+        return;
+      }
       if (recipes.length === 0) {
         list.innerHTML = q
           ? `<div class="empty-state"><h2>No recipes match “${escHtml(q)}”</h2><p>Try a different search, or start it as a new recipe.</p>
@@ -131,7 +244,7 @@ const IndexView = {
         if (r.draft_change_label) badges.push(`<span class="badge badge-in-progress">${escHtml(r.draft_change_label)}</span>`);
         const thumb = r.thumbnail_image_id
           ? `<img src="/api/images/${r.thumbnail_image_id}" alt="${escHtml(r.title)}" loading="lazy" />`
-          : '🍽';
+          : RecipeIcons.html(r.icon, '🍽');
         const href = `/recipe/${encodeURIComponent(r.slug)}`;
         return `<a class="recipe-card" href="${escHtml(href)}" onclick="return IndexView.openRecipe(event, this)">
           <div class="recipe-thumb">${thumb}</div>
@@ -146,6 +259,7 @@ const IndexView = {
         </a>`;
       }).join('');
     } catch (e) {
+      if (token !== this.listToken) return;
       list.innerHTML = `<div class="empty-state"><p>Error: ${escHtml(e.message)}</p></div>`;
     }
   },

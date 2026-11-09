@@ -115,11 +115,90 @@ Object.assign(RecipeView, {
           <img class="header-thumb-image" src="/api/images/${this.recipe.thumbnail_image_id}" alt="${escHtml(this.recipe.title)}" loading="lazy" />
         </div>`;
     } else {
+      // No cover photo: its icon, or a place to choose one.
+      const icon = this.recipe?.icon || '';
+      const has = RecipeIcons.has(icon);
       slot.innerHTML = `
-        <div class="header-thumb-card header-thumb-card-empty" aria-hidden="true">
-          <span class="header-thumb-glyph">🍽</span>
-        </div>`;
+        <button type="button" class="header-thumb-card header-thumb-icon${has ? '' : ' header-thumb-card-empty'}" onclick="RecipeView.chooseIcon()" title="${has ? 'Change the icon' : 'Choose an icon'}" aria-label="${has ? 'Change the icon' : 'Choose an icon'}">
+          ${RecipeIcons.html(icon, '<span class="header-thumb-glyph">🍽</span>')}
+        </button>`;
     }
+    this.renderHeaderFolders();
+  },
+
+  // "🦃 Thanksgiving · Baking" under the title, each opening its folder.
+  async renderHeaderFolders() {
+    const slot = document.getElementById('header-folders');
+    const ids = this.recipe?.folder_ids || [];
+    if (!slot) return;
+    if (!ids.length) { slot.innerHTML = ''; return; }
+    let folders = [];
+    try { folders = await Folders.list(); } catch { return; }
+    const mine = ids.map((id) => folders.find((f) => f.id === id)).filter(Boolean);
+    if (document.getElementById('header-folders') !== slot) return;
+    slot.innerHTML = mine.map((f) => `<a class="recipe-folder-link" href="${escHtml(Folders.href(f))}" onclick="return IndexView.openRecipe(event, this)"><span class="recipe-folder-icon">${Folders.iconHtml(f)}</span>${escHtml(f.name)}</a>`).join('');
+  },
+
+  // The icon picker, from the header or the recipe menu (`back` reopens it).
+  chooseIcon(back = null) {
+    RecipeIcons.pick({
+      title: `Icon for ${this.recipe.title}`,
+      current: this.recipe.icon || '',
+      onPick: async (icon) => {
+        try {
+          const res = await API.put(`/recipes/${this.slug}`, { icon });
+          this.recipe.icon = res.icon ?? icon;
+          this.renderHeaderThumbnail();
+          if (back) back(); else closeModal();
+        } catch (e) {
+          showToast('Error: ' + e.message);
+        }
+      },
+      onBack: back,
+    });
+  },
+
+  async setRecipeFolder(folderId, inIt) {
+    const current = this.recipe.folder_ids || [];
+    const next = inIt ? [...new Set([...current, folderId])] : current.filter((id) => id !== folderId);
+    try {
+      const res = await API.put(`/recipes/${this.slug}`, { folder_ids: next });
+      this.recipe.folder_ids = res.folder_ids || next;
+      Folders.invalidate();
+      this.renderHeaderFolders();
+    } catch (e) {
+      showToast('Error: ' + e.message);
+      this.openSettingsModal();
+    }
+  },
+
+  // The recipe menu's folder checklist, filled in once the folders load.
+  async fillSettingsFolders() {
+    const slot = document.getElementById('settings-folders');
+    if (!slot) return;
+    let folders;
+    try { folders = await Folders.list(); } catch (e) { slot.textContent = `Couldn't load folders: ${e.message}`; return; }
+    if (document.getElementById('settings-folders') !== slot) return;
+    const mine = new Set(this.recipe.folder_ids || []);
+    slot.innerHTML = `
+      ${folders.length ? `<ul class="settings-folder-list">${folders.map((f) => `<li>
+        <label class="folder-pick">
+          <input type="checkbox" ${mine.has(f.id) ? 'checked' : ''} onchange="RecipeView.setRecipeFolder('${escHtml(f.id)}', this.checked)" />
+          <span class="folder-pick-icon">${Folders.iconHtml(f)}</span>
+          <span class="folder-pick-title">${escHtml(f.name)}</span>
+        </label>
+      </li>`).join('')}</ul>` : '<p class="text-muted settings-folders-empty">No folders yet.</p>'}
+      <button type="button" class="link-btn" onclick="RecipeView.newFolderForRecipe()">+ New folder</button>`;
+  },
+
+  newFolderForRecipe() {
+    Folders.edit({
+      onBack: () => this.openSettingsModal(),
+      onDone: async (folder) => {
+        await this.setRecipeFolder(folder.id, true);
+        this.openSettingsModal();
+      },
+    });
   },
 
   openNotesModal() {
@@ -606,6 +685,20 @@ Object.assign(RecipeView, {
         <button class="btn btn-primary" onclick="RecipeView.saveSettings()">Save title</button>
       </div>
       <div class="settings-section">
+        <div class="settings-section-title">Folders</div>
+        <div id="settings-folders" class="settings-folders"><span class="text-muted">Loading…</span></div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title">Icon</div>
+        <div class="settings-thumb-row">
+          <div class="settings-icon">${RecipeIcons.html(recipe.icon, '<span class="settings-icon-none">None</span>')}</div>
+          <div class="settings-thumb-actions">
+            <button class="btn btn-sm" onclick="RecipeView.chooseIcon(() => RecipeView.openSettingsModal())">${RecipeIcons.has(recipe.icon) ? 'Change' : 'Choose'}</button>
+          </div>
+          <p class="settings-hint">Shown on the home page and here when there's no thumbnail.</p>
+        </div>
+      </div>
+      <div class="settings-section">
         <div class="settings-section-title">Thumbnail</div>
         <div class="settings-thumb-row">
           ${thumb}
@@ -624,6 +717,7 @@ Object.assign(RecipeView, {
       <div class="modal-actions" style="margin-top:18px">
         <button class="btn btn-ghost" onclick="closeModal()">Close</button>
       </div>`);
+    this.fillSettingsFolders();
     setTimeout(() => document.getElementById('settings-title')?.select(), 80);
   },
 

@@ -12,12 +12,26 @@ Content type: `application/json` for everything except image uploads (multipart)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/recipes` | List recipes, most recent activity first. Supports `?q=<search>` (substring match across title, slug, draft, version text, tags). Each item carries `last_activity_at` / `last_activity_kind` (`cooked`, `version`, `edited` or `created`: the latest of last cooked, last version taken, last draft edit, across all branches), plus `last_cooked_at`, `last_version`, `last_version_at`, `last_edited_at` and `cook_logs_total` |
+| `GET` | `/recipes` | List recipes, most recent activity first. Supports `?q=<search>` (substring match across title, slug, draft, version text, tags) and `?folder=<id>` (only that folder's recipes). Each item has `icon` and `folder_ids`. Each item carries `last_activity_at` / `last_activity_kind` (`cooked`, `version`, `edited` or `created`: the latest of last cooked, last version taken, last draft edit, across all branches), plus `last_cooked_at`, `last_version`, `last_version_at`, `last_edited_at` and `cook_logs_total` |
 | `POST` | `/recipes` | Create. Body: `{ title }`. Returns `{ id, slug, title }` |
 | `GET` | `/recipes/:slug` | Full recipe with all branches, versions, draft, and counts |
-| `PUT` | `/recipes/:slug` | Update title. Body: `{ title }`. Slug regenerates if needed |
+| `PUT` | `/recipes/:slug` | Update any of: `title` (the slug regenerates if needed), `icon` (one emoji, `lucide:<name>`, or `''` for none; 400 otherwise), `folder_ids` (exactly the folders it's in; 404 on an unknown one). Returns `{ ok, slug, icon?, folder_ids? }` |
 | `DELETE` | `/recipes/:slug` | Delete recipe (cascades to branches, entries, images, cook logs) |
 | `POST` | `/parse` | Parse Cooklang that isn't a recipe yet (an import, before it's created). Body: `{ cooklang_text }`. Returns the parsed recipe, with `error` if it couldn't be read |
+
+---
+
+## Folders
+
+Folders group recipes on the home page. Flat; a recipe can be in several or none. They're the recipe's, not its text's, so nothing here makes a version.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/folders` | All folders by name: `[{ id, name, icon, recipe_count }]` |
+| `POST` | `/folders` | Create. Body: `{ name, icon? }`. 201 with the folder; 409 if the name is taken (ignoring case), 400 with no name |
+| `PUT` | `/folders/:id` | Rename or change the icon. Body: `{ name?, icon? }`. 409 on a taken name |
+| `DELETE` | `/folders/:id` | Delete the folder. Its recipes stay |
+| `PUT` | `/folders/:id/recipes` | Make the folder hold exactly these recipes. Body: `{ slugs: [...] }`. 404 on an unknown slug, changing nothing |
 
 ---
 
