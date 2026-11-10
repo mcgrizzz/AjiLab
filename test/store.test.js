@@ -134,6 +134,11 @@ test("a test made from a test's cook closes that test as followed, unless kept o
   recipe = await get(slug);
   assert.deepEqual(recipe.open_tests.map((t) => t.label).sort(), ["v1.0 · Test 1", "v1.0 · Test 2"]);
 
+  // Stopping a test that a later one was made from closes it as followed.
+  await store.setTestOpen(slug, "test-1", false);
+  assert.equal(entry(await get(slug), "v1.0 · Test 1").closed_as, "followed");
+  await store.setTestOpen(slug, "test-1", true);
+
   // A followed test can be reopened like a stopped one.
   await store.undoDraftBeta(slug, kept.version_string, null);
   await store.saveTest(slug, { close_source: true });

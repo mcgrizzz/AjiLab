@@ -316,7 +316,8 @@ export async function updateTesting(slug: string, versionString: string, testing
   return { ok: true };
 }
 
-// Stop testing, or reopen a stopped, superseded or followed test.
+// Stop testing, or reopen a stopped, superseded or followed test. Stopping
+// a test that a later test was made from closes it as followed.
 export async function setTestOpen(slug: string, versionString: string, open: boolean, branchSlug = MAIN_BRANCH_SLUG) {
   const recipe = await requireRecipe(slug, branchSlug);
   const test = findTest(recipe, versionString);
@@ -324,7 +325,8 @@ export async function setTestOpen(slug: string, versionString: string, open: boo
     if (test.closed_as === "adopted" || test.closed_as === "rebased") throw new Error(`${test.label} was ${test.closed_as}`);
     await sql`UPDATE entries SET closed_as = NULL, closed_at = NULL WHERE id = ${test.id}`;
   } else if (!test.closed_as) {
-    await sql`UPDATE entries SET closed_as = 'stopped', closed_at = now() WHERE id = ${test.id}`;
+    const as = test.followed_by ? "followed" : "stopped";
+    await sql`UPDATE entries SET closed_as = ${as}, closed_at = now() WHERE id = ${test.id}`;
   }
   return { ok: true };
 }

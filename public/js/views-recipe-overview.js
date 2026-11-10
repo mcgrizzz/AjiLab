@@ -122,7 +122,9 @@ Object.assign(RecipeView, {
           actions.push(`<button class="btn btn-sm btn-ghost" onclick="RecipeView.setTestOpen('${escJs(key)}', false)" title="It stays with its cooks, out of the Testing list">Stop testing</button>`);
         }
         // What to do next with it.
-        if (primary.open && !primary.cook_count) {
+        if (primary.open && primary.followed_by) {
+          note = `${primary.followed_by} carries on from this test. Stop testing it, unless you’re cooking both side by side.`;
+        } else if (primary.open && !primary.cook_count) {
           note = 'Next: print it, cook from the paper, then record how it went. Until it’s cooked you can still edit it.';
         } else if (primary.open) {
           note = `Its cooks are below. When it’s right, adopt it as ${recipe.next_version_string}; or start a new test from a cook.`;
@@ -294,7 +296,7 @@ Object.assign(RecipeView, {
       await this.refreshRecipe();
       await this.renderDetail(document.getElementById('view-container'), versionString, { syncUrl: true, replaceUrl: true });
       if (open) showToast(`${test?.label || 'Test'} reopened`);
-      else showToast(`Stopped testing ${test?.label || ''}`.trim(), { action: { label: 'Undo', onClick: () => this.setTestOpen(versionString, true) } });
+      else showToast(test?.followed_by ? `Closed ${test.label}: ${test.followed_by} carries on from it` : `Stopped testing ${test?.label || ''}`.trim(), { action: { label: 'Undo', onClick: () => this.setTestOpen(versionString, true) } });
     } catch (e) {
       showToast('Error: ' + e.message);
     }
