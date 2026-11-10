@@ -168,6 +168,34 @@ test("ranges show their unit once, and putting one back writes it as it was", ()
     "Bake for ~{1-2%min}, proof ~{20-26%hours}, add @salt{2-3%g} at ^{23-25%C}.");
 });
 
+test("a time is read in the unit chosen beside it, or the one typed; anything else isn't a time", () => {
+  const timer = (units, quantity = "20") => ({ kind: "timer", isTemp: false, original: { quantity, units }, current: { quantity, units } });
+  const read = (text, field, unit) => plain(CookSheet.parseTyped(text, field, unit));
+  const rest = timer("min");
+  assert.deepEqual(read("25", rest), { quantity: "25", units: "min" });
+  assert.deepEqual(read("2", rest, "hour"), { quantity: "2", units: "hours" }, "the list says hours");
+  assert.deepEqual(read("1", rest, "hour"), { quantity: "1", units: "hour" });
+  assert.deepEqual(read("90 min", rest, "hour"), { quantity: "90", units: "min" }, "a typed unit wins");
+  assert.deepEqual(read("2 hrs", rest), { quantity: "2", units: "hours" });
+  assert.deepEqual(read("1h30", rest), { quantity: "90", units: "min" });
+  assert.deepEqual(read("1 hr 30 min", rest, "hour"), { quantity: "1.5", units: "hours" });
+  assert.deepEqual(read("1:30", rest, "hour"), { quantity: "1.5", units: "hours" }, "h:mm in hours");
+  assert.deepEqual(read("1:30", rest), { quantity: "1.5", units: "min" }, "m:ss in minutes");
+  assert.deepEqual(read("18-24", timer("hours", "20-24")), { quantity: "18-24", units: "hours" });
+  assert.deepEqual(read("1 1/2-2", timer("hours", "1")), { quantity: "1 1/2-2", units: "hours" });
+  // The sheet's own spelling is kept, singular or plural to suit.
+  assert.deepEqual(read("1", timer("minutes")), { quantity: "1", units: "minute" });
+  assert.deepEqual(read("3", timer("minutes")), { quantity: "3", units: "minutes" });
+  assert.deepEqual(read("2", timer("hour", "1")), { quantity: "2", units: "hours" });
+  assert.deepEqual(read("45 sec", rest), { quantity: "45", units: "sec" });
+  assert.equal(CookSheet.parseTyped("20 minz", rest), null);
+  assert.equal(CookSheet.parseTyped("a while", rest), null);
+  // A timer whose unit isn't a time ("~{1%batch}") is read like any amount.
+  assert.deepEqual(read("2 batches", timer("batch", "1")), { quantity: "2", units: "batches" });
+  assert.equal(CookSheet.timeUnit("Hrs."), "hour");
+  assert.equal(CookSheet.timeUnit("overnight"), null);
+});
+
 test("a note added while recording can be fixed or removed; the sheet's own notes are not offered", () => {
   const source = "Mix @flour{100%g}.\n\n> keep it cool\n\nRest.";
   let cooked = insertNoteAfterStep(source, 0, 1, "dough stiky");

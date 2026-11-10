@@ -151,6 +151,25 @@
 
 .ck-icon { font-size: 0.85em; color: var(--chip-timer-fg); }
 
+/* A time's unit, picked from a list beside its number. */
+.ck-unit {
+  font: inherit;
+  font-size: 0.88em;
+  color: var(--ink2);
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 2px 4px;
+  margin-left: 2px;
+  cursor: pointer;
+}
+
+.ck-unit:hover { color: var(--ink); border-color: var(--ink3); }
+
+.ck-unit:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.ck-changed .ck-unit { color: var(--gold-ink); }
+
 .ck-input {
   font: inherit;
   font-family: var(--font-mono);

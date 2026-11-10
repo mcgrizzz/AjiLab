@@ -120,9 +120,29 @@ const CookView = {
     return CookSheet.formatAmount(CookSheet.shownAmount(f, amount, this.display), f.isTemp);
   },
 
+  // A time in a unit the list knows: its box holds the number, the list
+  // beside it the unit.
+  hasUnitList(f) {
+    return f.kind === 'timer' && !!CookSheet.timeUnit(f.original.units);
+  },
+
+  // What the box shows for a value.
+  inputText(f, amount = f.current) {
+    return this.hasUnitList(f) ? String(amount?.quantity ?? '') : this.shown(f, amount);
+  },
+
+  unitListHtml(f) {
+    const unit = CookSheet.timeUnit(f.current.units) || CookSheet.timeUnit(f.original.units);
+    const options = { sec: 'sec', min: 'min', hour: 'hours', day: 'days' };
+    return `<select class="ck-unit" data-f="${f.id}" tabindex="-1" aria-label="Unit">${Object.entries(options)
+      .map(([key, text]) => `<option value="${key}"${key === unit ? ' selected' : ''}>${text}</option>`).join('')}</select>`;
+  },
+
   // What was typed, as the paper shows it, then in the recipe's own units.
+  // A time's bare number takes the unit chosen beside it.
   readTyped(f, text) {
-    const typed = CookSheet.parseTyped(text, f, CookSheet.shownAmount(f, f.current, this.display).units);
+    const unit = this.hasUnitList(f) ? document.querySelector(`.ck-unit[data-f="${f.id}"]`)?.value : null;
+    const typed = CookSheet.parseTyped(text, f, unit || CookSheet.shownAmount(f, f.current, this.display).units);
     return typed ? CookSheet.savedAmount(f, typed) : null;
   },
 
@@ -349,8 +369,8 @@ const CookView = {
   },
 
   fieldHtml(f, { tabbable = true, inList = false } = {}) {
-    const value = this.shown(f);
-    const size = Math.max(3, value.length + 1, this.shown(f, f.original).length + 1);
+    const value = this.inputText(f);
+    const size = Math.max(3, value.length + 1, this.inputText(f, f.original).length + 1);
     const name = f.kind === 'ingredient' ? f.name : (f.kind === 'timer' ? 'time' : (f.isTemp ? 'temperature' : 'amount'));
     const label = f.kind === 'ingredient'
       ? `<span class="ck-name">${escHtml(f.name)}</span>`
@@ -360,7 +380,8 @@ const CookView = {
     // In a step, a value the ingredient list also shows leaves "was …" to
     // the list.
     const quiet = !inList && this.listed.has(f.id);
-    return `<span class="ck-field ck-${CookSheet.changeKind(f)}${inList ? ' ck-in-list' : ''}" data-f="${f.id}"${quiet ? ' data-quiet="1"' : ''}><label class="ck-chip">${chip}</label><span class="ck-was">${quiet ? '' : this.wasInner(f)}</span></span>`;
+    const unitList = this.hasUnitList(f) ? this.unitListHtml(f) : '';
+    return `<span class="ck-field ck-${CookSheet.changeKind(f)}${inList ? ' ck-in-list' : ''}${unitList ? ' ck-has-unit' : ''}" data-f="${f.id}"${quiet ? ' data-quiet="1"' : ''}><label class="ck-chip">${chip}</label>${unitList}<span class="ck-was">${quiet ? '' : this.wasInner(f)}</span></span>`;
   },
 
   wasInner(f) {
@@ -532,11 +553,13 @@ const CookView = {
       if (!preview) el.querySelector('.ck-was').innerHTML = el.dataset.quiet ? '' : this.wasInner(f);
     }
     if (!preview) {
-      const value = this.shown(f);
+      const value = this.inputText(f);
       for (const input of this.inputsFor(f)) {
         input.value = value;
         if (input.size < value.length + 1) input.size = value.length + 1;
       }
+      const unit = this.hasUnitList(f) && CookSheet.timeUnit(f.current.units);
+      if (unit) document.querySelectorAll(`.ck-unit[data-f="${f.id}"]`).forEach((select) => { select.value = unit; });
     }
   },
 
@@ -565,7 +588,7 @@ const CookView = {
     if (!f) return;
     const typed = this.readTyped(f, input.value);
     if (!typed) {
-      if (input.value.trim()) showToast('Type an amount, like 225, 1 cup or 18-20');
+      if (input.value.trim()) showToast(this.hasUnitList(f) ? 'Type a time, like 20, 1:30 or 2 hours' : 'Type an amount, like 225, 1 cup or 18-20');
       this.paintField(f);
       return;
     }
@@ -762,7 +785,12 @@ const CookView = {
   onChange(e) {
     const el = e.target;
     if (el.classList.contains('ck-input')) this.commitInput(el);
-    else if (el.id === 'cook-day') this.setDay(el.value);
+    else if (el.classList.contains('ck-unit')) {
+      // The number stays; it's the unit that was wrong ("20" hours, not min).
+      const f = this.field(el.dataset.f);
+      const input = f && this.inputsFor(f)[0];
+      if (input) this.commitInput(input);
+    } else if (el.id === 'cook-day') this.setDay(el.value);
     else if (el.id === 'cook-photo-file') this.addPhotos(el);
     else if (el.id === 'cook-time') {
       this.time = el.value || '';
@@ -787,13 +815,13 @@ const CookView = {
       if (e.key === 'Enter') { e.preventDefault(); this.commitInput(el); this.focusNext(el, e.shiftKey ? -1 : 1); return; }
       if (e.key === 'Escape' && f) {
         e.preventDefault();
-        const committed = this.shown(f);
+        const committed = this.inputText(f);
         if (el.value !== committed) { el.value = committed; this.paintField(f); }
         else if (CookSheet.changeKind(f) !== 'unchanged') this.setValue(f, f.original);
         el.select();
         return;
       }
-      if (mod && e.key.toLowerCase() === 'z' && f && el.value === this.shown(f)) {
+      if (mod && e.key.toLowerCase() === 'z' && f && el.value === this.inputText(f)) {
         e.preventDefault();
         this.undo();
       }

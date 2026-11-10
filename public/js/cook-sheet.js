@@ -9,6 +9,8 @@
 const CookSheet = (() => {
   const KINDS = ['ingredient', 'timer', 'inlineQuantity'];
   const TEMP_UNIT = /^°?\s*([FCfc]|fahrenheit|celsius)$/i;
+  // A typed number: mixed numbers and fractions first, so "1/2" isn't read as "1".
+  const NUMBER = '(?:\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|\\d*\\s*[⅛¼⅓⅜½⅝⅔¾⅞]|\\d+(?:[.,]\\d+)?)';
 
   const hasQuantity = (token) => token.quantity !== '' && token.quantity != null;
 
@@ -124,9 +126,10 @@ const CookSheet = (() => {
   function parseTyped(text, field, shownUnits = field.current.units) {
     const typed = String(text ?? '').trim();
     if (!typed) return null;
-    // Mixed numbers and fractions first, so "1/2" isn't read as "1".
-    const number = '(?:\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|\\d*\\s*[⅛¼⅓⅜½⅝⅔¾⅞]|\\d+(?:[.,]\\d+)?)';
-    const match = typed.match(new RegExp(`^(${number}(?:\\s*[-–]\\s*${number})?)\\s*(.*)$`));
+    if (field.kind === 'timer' && timeUnit(field.original.units)) {
+      return parseDuration(typed, timeUnit(shownUnits) || timeUnit(field.original.units), field.original.units);
+    }
+    const match = typed.match(new RegExp(`^(${NUMBER}(?:\\s*[-–]\\s*${NUMBER})?)\\s*(.*)$`));
     if (!match) return null;
     const quantity = match[1].replace(/\s*[-–]\s*/, '-').replace(/(\d),(\d)/g, '$1.$2').trim();
     let units = match[2].trim();
@@ -136,6 +139,58 @@ const CookSheet = (() => {
       units = /^c/i.test(temp) ? 'C' : (/^f/i.test(temp) ? 'F' : '');
     }
     return { quantity, units: units || shownUnits };
+  }
+
+  // ── Times ────────────────────────────────────────────────────────────────
+  // A time's unit is one of four, picked from a list on the cook screen.
+  // What's typed may carry its own: "90 min", "2 hours", "1h30", "1:30"
+  // (h:mm in hours, m:ss in minutes or seconds).
+
+  const TIME_UNITS = {
+    sec: /^(s|sec|secs|second|seconds)$/i,
+    min: /^(m|min|mins|minute|minutes)$/i,
+    hour: /^(h|hr|hrs|hour|hours)$/i,
+    day: /^(d|day|days)$/i,
+  };
+  const MINUTES = { sec: 1 / 60, min: 1, hour: 60, day: 1440 };
+  const TIME_WORDS = { second: 'seconds', minute: 'minutes', hour: 'hours', day: 'days', hr: 'hrs' };
+
+  // 'sec' | 'min' | 'hour' | 'day', or null for anything else.
+  function timeUnit(units) {
+    const u = String(units ?? '').trim().replace(/\.$/, '');
+    return Object.keys(TIME_UNITS).find((key) => TIME_UNITS[key].test(u)) || null;
+  }
+
+  // The unit as the sheet writes it: its own spelling when it's the same
+  // unit (singular or plural to suit the number), else min, sec, hours, days.
+  function timeUnitText(unit, quantity, own = '') {
+    const base = timeUnit(own) === unit ? String(own).trim() : { sec: 'sec', min: 'min', hour: 'hours', day: 'days' }[unit];
+    const one = String(quantity).trim() === '1';
+    for (const [single, plural] of Object.entries(TIME_WORDS)) {
+      const word = base.toLowerCase();
+      if (word === single || word === plural) return one ? single : plural;
+    }
+    return base;
+  }
+
+  // A typed time in `unit` unless it names its own; null when it isn't one.
+  function parseDuration(text, unit, own = '') {
+    const typed = String(text ?? '').trim().toLowerCase();
+    if (!typed || !MINUTES[unit]) return null;
+    const result = (quantity, key) => ({ quantity, units: timeUnitText(key, quantity, own) });
+    const inUnit = (minutes, key) => result(String(Number((minutes / MINUTES[key]).toFixed(2))), key);
+    const clock = /^(\d+):([0-5]\d)$/.exec(typed);
+    if (clock) {
+      const [hi, lo] = [Number(clock[1]), Number(clock[2])];
+      return unit === 'hour' || unit === 'day' ? inUnit(hi * 60 + lo, unit) : inUnit(hi + lo / 60, unit === 'sec' ? 'min' : unit);
+    }
+    const both = /^(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours?)\s*(\d+)\s*(?:m|min|mins|minutes?)?$/.exec(typed);
+    if (both) return inUnit(Number(both[1]) * 60 + Number(both[2]), unit === 'hour' ? 'hour' : 'min');
+    const match = typed.match(new RegExp(`^(${NUMBER}(?:\\s*[-–]\\s*${NUMBER})?)\\s*([a-z]*)\\.?$`));
+    if (!match) return null;
+    const key = match[2] ? timeUnit(match[2]) : unit;
+    if (!key) return null;
+    return result(match[1].replace(/\s*[-–]\s*/, '-').replace(/(\d),(\d)/g, '$1.$2').trim(), key);
   }
 
   // ── As on the paper ──────────────────────────────────────────────────────
@@ -468,5 +523,6 @@ const CookSheet = (() => {
   return { shownAmount, savedAmount, displayNote, cookOrder, changeList, cookChangeList, adoptFromCookNotes,
     stepList, atSheetScale, comparison, metricRows, changeSummary, cookChangeSummary, keyForChange,
     noteAdded, replaceNote, buildFields, ingredientRows, listedFieldIds, formatAmount, parseTyped, changeKind, keyId,
+    timeUnit, timeUnitText, parseDuration,
     joinedNotes, localDay, localTime, dateChoices, cookedAt, stepInfo };
 })();
