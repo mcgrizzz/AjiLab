@@ -156,24 +156,43 @@
 
 .cook-note .ck-field { font-style: normal; }
 
-/* A time's unit, picked from a list beside its number. */
+/* A time's unit: part of the value, written like its number ("20 min"),
+   with a small mark that it's a choice. The chip's hover and focus cover
+   both. */
+.ck-unit-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: -4px;   /* meets the number: one underline for "20 min" */
+}
+
+.ck-unit-wrap::after {
+  content: "▾";
+  position: absolute;
+  right: 0;
+  font-size: 0.7em;
+  color: var(--ink3);
+  pointer-events: none;
+}
+
 .ck-unit {
+  appearance: none;
+  -webkit-appearance: none;
   font: inherit;
-  font-size: 0.88em;
-  color: var(--ink2);
-  background: var(--bg2);
-  border: 1px solid var(--border2);
-  border-radius: 6px;
-  padding: 2px 4px;
-  margin-left: 2px;
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--qty-ink);
+  background: transparent;
+  border: none;
+  border-bottom: 1px dotted var(--ink3);
+  border-radius: 0;
+  padding: 2px 11px 1px 1ch;
+  margin: 0;
+  outline: none;
   cursor: pointer;
 }
 
-.ck-unit:hover { color: var(--ink); border-color: var(--ink3); }
-
-.ck-unit:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-.ck-changed .ck-unit { color: var(--gold-ink); }
+.ck-unit option { font-family: var(--font-sans); color: var(--ink); background: var(--surface); }
 
 .ck-input {
   font: inherit;
@@ -189,10 +208,12 @@
   min-width: 0;
 }
 
-.ck-same .ck-input { color: var(--ink3); }
+.ck-same .ck-input,
+.ck-same .ck-unit { color: var(--ink3); }
 
 /* A heavier underline drawn as a shadow, so the line keeps its height. */
-.ck-changed .ck-input {
+.ck-changed .ck-input,
+.ck-changed .ck-unit {
   color: var(--gold-ink);
   font-weight: 600;
   border-bottom-style: solid;

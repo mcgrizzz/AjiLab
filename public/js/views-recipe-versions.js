@@ -165,8 +165,18 @@ Object.assign(RecipeView, {
         <select id="cmp-from" aria-label="Compare from" onchange="RecipeView.runCompare()">${opts(from)}</select>
         <span class="vs">→</span>
         <select id="cmp-to" aria-label="Compare to" onchange="RecipeView.runCompare()">${opts(to)}</select>
+        <button type="button" class="btn btn-sm btn-ghost compare-swap" onclick="RecipeView.swapCompare()" title="Compare the other way round">⇄ Swap</button>
       </div>
       <div id="compare-result"></div>`;
+  },
+
+  // From ↔ to, and compare again.
+  swapCompare() {
+    const from = document.getElementById('cmp-from');
+    const to = document.getElementById('cmp-to');
+    if (!from || !to) return;
+    [from.value, to.value] = [to.value, from.value];
+    this.runCompare();
   },
 
   // Default: the current version → what you're looking at. A test compares

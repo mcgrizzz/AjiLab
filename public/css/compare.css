@@ -281,6 +281,8 @@
 
 .compare-selectors .vs { color: var(--ink3); font-size: 0.85rem; flex-shrink: 0; color: var(--ink3); }
 
+.compare-selectors .compare-swap { flex-shrink: 0; white-space: nowrap; }
+
 .diff-section { padding: 16px; border-bottom: 1px solid var(--border); }
 
 .diff-title {

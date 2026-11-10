@@ -131,10 +131,26 @@ const CookView = {
     return this.hasUnitList(f) ? String(amount?.quantity ?? '') : this.shown(f, amount);
   },
 
+  // The unit words to suit the number: "1 hour", "2 hours".
+  unitWords(quantity) {
+    const one = String(quantity ?? '').trim() === '1';
+    return { sec: 'sec', min: 'min', hour: one ? 'hour' : 'hours', day: one ? 'day' : 'days' };
+  },
+
+  // A time's number box fits its number, so the unit follows it closely.
+  boxSize(f, text) {
+    return Math.max(1, String(text ?? '').length);
+  },
+
+  // The unit list as wide as the word it shows, plus the ▾.
+  unitWidth(word) {
+    return `calc(${String(word).length + 1}ch + 11px)`;
+  },
+
   unitListHtml(f) {
     const unit = CookSheet.timeUnit(f.current.units) || CookSheet.timeUnit(f.original.units);
-    const options = { sec: 'sec', min: 'min', hour: 'hours', day: 'days' };
-    return `<select class="ck-unit" data-f="${f.id}" tabindex="-1" aria-label="Unit">${Object.entries(options)
+    const words = this.unitWords(f.current.quantity);
+    return `<select class="ck-unit" data-f="${f.id}" tabindex="-1" aria-label="Unit" style="width:${this.unitWidth(words[unit] || 'min')}">${Object.entries(words)
       .map(([key, text]) => `<option value="${key}"${key === unit ? ' selected' : ''}>${text}</option>`).join('')}</select>`;
   },
 
@@ -370,7 +386,7 @@ const CookView = {
 
   fieldHtml(f, { tabbable = true, inList = false } = {}) {
     const value = this.inputText(f);
-    const size = Math.max(3, value.length + 1, this.inputText(f, f.original).length + 1);
+    const size = this.hasUnitList(f) ? this.boxSize(f, value) : Math.max(3, value.length + 1, this.inputText(f, f.original).length + 1);
     const name = f.kind === 'ingredient' ? f.name
       : (f.kind === 'timer' ? 'time'
         : `${f.kind === 'noteQuantity' ? `${f.name} ` : ''}${f.isTemp ? 'temperature' : 'amount'}`);
@@ -378,12 +394,12 @@ const CookView = {
       ? `<span class="ck-name">${escHtml(f.name)}</span>`
       : (f.kind === 'timer' ? '<span class="ck-icon" aria-hidden="true">⏱</span>' : '');
     const input = `<input class="ck-input" data-f="${f.id}" value="${escHtml(value)}" size="${size}" spellcheck="false" autocomplete="off"${tabbable ? '' : ' tabindex="-1"'} aria-label="${escHtml(`${name}, the sheet said ${this.shown(f, f.original)}`)}" />`;
-    const chip = inList ? `${input}${label}` : `${label}${input}`;
+    const unitList = this.hasUnitList(f) ? `<span class="ck-unit-wrap">${this.unitListHtml(f)}</span>` : '';
+    const chip = inList ? `${input}${unitList}${label}` : `${label}${input}${unitList}`;
     // In a step, a value the ingredient list also shows leaves "was …" to
     // the list.
     const quiet = !inList && this.listed.has(f.id);
-    const unitList = this.hasUnitList(f) ? this.unitListHtml(f) : '';
-    return `<span class="ck-field ck-${CookSheet.changeKind(f)}${inList ? ' ck-in-list' : ''}${unitList ? ' ck-has-unit' : ''}" data-f="${f.id}"${quiet ? ' data-quiet="1"' : ''}><label class="ck-chip">${chip}</label>${unitList}<span class="ck-was">${quiet ? '' : this.wasInner(f)}</span></span>`;
+    return `<span class="ck-field ck-${CookSheet.changeKind(f)}${inList ? ' ck-in-list' : ''}${unitList ? ' ck-has-unit' : ''}" data-f="${f.id}"${quiet ? ' data-quiet="1"' : ''}><label class="ck-chip">${chip}</label><span class="ck-was">${quiet ? '' : this.wasInner(f)}</span></span>`;
   },
 
   wasInner(f) {
@@ -571,10 +587,18 @@ const CookView = {
       const value = this.inputText(f);
       for (const input of this.inputsFor(f)) {
         input.value = value;
-        if (input.size < value.length + 1) input.size = value.length + 1;
+        if (this.hasUnitList(f)) input.size = this.boxSize(f, value);
+        else if (input.size < value.length + 1) input.size = value.length + 1;
       }
       const unit = this.hasUnitList(f) && CookSheet.timeUnit(f.current.units);
-      if (unit) document.querySelectorAll(`.ck-unit[data-f="${f.id}"]`).forEach((select) => { select.value = unit; });
+      if (unit) {
+        const words = this.unitWords(f.current.quantity);
+        document.querySelectorAll(`.ck-unit[data-f="${f.id}"]`).forEach((select) => {
+          for (const option of select.options) option.textContent = words[option.value];
+          select.value = unit;
+          select.style.width = this.unitWidth(words[unit]);
+        });
+      }
     }
   },
 
@@ -786,7 +810,8 @@ const CookView = {
       if (!f) return;
       const typed = this.readTyped(f, el.value);
       this.paintField(f, { kind: typed ? CookSheet.changeKind(f, typed) : 'invalid' });
-      if (el.size < el.value.length + 1) el.size = el.value.length + 1;
+      if (this.hasUnitList(f)) el.size = this.boxSize(f, el.value);
+      else if (el.size < el.value.length + 1) el.size = el.value.length + 1;
       return;
     }
     const reflect = el.dataset?.reflect;
