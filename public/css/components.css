@@ -71,7 +71,7 @@
   font-weight: 600;
 }
 
-/* A chip and the punctuation after it wrap as one. */
+/* A timer and the punctuation after it wrap as one (renderSteps). */
 .step-text .s-glue { white-space: nowrap; }
 
 .step-text .s-ingredient {

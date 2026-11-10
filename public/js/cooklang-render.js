@@ -168,15 +168,15 @@ const CL = {
             return escHtml(token.value || '');
         }
       };
-      // Punctuation right after a chip ("@salt{}, @pepper{}.") stays with
-      // it, so a line never starts with a comma.
+      // Browsers don't start a line with the comma after a chip, except
+      // after a button (the Overview's timers): a timer and the punctuation
+      // after it wrap as one. Timers are short; other chips may still break.
       const tokens = step.slice();
       const parts = [];
       for (let i = 0; i < tokens.length; i++) {
         const token = tokens[i];
         const next = tokens[i + 1];
-        const isChip = token && typeof token === 'object' && token.type !== 'text' && token.type !== 'comment';
-        const punct = isChip && next?.type === 'text' ? /^[,.;:!?)\]…]+/.exec(next.value || '') : null;
+        const punct = token?.type === 'timer' && next?.type === 'text' ? /^[,.;:!?)\]…]+/.exec(next.value || '') : null;
         if (punct) {
           parts.push(`<span class="s-glue">${renderToken(token)}${escHtml(punct[0])}</span>`);
           tokens[i + 1] = { ...next, value: next.value.slice(punct[0].length) };
@@ -309,8 +309,11 @@ function buildPrepReferenceAttrs(token) {
 // ── Utilities ──────────────────────────────────────────────────────────────────
 // Escape an amount for HTML and wrap vulgar fractions (⅛, ⅜, ⅔…) so CSS can
 // draw them larger — at mono/small sizes they're hard to tell apart.
+// "4¼ cups" → the number, then the unit in its own span (drawn lighter).
 function amountHtml(text) {
-  return escHtml(text).replace(/[⅛¼⅓⅜½⅝⅔¾⅞]/g, (glyph) => `<span class="qty-frac">${glyph}</span>`);
+  const frac = (s) => escHtml(s).replace(/[⅛¼⅓⅜½⅝⅔¾⅞]/g, (glyph) => `<span class="qty-frac">${glyph}</span>`);
+  const m = /^([\d.,/⅛¼⅓⅜½⅝⅔¾⅞–\s-]*?[\d⅛¼⅓⅜½⅝⅔¾⅞])\s*([^\d\s.,/⅛¼⅓⅜½⅝⅔¾⅞–-].*)$/.exec(String(text ?? ''));
+  return m ? `${frac(m[1])} <span class="qty-unit">${frac(m[2])}</span>` : frac(text);
 }
 
 function escHtml(s) {

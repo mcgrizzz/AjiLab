@@ -85,21 +85,37 @@
 .ingredient-item {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  padding: 10px 0;
+  gap: 12px;
+  padding: 7px 0;
   border-bottom: 1px solid var(--border);
   font-size: 0.95rem;
+  line-height: 1.4;
 }
 
 .ingredient-item:last-child { border-bottom: none; }
 
+/* Nothing in the list has an amount: names only, in columns where there's
+   room, with no rules between them. */
+.ingredient-list-unmeasured {
+  columns: 2 9rem;
+  column-gap: 24px;
+}
+
+.ingredient-list-unmeasured .ingredient-item {
+  padding: 3px 0;
+  border-bottom: none;
+  break-inside: avoid;
+}
+
 .ing-qty {
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--qty-ink);
-  min-width: 72px;
+  min-width: 64px;
   text-align: right;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .ing-name { color: var(--ink); }
@@ -142,12 +158,17 @@ button.ing-qty {
   border: none;
   background: none;
   padding: 0;
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--qty-ink);
   text-align: right;
   border-radius: 4px;
 }
+
+/* "252 g": the number carries the weight, the unit sits back. */
+.qty-unit { font-weight: 400; }
 
 /* Amount popover: unit choices + scale-to-this-amount field. */
 .qty-popover {
@@ -196,11 +217,11 @@ button.ing-qty {
 
 .unit-chip.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 
-/* Vulgar fractions are tiny in the mono amount font; draw them in the body
-   face at a larger size. */
+/* Vulgar fractions are drawn small in most faces; bring them up to the
+   size of the digits beside them. */
 .qty-frac {
   font-family: var(--font-sans);
-  font-size: 1.2em;
+  font-size: 1.15em;
   line-height: 1;
   font-weight: 600;
 }
@@ -314,18 +335,17 @@ button.ing-qty {
   text-align: center;
 }
 
-.step-list { list-style: none; counter-reset: step-counter; }
+/* Steps are set apart by space, not rules; only a section heading has a
+   line. The list keeps a readable measure on a wide screen. */
+.step-list { list-style: none; counter-reset: step-counter; max-width: 46rem; }
 
 .step-item {
   display: flex;
   gap: 14px;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--border);
+  padding: 9px 0;
   counter-increment: step-counter;
   position: relative;
 }
-
-.step-item:last-child { border-bottom: none; }
 
 .step-deviation {
   padding: 14px 14px 14px 18px;
@@ -456,11 +476,13 @@ button.ing-qty {
 }
 
 .step-num {
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.9;
   color: var(--ink3);
-  min-width: 22px;
-  padding-top: 3px;
+  min-width: 20px;
+  text-align: right;
   flex-shrink: 0;
 }
 
@@ -478,25 +500,25 @@ button.ing-qty {
   font-size: 1.1rem;
   font-weight: 600;
   color: var(--ink);
-  padding: 32px 0 6px;
+  padding: 28px 0 6px;
+  margin-bottom: 4px;
   border-bottom: 1px solid var(--border);
   letter-spacing: -0.01em;
 }
 
 .step-section:first-child { padding-top: 4px; }
 
-.s-ing-amt { font-weight: 400; font-size: 0.88em; }
+/* "(140 g)" never splits across lines; the chip may wrap before it. */
+.s-ing-amt { font-weight: 400; font-size: 0.88em; white-space: nowrap; }
 
-/* `> ` note lines hang under their preceding context. A step-note hugs its
-   parent step as a single visual unit: the step's bottom divider is moved
-   onto the note so the line lands *after* the pair, not between them.
-   Section / recipe notes (no parent step) stay flush-left and dividerless. */
+/* `> ` note lines hang under the step above, lined up with its text and
+   marked by the bar. Section / recipe notes (no step above) sit flush left. */
 .step-comment {
   list-style: none;
   position: relative;
   display: block;
-  margin: 0 0 0 36px;
-  padding: 8px 0 10px 12px;
+  margin: 0 0 6px 34px;
+  padding: 2px 0 2px 12px;
   font-family: var(--font-serif);
   font-size: 0.92rem;
   line-height: 1.55;
@@ -505,7 +527,6 @@ button.ing-qty {
   background: transparent;
   border: none;
   border-left: 2px solid color-mix(in srgb, var(--accent) 60%, var(--gold));
-  border-bottom: 1px solid var(--border);
   border-radius: 0;
   counter-increment: none;
 }
@@ -514,50 +535,10 @@ button.ing-qty {
   content: '';
 }
 
-.step-comment::before {
-  content: ">";
-  position: absolute;
-  left: -14px;
-  top: 10px;
-  font-family: var(--font-mono);
-  font-size: 0.92rem;
-  line-height: 1.55;
-  font-style: normal;
-  font-weight: 600;
-  color: color-mix(in srgb, var(--accent) 55%, var(--ink3));
-  opacity: 0.7;
-}
-
-/* Step + note becomes one block: hide the step's own divider so the note
-   carries it. The note then visually belongs to the step above. */
-.step-item:has(+ .step-comment) {
-  border-bottom: none;
-}
-
-/* Chained notes share one divider at the bottom of the chain. */
-.step-comment:has(+ .step-comment) {
-  border-bottom: none;
-  padding-bottom: 4px;
-}
-
-/* Don't double up dividers when a note is immediately before a section
-   heading (the heading carries its own bottom border). */
-.step-comment:has(+ .step-section) {
-  border-bottom: none;
-}
-
-/* Last note in the list: mirror .step-item:last-child — no trailing line. */
-.step-list > .step-comment:last-child {
-  border-bottom: none;
-}
-
-/* Section / recipe notes sit flush under their heading with no divider
-   (the heading + indent already cue scope). */
 .step-list > .step-comment:first-child,
 .step-section + .step-comment {
   margin-left: 0;
-  border-bottom: none;
-  padding-bottom: 4px;
+  margin-top: 6px;
 }
 
 .notes-card {
@@ -642,16 +623,20 @@ button.ing-qty {
 }
 
 .ingredient-summary-section + .ingredient-summary-section {
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
+/* Set like the step section headings it matches, a size down, so it
+   doesn't read as another "INGREDIENTS"-style label. */
 .ingredient-summary-section-title {
-  font-size: 0.76rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--ink3);
-  margin: 0 0 6px;
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+  padding-bottom: 4px;
+  margin: 0 0 2px;
+  border-bottom: 1px solid var(--border);
 }
 
 .cookware-list {
@@ -661,13 +646,14 @@ button.ing-qty {
   padding: 8px 0;
 }
 
+/* The same chip as cookware in a step. */
 .cookware-chip {
-  padding: 4px 12px;
-  border: 1px solid var(--border2);
-  border-radius: 20px;
-  font-size: 0.82rem;
-  color: var(--ink2);
-  background: var(--surface);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--chip-cookware-fg);
+  background: var(--chip-cookware-bg);
 }
 
 .recipe-metrics {

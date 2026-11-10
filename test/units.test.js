@@ -117,36 +117,48 @@ test('renderer applies unit choices to the ingredient list and step amounts', ()
   ];
   const view = pick('heavy cream', 'fl oz');
   const html = CL.renderIngredients(ings, 0.473176, { units: view });
-  assert.match(html, /<button type="button" class="ing-qty ing-qty-editable"[^>]*>16 fl oz<\/button>/);
+  assert.match(html, /<button type="button" class="ing-qty ing-qty-editable"[^>]*>16 <span class="qty-unit">fl oz<\/span><\/button>/);
   assert.match(html, /data-unit="L"/);
   assert.match(html, /data-shown-unit="fl oz"/);
   assert.match(html, /0\.47 L as written/);
-  assert.match(html, />0\.95 cloves</);
+  assert.match(html, />0\.95 <span class="qty-unit">cloves<\/span></);
 
   const plain = CL.renderIngredients(ings, 1, {});
-  assert.match(plain, />1 L</, 'no unit options → unchanged output');
+  assert.match(plain, />1 <span class="qty-unit">L<\/span></, 'no unit options → unchanged output');
 
   const steps = [[{ type: 'text', value: 'Whisk ' }, { type: 'ingredient', name: 'heavy cream', quantity: 1, units: 'L' }]];
   const text = (html) => html.replace(/<[^>]+>/g, '');
   assert.match(text(CL.renderSteps(steps, 1, {}, true, { units: pick('heavy cream', 'cup') })), /\(4¼ cups\)/);
   assert.match(CL.renderSteps(steps, 1, {}, true, { units: pick('heavy cream', 'cup') }), /<span class="qty-frac">¼<\/span>/, 'fractions are wrapped for styling');
-  assert.match(CL.renderSteps(steps, 1, {}, true, { units: none }), /\(1 L\)/);
+  assert.match(text(CL.renderSteps(steps, 1, {}, true, { units: none })), /\(1 L\)/);
 });
 
-test('punctuation after a chip wraps with it', () => {
+test('a timer keeps the punctuation after it; other chips are left to wrap', () => {
   const { CL } = setup();
   const steps = [[
     { type: 'text', value: 'Season with ' },
     { type: 'ingredient', name: 'salt' },
-    { type: 'text', value: ', ' },
-    { type: 'ingredient', name: 'pepper' },
-    { type: 'text', value: ' and rest ' },
+    { type: 'text', value: ', then rest ' },
     { type: 'timer', value: '48 hours', quantity: 48, units: 'hours' },
     { type: 'text', value: '.' },
   ]];
   const html = CL.renderSteps(steps, 1, {}, false, { units: none });
-  assert.match(html, /<span class="s-glue"><span class="s-ingredient">salt<\/span>,<\/span> <span class="s-ingredient">pepper<\/span> and rest/);
+  assert.match(html, /<span class="s-ingredient">salt<\/span>, then rest/);
   assert.match(html, /<span class="s-glue"><span class="s-timer">⏱ 48 hours<\/span>\.<\/span><\/span><\/li>/);
+});
+
+test('an amount is drawn as its number, then its unit', () => {
+  const context = vm.createContext({});
+  vm.runInContext(read('../public/js/cooklang-render.js'), context);
+  const amountHtml = vm.runInContext('amountHtml', context);
+  assert.equal(amountHtml('252 g'), '252 <span class="qty-unit">g</span>');
+  assert.equal(amountHtml('1/8 tsp'), '1/8 <span class="qty-unit">tsp</span>');
+  assert.equal(amountHtml('4¼ cups'), '4<span class="qty-frac">¼</span> <span class="qty-unit">cups</span>');
+  assert.equal(amountHtml('200-300 g'), '200-300 <span class="qty-unit">g</span>');
+  assert.equal(amountHtml('16oz'), '16 <span class="qty-unit">oz</span>');
+  assert.equal(amountHtml('3'), '3');
+  assert.equal(amountHtml('a pinch'), 'a pinch');
+  assert.equal(amountHtml('<b>'), '&lt;b&gt;');
 });
 
 test('US amounts use fractions within 3%, metric uses decimals', () => {
