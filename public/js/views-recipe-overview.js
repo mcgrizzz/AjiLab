@@ -58,7 +58,10 @@ Object.assign(RecipeView, {
     const workingCopyLine = changes && !primary.is_draft
       ? `<div class="tests-strip-note">${escHtml(changes)} · <button type="button" class="link-btn" onclick="RecipeView.setTab('editor')">Open editor</button></div>`
       : '';
-    if (!tests.length) return workingCopyLine ? `<div class="tests-strip">${workingCopyLine}</div>` : '';
+    // On a test's own page, the strip is for getting to the others: with no
+    // other open test, the banner below already says everything it would.
+    const onlyThisOne = primary.kind === 'test' && tests.every((t) => t.version_string === primary.version_string);
+    if (!tests.length || onlyThisOne) return workingCopyLine ? `<div class="tests-strip">${workingCopyLine}</div>` : '';
     const rows = tests.map((t) => {
       const evidence = t.cook_count
         ? `${t.cook_count} cook${t.cook_count === 1 ? '' : 's'} · latest ${shortDate(t.last_cooked_at)}${t.last_outcome ? `: ${t.last_outcome}` : ''}`
@@ -118,7 +121,12 @@ Object.assign(RecipeView, {
           actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openReleaseModal()" title="Make ${escHtml(recipe.next_version_string)} from ${escHtml(primary.label)}">Adopt as ${escHtml(recipe.next_version_string)}…</button>`);
           actions.push(`<button class="btn btn-sm btn-ghost" onclick="RecipeView.setTestOpen('${escJs(key)}', false)" title="It stays with its cooks, out of the Testing list">Stop testing</button>`);
         }
-        if (!recipe.current_version) note = `No version yet. Adopt this test to make ${recipe.next_version_string}.`;
+        // What to do next with it.
+        if (primary.open && !primary.cook_count) {
+          note = 'Next: print it, cook from the paper, then record how it went. Until it’s cooked you can still edit it.';
+        } else if (primary.open) {
+          note = `Its cooks are below. When it’s right, adopt it as ${recipe.next_version_string}; or start a new test from a cook.`;
+        }
         if (primary.closed_as === 'superseded') note = `${recipe.current_version?.label || 'A newer version'} came after this test. Reopen it to keep testing it.`;
       } else {
         actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openNewTestModal('${escJs(key)}')">${primary.is_current ? 'New test…' : `New test from ${escHtml(primary.label)}…`}</button>`);

@@ -200,8 +200,13 @@ stays as it is.
 - **What this test changes**: the diff from its base, reusing compare.
 - **Cooks**: the comparison table, with the outcome and "try next" for each.
 - The actions: Print, Record a cook, Adopt as v1.2…, New test from this…, Stop
-  testing. Re-base appears when the base isn't current.
-- The full sheet, collapsed.
+  testing. Re-base appears when the base isn't current. A line under them
+  says what to do next (print and cook it; or, once cooked, adopt it or test
+  again from a cook).
+- The full sheet, always open (a collapsed sheet hid the recipe on a test's
+  own page). Sections with nothing in them aren't shown: no "What this test
+  changes" for a test made before any version, no "Cooks" before the first.
+  The "Testing" strip of open tests shows only when another test is open.
 
 **Cook screen** (`/recipe/<slug>/cooks/new`, and `/cooks/<id>` to edit, phase 3).
 Revised after the cook-recording audit (Nov 2): recording the scenario there

@@ -396,18 +396,18 @@
 
 .test-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
 
-.test-sheet { margin-top: 26px; border-top: 1px solid var(--border); padding-top: 12px; }
+/* The test's actions sit with its name, not across the page from it. */
+.test-page .overview-primary-banner { justify-content: flex-start; }
 
-.test-sheet > summary {
-  cursor: pointer;
-  font-family: var(--font-serif);
-  font-size: 1.05rem;
-  font-weight: 600;
+/* The sheet itself, always shown: the recipe being tested. */
+.test-sheet .test-section-title { margin-bottom: 14px; }
+
+.test-sheet-testing {
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  font-weight: 400;
   color: var(--ink2);
-  padding: 6px 0;
 }
-
-.test-sheet[open] > summary { margin-bottom: 12px; }
 
 .cook-table-wrap {
   /* Positioned, so absolutely placed bits inside (screen-reader labels)

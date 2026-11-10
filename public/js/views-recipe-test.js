@@ -1,34 +1,37 @@
 // ── The test page — what a test changes, and how its cooks went ─────────────
 // /recipe/<slug>/tests/N. From the top: the test and its actions, what it
 // changes from its base (the compare view), its cooks side by side (only the
-// values that differ, at the sheet's 1×), then the sheet itself, collapsed.
+// values that differ, at the sheet's 1×), then the sheet itself. A section
+// with nothing in it isn't shown: no comparison for a test made before any
+// version, no cooks before the first; the banner says what to do next.
 // The decisions sit with the evidence: adopt as written or from a cook, a new
 // test from a cook, stop testing. See docs/VERSIONING-DESIGN.md §3.6, §7.
 Object.assign(RecipeView, {
 
   renderTestPage(body, test) {
-    const label = test.label;
+    const cooked = test.cook_count > 0;
+    if (!cooked) this.cookLogs = [];
     body.innerHTML = `
       <div class="tab-content overview-tab test-page">
         ${this.openTestsStripHtml(test)}
         ${this.overviewPrimaryBannerHtml(test)}
-        <section class="test-section" aria-labelledby="test-changes-title">
-          <h2 class="test-section-title" id="test-changes-title">What it changes${test.base_version ? ` from ${escHtml(test.base_version)}` : ''}</h2>
+        ${test.base_version ? `<section class="test-section" aria-labelledby="test-changes-title">
+          <h2 class="test-section-title" id="test-changes-title">What it changes from ${escHtml(test.base_version)}</h2>
           <div id="test-changes"><div class="loading"><div class="spinner"></div></div></div>
-        </section>
-        <section class="test-section" aria-labelledby="test-cooks-title">
+        </section>` : ''}
+        ${cooked ? `<section class="test-section" aria-labelledby="test-cooks-title">
           <h2 class="test-section-title" id="test-cooks-title">Cooks</h2>
           <div id="test-cooks"><div class="loading"><div class="spinner"></div></div></div>
-        </section>
-        <details class="test-sheet">
-          <summary>The sheet: ${escHtml(label)}${test.testing ? ` — ${escHtml(test.testing)}` : ''}</summary>
+        </section>` : ''}
+        <section class="test-section test-sheet" aria-labelledby="test-sheet-title">
+          <h2 class="test-section-title" id="test-sheet-title">The sheet${test.testing ? ` <span class="test-sheet-testing">· testing ${escHtml(test.testing)}</span>` : ''}</h2>
           ${this.recipeBodyHtml()}
-        </details>
+        </section>
       </div>`;
     StickyFit.watch([body.querySelector('.recipe-sidebar')]);
     this.renderImageManager();
-    this.loadTestChanges(test);
-    this.loadTestCooks(test);
+    if (test.base_version) this.loadTestChanges(test);
+    if (cooked) this.loadTestCooks(test);
   },
 
   apiBase() {
