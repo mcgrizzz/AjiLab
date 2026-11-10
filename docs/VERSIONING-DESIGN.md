@@ -99,6 +99,10 @@ archived, best, latest, viewing, deviation.
    - **Adopt from Cook 2…**, using the existing per-change checklist with the
      intended changes pre-ticked.
    - **New test from Cook 2.** A lucky accident becomes the next test.
+     Saving it closes Test 5 as "followed by Test 6", since the new test
+     carries on from it (also for "New test from Test 5"). The Save dialog
+     has the box ticked; untick it to keep both open and cook them side by
+     side. Undoing the save reopens Test 5, and it can be reopened later.
    - **Stop testing.** It stays as notes and leaves the strip.
    - **Nothing.** Cook it again; each cook adds a column.
 7. **The current version moves on.** Open tests based on an older version say
@@ -284,7 +288,7 @@ is.
 -- entries: tests and lineage
 ALTER TABLE entries ADD COLUMN IF NOT EXISTS test_number   INTEGER;      -- tests only
 ALTER TABLE entries ADD COLUMN IF NOT EXISTS closed_as     TEXT
-  CHECK (closed_as IN ('adopted', 'stopped', 'rebased', 'superseded'));  -- NULL = open
+  CHECK (closed_as IN ('adopted', 'stopped', 'rebased', 'superseded', 'followed'));  -- NULL = open
 ALTER TABLE entries ADD COLUMN IF NOT EXISTS closed_at     TIMESTAMPTZ;
 ALTER TABLE entries ADD COLUMN IF NOT EXISTS from_entry_id    UUID REFERENCES entries(id)   ON DELETE SET NULL;
 ALTER TABLE entries ADD COLUMN IF NOT EXISTS from_cook_log_id UUID REFERENCES cook_logs(id) ON DELETE SET NULL;

@@ -8,7 +8,8 @@ export type CookLogSourceKind = "draft" | "version";
 // What an entry is in the interface: a version (v1.1), a test (Test 4) or the
 // working copy (the draft). Derived; the stored status values don't change.
 export type EntryKind = "version" | "test" | "working_copy";
-export type TestClosedAs = "adopted" | "stopped" | "rebased" | "superseded";
+// followed: a later test made from it (or one of its cooks) carries on from it.
+export type TestClosedAs = "adopted" | "stopped" | "rebased" | "superseded" | "followed";
 
 export const MAIN_BRANCH_SLUG = "main";
 
@@ -75,6 +76,7 @@ export interface VersionRecord {
   is_current: boolean;
   open: boolean;              // an open test
   adopted_as: string | null;  // a test: the version adopted from it
+  followed_by: string | null; // a test: the first later test made from it ("Test 2")
   from_label: string | null;  // a version: "Test 3"; a test: the test it was made from
   cook_count: number;
   last_printed_at: string | null;

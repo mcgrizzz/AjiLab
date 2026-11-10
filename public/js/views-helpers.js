@@ -258,14 +258,29 @@ function entryTitle(entry) {
   return entry.kind === 'test' && entry.testing ? `${entry.label} · ${entry.testing}` : (entry.label || entry.version_string || '');
 }
 
-// What a test came to: "adopted as v1.1", "stopped", "superseded".
+// What a test came to: "adopted as v1.1", "followed by Test 3", "stopped",
+// "superseded".
 function testStateText(entry) {
   if (!entry || entry.kind !== 'test') return '';
   if (entry.open) return 'open';
   if (entry.closed_as === 'adopted') return entry.adopted_as ? `adopted as ${entry.adopted_as}` : 'adopted';
   if (entry.closed_as === 'rebased') return 're-based';
   if (entry.closed_as === 'superseded') return 'superseded';
+  if (entry.closed_as === 'followed') return entry.followed_by ? `followed by ${entry.followed_by}` : 'followed by a later test';
   return 'stopped';
+}
+
+// A closed test that can be opened again (not one adopted or re-based).
+function testReopenable(entry) {
+  return entry?.kind === 'test' && ['stopped', 'superseded', 'followed'].includes(entry.closed_as);
+}
+
+// The open test a new test from the working copy would carry on from: the
+// one it was started from, or from one of whose cooks.
+function followedSourceOf(recipe) {
+  const id = recipe?.draft?.from_entry_id;
+  const source = id ? (recipe.versions || []).find((v) => v.id === id) : null;
+  return source && source.kind === 'test' && source.open ? source : null;
 }
 
 // Option lists for pickers: versions (current first), then tests (open

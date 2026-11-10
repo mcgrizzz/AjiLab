@@ -92,6 +92,11 @@ export function decorateEntries(
         .filter((other) => other.kind === "version" && other.from_entry_id === v.id)
         .sort((a, b) => a.created_at.localeCompare(b.created_at))[0];
       v.adopted_as = adopted?.version_string || null;
+      // A test made from it, or from one of its cooks, has it as from_entry_id.
+      const follower = versions
+        .filter((other) => other.kind === "test" && other.from_entry_id === v.id)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at))[0];
+      v.followed_by = follower?.label || null;
     } else {
       v.base_version = v.parent_version;
     }

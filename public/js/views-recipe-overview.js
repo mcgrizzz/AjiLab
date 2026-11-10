@@ -128,6 +128,7 @@ Object.assign(RecipeView, {
           note = `Its cooks are below. When it’s right, adopt it as ${recipe.next_version_string}; or start a new test from a cook.`;
         }
         if (primary.closed_as === 'superseded') note = `${recipe.current_version?.label || 'A newer version'} came after this test. Reopen it to keep testing it.`;
+        if (primary.closed_as === 'followed') note = `${primary.followed_by || 'A later test'} carries on from this test. Reopen it (⋯) to test both side by side.`;
       } else {
         actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openNewTestModal('${escJs(key)}')">${primary.is_current ? 'New test…' : `New test from ${escHtml(primary.label)}…`}</button>`);
       }
@@ -149,7 +150,7 @@ Object.assign(RecipeView, {
       items.push({ label: entry.testing ? 'Change what it’s testing…' : 'Say what it’s testing…', onClick: () => this.openTestingModal(versionString) });
       items.push({ label: `New test from ${entry.label}…`, onClick: () => this.openNewTestModal(versionString) });
       // Stop testing sits beside Adopt on the page.
-      if (!entry.open && (entry.closed_as === 'stopped' || entry.closed_as === 'superseded')) {
+      if (!entry.open && testReopenable(entry)) {
         items.push({ label: 'Reopen', onClick: () => this.setTestOpen(versionString, true) });
       }
     } else {
@@ -223,7 +224,7 @@ Object.assign(RecipeView, {
         <input id="new-test-testing" class="field-input" placeholder="e.g. more water" maxlength="120" />
         <small style="color:var(--ink2);font-size:0.78rem">One short phrase. It goes on the printout.</small>
       </div>
-      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">The working copy resets to ${escHtml(from.label)} and the Editor opens. Make the change, then save it as ${escHtml(this.nextTestLabelFrom(from))}.</p>
+      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">The working copy resets to ${escHtml(from.label)} and the Editor opens. Make the change, then save it as ${escHtml(this.nextTestLabelFrom(from))}.${from.kind === 'test' && from.open ? ` Saving it closes ${escHtml(from.label)}, as the new test carries on from it; you can keep both open instead.` : ''}</p>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
         <button class="btn btn-primary" id="new-test-go">Start test</button>

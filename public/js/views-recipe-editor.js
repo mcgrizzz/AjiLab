@@ -284,6 +284,9 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     const reason = this.editorSaveSession ? this.saveTestBlockedReason(this.editorSaveSession.value) : '';
     if (reason) { showToast(reason); return; }
     const number = escHtml(this.recipe.next_test_label);
+    // Made from an open test (or its cook): the new one carries on from it,
+    // so it closes unless both are kept open to compare.
+    const source = followedSourceOf(this.recipe);
     showModal(`
       <div class="modal-title">Save as ${number}</div>
       <div class="field-group mt8">
@@ -291,19 +294,23 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
         <input id="save-test-testing" class="field-input" placeholder="e.g. more water" maxlength="120" value="${escHtml(draft?.testing || '')}" />
         <small style="color:var(--ink2);font-size:0.78rem">One short phrase. It goes on the printout.</small>
       </div>
+      ${source ? `<label class="save-test-close">
+        <input type="checkbox" id="save-test-close" checked />
+        <span>Close ${escHtml(source.label)}: ${number} carries on from it<small>Untick to keep both open and cook them side by side.</small></span>
+      </label>` : ''}
       <p class="text-muted" style="font-size:0.85rem;margin-top:10px">You can still edit ${number} until it’s cooked; after that it stays as cooked. You keep editing the working copy.</p>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
         <button class="btn btn-primary" id="save-test-go">Save ${number}</button>
       </div>`);
     const input = document.getElementById('save-test-testing');
-    const go = () => this.saveAsTest(input?.value.trim() || '');
+    const go = () => this.saveAsTest(input?.value.trim() || '', { closeSource: !!document.getElementById('save-test-close')?.checked });
     document.getElementById('save-test-go')?.addEventListener('click', go);
     input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
     setTimeout(() => input?.select(), 60);
   },
 
-  async saveAsTest(testing) {
+  async saveAsTest(testing, { closeSource = false } = {}) {
     const previous = this.recipe?.draft?.current_beta_version || null;
     if (this.editorSaveSession && !(await this.saveDraft({ silent: true, advanceBeta: false }))) {
       showToast("Couldn't save the working copy first. Nothing was saved as a test.");
@@ -311,7 +318,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     }
     let saved;
     try {
-      saved = await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/tests`, { testing });
+      saved = await API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/tests`, { testing, close_source: closeSource });
     } catch (e) {
       showToast('Error: ' + e.message);
       return;
@@ -321,7 +328,7 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     this.activeTab = 'overview';
     await this.renderDetail(document.getElementById('view-container'), saved.version_string, { syncUrl: true });
     if (!saved.created) { showToast(`No changes since ${saved.label}`); return; }
-    showToast(`Saved ${saved.label}`, { action: { label: 'Undo', onClick: () => this.undoDraftBeta(saved.version_string, previous) } });
+    showToast(`Saved ${saved.label}${saved.closed ? `; ${saved.closed} closed` : ''}`, { action: { label: 'Undo', onClick: () => this.undoDraftBeta(saved.version_string, previous) } });
   },
 
   async undoDraftBeta(version, previous) {

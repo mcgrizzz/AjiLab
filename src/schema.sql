@@ -208,7 +208,7 @@ ALTER TABLE entries ADD COLUMN IF NOT EXISTS from_cook_log_id UUID;
 
 ALTER TABLE entries DROP CONSTRAINT IF EXISTS entries_closed_as_check;
 ALTER TABLE entries ADD CONSTRAINT entries_closed_as_check
-  CHECK (closed_as IS NULL OR closed_as IN ('adopted', 'stopped', 'rebased', 'superseded'));
+  CHECK (closed_as IS NULL OR closed_as IN ('adopted', 'stopped', 'rebased', 'superseded', 'followed'));
 ALTER TABLE entries DROP CONSTRAINT IF EXISTS fk_entries_from_entry;
 ALTER TABLE entries ADD CONSTRAINT fk_entries_from_entry
   FOREIGN KEY (from_entry_id) REFERENCES entries(id) ON DELETE SET NULL;

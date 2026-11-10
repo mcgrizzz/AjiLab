@@ -100,6 +100,7 @@ export function entryRowToVersion(row: EntryRow): VersionRecord {
     is_current: false,
     open: entryKind(row) === "test" && !row.closed_as,
     adopted_as: null,
+    followed_by: null,
     from_label: null,
     cook_count: 0,
     last_printed_at: row.last_printed_at ? new Date(row.last_printed_at).toISOString() : null,

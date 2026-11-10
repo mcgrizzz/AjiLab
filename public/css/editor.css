@@ -624,3 +624,22 @@
 @media (min-width: 640px) {
   .editor-textarea { min-height: 360px; }
 }
+
+/* Save as test: close the test this one carries on from. */
+.save-test-close {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 0.88rem;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.save-test-close input { margin-top: 3px; accent-color: var(--accent); }
+
+.save-test-close small {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--ink2);
+}

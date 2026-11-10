@@ -390,12 +390,13 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     }
   });
 
-  // Save the working copy as the next test. Body: { testing }.
+  // Save the working copy as the next test. Body: { testing, close_source }:
+  // close_source closes the test it was started from as followed.
   api.post(`${prefix}/tests`, async (c) => {
     if (!(await getRecipeBySlug(c.req.param("slug"), activeBranch(c)))) return c.json({ error: "not found" }, 404);
     const body = await c.req.json().catch(() => ({}));
     try {
-      return c.json(await saveTest(c.req.param("slug"), { testing: body?.testing }, activeBranch(c)));
+      return c.json(await saveTest(c.req.param("slug"), { testing: body?.testing, close_source: body?.close_source === true }, activeBranch(c)));
     } catch (error: any) {
       return c.json({ error: error?.message || "save failed" }, 400);
     }

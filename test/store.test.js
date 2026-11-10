@@ -51,7 +51,7 @@ test("a new recipe has a working copy and no version yet", async () => {
 test("saving the working copy as a test: numbered, based on the current version, open", async () => {
   const slug = await recipeWithVersion("Save test");
   const saved = await makeTest(slug, "more water", (t) => t.replace("375", "390"));
-  assert.deepEqual(saved, { ok: true, version_string: "test-1", test_number: 1, label: "v1.0 · Test 1", test_key: "v1.0-1", created: true });
+  assert.deepEqual(saved, { ok: true, version_string: "test-1", test_number: 1, label: "v1.0 · Test 1", test_key: "v1.0-1", created: true, closed: null });
 
   const recipe = await get(slug);
   const t1 = entry(recipe, "v1.0 · Test 1");
@@ -104,6 +104,52 @@ test("renaming or stopping a test doesn't touch its timestamp or hide working-co
   const recipe = await get(slug);
   assert.equal(entry(recipe, "v1.0 · Test 1").updated_at, before);
   assert.equal(recipe.draft_change_label, "Working copy has changes");
+});
+
+test("a test made from a test's cook closes that test as followed, unless kept open; undo reopens it", async () => {
+  const { store } = ctx;
+  const slug = await recipeWithVersion("Followed");
+  await makeTest(slug, "more water", (t) => t.replace("375", "390"));
+  const log = await store.createCookLog(slug, { kind: "version", version_string: "test-1" }, { outcome: "Close" });
+  await store.forkCookLogToDraft(slug, log.id, "main", { testing: "more salt" });
+  await store.updateDraft(slug, { cooklang_text: (await get(slug)).draft.cooklang_text.replace("10%g", "12%g") });
+  const saved = await store.saveTest(slug, { close_source: true });
+  assert.equal(saved.closed, "v1.0 · Test 1");
+  let recipe = await get(slug);
+  const t1 = entry(recipe, "v1.0 · Test 1");
+  assert.equal(t1.closed_as, "followed");
+  assert.equal(t1.followed_by, "v1.0 · Test 2");
+  assert.equal(t1.open, false);
+  assert.deepEqual(recipe.open_tests.map((t) => t.label), ["v1.0 · Test 2"]);
+
+  // Undoing the save opens Test 1 again.
+  await store.undoDraftBeta(slug, saved.version_string, null);
+  recipe = await get(slug);
+  assert.equal(entry(recipe, "v1.0 · Test 1").closed_as, null);
+  assert.equal(entry(recipe, "v1.0 · Test 1").followed_by, null);
+
+  // Kept open: both stay in the Testing list.
+  const kept = await store.saveTest(slug, { close_source: false });
+  assert.equal(kept.closed, null);
+  recipe = await get(slug);
+  assert.deepEqual(recipe.open_tests.map((t) => t.label).sort(), ["v1.0 · Test 1", "v1.0 · Test 2"]);
+
+  // A followed test can be reopened like a stopped one.
+  await store.undoDraftBeta(slug, kept.version_string, null);
+  await store.saveTest(slug, { close_source: true });
+  await store.setTestOpen(slug, "test-1", true);
+  assert.equal(entry(await get(slug), "v1.0 · Test 1").open, true);
+});
+
+test("a test from a version closes nothing", async () => {
+  const slug = await recipeWithVersion("Side by side");
+  await makeTest(slug, "more water", (t) => t.replace("375", "390"));
+  const { store } = ctx;
+  await store.forkVersionToDraft(slug, "v1.0", "main", { testing: "less salt" });
+  await store.updateDraft(slug, { cooklang_text: V1.replace("10%g", "8%g") });
+  const saved = await store.saveTest(slug, { close_source: true });
+  assert.equal(saved.closed, null);
+  assert.equal((await get(slug)).open_tests.length, 2);
 });
 
 test("adopting a test based on the current version takes it as written and closes it", async () => {

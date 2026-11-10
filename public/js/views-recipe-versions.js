@@ -97,7 +97,7 @@ Object.assign(RecipeView, {
       isTest
         ? (entry.open
           ? { label: 'Stop testing', onClick: () => this.setTestOpen(versionString, false) }
-          : ((entry.closed_as === 'stopped' || entry.closed_as === 'superseded') ? { label: 'Reopen', onClick: () => this.setTestOpen(versionString, true) } : null))
+          : (testReopenable(entry) ? { label: 'Reopen', onClick: () => this.setTestOpen(versionString, true) } : null))
         : { label: `Fix a typo in ${entry.label}…`, onClick: () => this.fixTypo(versionString) },
       'sep',
       { label: `Delete ${entry.label}…`, danger: true, onClick: () => this.openDeleteVersionModal(versionString) },

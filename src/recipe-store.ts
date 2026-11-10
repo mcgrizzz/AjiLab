@@ -252,12 +252,14 @@ export async function updateDraft(
 
 // Save the working copy as the next test: a fixed sheet with a "Testing:"
 // line. If it still matches the last test saved from it, that test is
-// returned instead of a duplicate.
+// returned instead of a duplicate. With close_source, the open test the
+// working copy was started from (or from one of whose cooks) is closed as
+// followed: the new test carries on from it.
 export async function saveTest(
   slug: string,
-  input: { testing?: string },
+  input: { testing?: string; close_source?: boolean },
   branchSlug = MAIN_BRANCH_SLUG,
-): Promise<{ ok: true; version_string: string; test_number: number; label: string; test_key: string | null; created: boolean }> {
+): Promise<{ ok: true; version_string: string; test_number: number; label: string; test_key: string | null; created: boolean; closed: string | null }> {
   const recipe = await requireRecipe(slug, branchSlug);
   const draft = recipe.draft;
   if (!draft?.cooklang_text.trim()) throw new Error("the working copy is empty");
@@ -267,8 +269,9 @@ export async function saveTest(
     : null;
   if (last && last.kind === "test" && sameDraftState(last, draft.cooklang_text, JSON.parse(draft.tags || "[]"))) {
     if (testing && testing !== last.testing) await sql`UPDATE entries SET changelog = ${testing} WHERE id = ${last.id}`;
-    return { ok: true, version_string: last.version_string!, test_number: last.test_number!, label: last.label, test_key: last.test_key, created: false };
+    return { ok: true, version_string: last.version_string!, test_number: last.test_number!, label: last.label, test_key: last.test_key, created: false, closed: null };
   }
+  const source = input.close_source ? followedSource(recipe.versions, draft) : null;
   const branchId = recipe.branch.id;
   const id = generateId();
   const number = recipe.next_test_number;
@@ -286,9 +289,16 @@ export async function saveTest(
     `;
     // The working copy remembers its last test; the pending Testing line is used up.
     await tx`UPDATE entries SET current_beta_version = ${versionString}, changelog = '' WHERE id = ${draft.id}`;
+    if (source) await tx`UPDATE entries SET closed_as = 'followed', closed_at = now() WHERE id = ${source.id} AND closed_as IS NULL`;
   });
   await syncReferencesForEntry(id, draft.cooklang_text);
-  return { ok: true, version_string: versionString, test_number: number, label: testLabel(base, seq), test_key: testKey(base, seq), created: true };
+  return { ok: true, version_string: versionString, test_number: number, label: testLabel(base, seq), test_key: testKey(base, seq), created: true, closed: source?.label || null };
+}
+
+// The open test a new test from this working copy would carry on from.
+function followedSource(versions: VersionRecord[], draft: VersionRecord | null): VersionRecord | null {
+  const source = draft?.from_entry_id ? versions.find((v) => v.id === draft.from_entry_id) : null;
+  return source && source.kind === "test" && source.open ? source : null;
 }
 
 function findTest(recipe: RecipeRecord, versionString: string): VersionRecord {
@@ -306,7 +316,7 @@ export async function updateTesting(slug: string, versionString: string, testing
   return { ok: true };
 }
 
-// Stop testing, or reopen a stopped or superseded test.
+// Stop testing, or reopen a stopped, superseded or followed test.
 export async function setTestOpen(slug: string, versionString: string, open: boolean, branchSlug = MAIN_BRANCH_SLUG) {
   const recipe = await requireRecipe(slug, branchSlug);
   const test = findTest(recipe, versionString);
@@ -422,10 +432,16 @@ export async function undoDraftBeta(
   `;
   if (n > 0) throw new Error(`${versionString} has cook logs`);
   const previous = previousBeta && recipe.versions.some((v) => v.version_string === previousBeta) ? previousBeta : null;
+  // A test it closed as followed opens again, unless another test follows it.
+  const followed = beta.from_entry_id
+    ? recipe.versions.find((v) => v.id === beta.from_entry_id && v.closed_as === "followed"
+      && !recipe.versions.some((o) => o.id !== beta.id && o.kind === "test" && o.from_entry_id === v.id))
+    : null;
   await sql.begin(async (tx) => {
     await tx`DELETE FROM entries WHERE id = ${beta.id}`;
     // Give the Testing line back to the working copy for the next save.
     await tx`UPDATE entries SET current_beta_version = ${previous}, changelog = ${beta.testing || ""} WHERE id = ${draft.id}`;
+    if (followed) await tx`UPDATE entries SET closed_as = NULL, closed_at = NULL WHERE id = ${followed.id}`;
   });
   return { ok: true, current_beta_version: previous };
 }

@@ -226,6 +226,9 @@ Object.assign(RecipeView, {
   iterateFromCookLog(logId) {
     const log = (this.cookLogs || []).find((entry) => entry.id === logId);
     if (!log) return;
+    const sheet = log.source_kind === 'version' ? entryByKey(this.recipe, log.version_string) : null;
+    const carriesOn = sheet?.kind === 'test' && sheet.open
+      ? ` Saving it closes ${escHtml(sheet.label)}, as the new test carries on from it; you can keep both open instead.` : '';
     showModal(`
       <div class="modal-title">New test from the ${escHtml(fmtDate(log.cooked_at))} cook</div>
       <div class="field-group mt8">
@@ -233,7 +236,7 @@ Object.assign(RecipeView, {
         <input id="cook-test-testing" class="field-input" placeholder="e.g. longer rest, as in this cook" maxlength="120" value="${escHtml((log.changes_to_try_next || '').trim().split('\n')[0].slice(0, 120))}" />
         <small style="color:var(--ink2);font-size:0.78rem">One short phrase. It goes on the printout.</small>
       </div>
-      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">The working copy becomes this cook as cooked${(Number(log.scale) || 1) !== 1 ? ', back at 1×' : ''}. Adjust it in the Editor, then save it as a test.</p>
+      <p class="text-muted" style="font-size:0.85rem;margin-top:10px">The working copy becomes this cook as cooked${(Number(log.scale) || 1) !== 1 ? ', back at 1×' : ''}. Adjust it in the Editor, then save it as a test.${carriesOn}</p>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
         <button class="btn btn-primary" id="cook-test-go">Start test</button>
