@@ -371,7 +371,9 @@ const CookView = {
   fieldHtml(f, { tabbable = true, inList = false } = {}) {
     const value = this.inputText(f);
     const size = Math.max(3, value.length + 1, this.inputText(f, f.original).length + 1);
-    const name = f.kind === 'ingredient' ? f.name : (f.kind === 'timer' ? 'time' : (f.isTemp ? 'temperature' : 'amount'));
+    const name = f.kind === 'ingredient' ? f.name
+      : (f.kind === 'timer' ? 'time'
+        : `${f.kind === 'noteQuantity' ? `${f.name} ` : ''}${f.isTemp ? 'temperature' : 'amount'}`);
     const label = f.kind === 'ingredient'
       ? `<span class="ck-name">${escHtml(f.name)}</span>`
       : (f.kind === 'timer' ? '<span class="ck-icon" aria-hidden="true">⏱</span>' : '');
@@ -419,9 +421,8 @@ const CookView = {
       const skipped = info.deviation === 'skipped';
       if (!added) number += 1;
       const here = this.fields.filter((f) => f.sectionIndex === info.sectionIndex && f.stepNumber === info.stepNumber);
-      const counts = { ingredient: 0, timer: 0, inlineQuantity: 0 };
-      const body = step.map((token) => {
-        if (typeof token === 'string') return escHtml(token);
+      const counts = { ingredient: 0, timer: 0, inlineQuantity: 0, noteQuantity: 0 };
+      const tokenHtml = (token) => {
         // Count every value of a kind, as buildFields does.
         if (token.type in counts) {
           const index = counts[token.type]++;
@@ -435,7 +436,21 @@ const CookView = {
           case 'comment': return renderTextWithBreaks(token.value, this.display.temp || 'F');
           default: return escHtml(token.value || '');
         }
-      }).join('');
+      };
+      // An ingredient's or cookware's note, "(at 90-95°F)", with any value
+      // in it editable like the rest.
+      const noteHtml = (token) => {
+        if (!token.note || (token.type !== 'ingredient' && token.type !== 'cookware')) return '';
+        const parts = token.note_parts || [token.note];
+        const inner = parts.map((part) => {
+          if (typeof part !== 'number') return renderTextWithBreaks(part, this.display.temp || 'F');
+          const index = counts.noteQuantity++;
+          const f = here.find((x) => x.kind === 'noteQuantity' && x.index === index);
+          return f ? this.fieldHtml(f) : escHtml(token.note_values?.[part]?.value || '');
+        }).join('');
+        return ` <span class="cook-note">(${inner})</span>`;
+      };
+      const body = step.map((token) => (typeof token === 'string' ? escHtml(token) : tokenHtml(token) + noteHtml(token))).join('');
       const valueless = !here.some((f) => !this.listed.has(f.id));
       const tools = added
         ? `<span class="cook-badge-added">Added</span><button class="cook-tool" data-act="remove-step" tabindex="-1">Remove</button>`

@@ -244,15 +244,25 @@ function annotateIngredientListDiff(
 }
 
 function annotateStepDiff(logStep: ParsedStep[], sourceStep: ParsedStep[]): void {
-  // Pair ingredients by lowercase name in order (handles duplicate names).
+  // Pair ingredients (and cookware, for the values in their notes) by
+  // lowercase name in order (handles duplicate names).
   const sourceIngByName = new Map<string, ParsedStep[]>();
+  const sourceCookwareByName = new Map<string, ParsedStep[]>();
   for (const tok of sourceStep) {
-    if (tok && typeof tok === "object" && tok.type === "ingredient" && typeof tok.name === "string") {
+    if (tok && typeof tok === "object" && (tok.type === "ingredient" || tok.type === "cookware") && typeof tok.name === "string") {
+      const pools = tok.type === "ingredient" ? sourceIngByName : sourceCookwareByName;
       const key = tok.name.toLowerCase();
-      if (!sourceIngByName.has(key)) sourceIngByName.set(key, []);
-      sourceIngByName.get(key)!.push(tok as ParsedStep);
+      if (!pools.has(key)) pools.set(key, []);
+      pools.get(key)!.push(tok as ParsedStep);
     }
   }
+  // A note's values pair by position within the note.
+  const pairNoteValues = (logTok: ParsedStep, srcTok: ParsedStep) => {
+    (logTok.note_values || []).forEach((value, i) => {
+      const src = srcTok.note_values?.[i];
+      if (src) attachDiffFields(value as any, src as any);
+    });
+  };
   // Sequences for positional matching of timers / inline quantities.
   const sourceTimers = sourceStep.filter((t) => t && typeof t === "object" && t.type === "timer") as ParsedStep[];
   const sourceInlines = sourceStep.filter((t) => t && typeof t === "object" && t.type === "inlineQuantity") as ParsedStep[];
@@ -264,7 +274,10 @@ function annotateStepDiff(logStep: ParsedStep[], sourceStep: ParsedStep[]): void
     if (tok.type === "ingredient" && typeof tok.name === "string") {
       const pool = sourceIngByName.get(tok.name.toLowerCase());
       const src = pool?.shift();
-      if (src) attachDiffFields(tok as any, src as any);
+      if (src) { attachDiffFields(tok as any, src as any); pairNoteValues(tok, src); }
+    } else if (tok.type === "cookware" && typeof tok.name === "string") {
+      const src = sourceCookwareByName.get(tok.name.toLowerCase())?.shift();
+      if (src) pairNoteValues(tok, src);
     } else if (tok.type === "timer") {
       const src = sourceTimers[timerCursor++];
       if (src) attachDiffFields(tok as any, src as any);

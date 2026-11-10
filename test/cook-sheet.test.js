@@ -229,24 +229,46 @@ test("values without an amount still count, as the server counts them", () => {
   assert.equal(updateStepQuantity("Add @oil, then stir.", 0, 1, "ingredient", 0, "0", ""), "Add oil, then stir.");
 });
 
-test("a temperature in an ingredient's note is part of the note, not a value", () => {
-  // Your bug: `(at ^{90-95%F})` showed placeholder characters, and the cook
-  // screen counted it as a value, so editing the oven temperature after it
-  // would have changed the wrong thing.
+test("a value in an ingredient's note is that ingredient's, counted on its own; prose in a note is words", () => {
+  // `(at ^{90-95%F})` once showed placeholder characters, and counting it
+  // among the step's values would have sent an oven edit to the water. It's
+  // a noteQuantity now: editable, and numbered apart from the step's values.
   for (const scale of [1, 2]) {
     const text = scaleCooklangText("Mix @flour{450%g} and @water{365-380%g}(at ^{90-95%F}) in a #bowl{}(warm, 30°C), then heat to ^{230%C} for ~{5%min}.", scale);
     const parsed = parseCooklang(text);
     assert.doesNotMatch(JSON.stringify(parsed), /[\uE000-\uF8FF]/);
     assert.equal(parsed.ingredients[1].note, "at 90-95°F");
+    const water = parsed.steps[0].find((t) => t.name === "water");
+    assert.deepEqual(plain(water.note_parts), ["at ", 0]);
+    assert.equal(water.note_values[0].quantity, "90-95");
+    assert.equal(parsed.steps[0].find((t) => t.name === "bowl").note_values, undefined, "30°C in words isn't a value");
     const fields = fieldsOf(text);
-    assert.deepEqual(fields.map((f) => `${f.kind}#${f.index}`), ["ingredient#0", "ingredient#1", "inlineQuantity#0", "timer#0"]);
+    assert.deepEqual(fields.map((f) => `${f.kind}#${f.index}`), ["ingredient#0", "ingredient#1", "noteQuantity#0", "inlineQuantity#0", "timer#0"]);
+    const note = fields.find((f) => f.kind === "noteQuantity");
+    assert.equal(note.name, "water");
+    assert.equal(note.isTemp, true);
+    assert.deepEqual(note.key, { kind: "noteQuantity", name: "water", n: 0 });
+    assert.equal(note.current.quantity, "90-95", "temperatures don't scale");
     for (const field of fields) {
       const next = updateStepQuantity(text, field.sectionIndex, field.stepNumber, field.kind, field.index, "777", field.current.units);
       const after = fieldsOf(next);
       after.forEach((other, i) => assert.equal(other.current.quantity, other.id === field.id ? "777" : fields[i].current.quantity, `${field.kind}#${field.index} at ${scale}×`));
-      assert.match(next, /\(at \^\{90-95%F\}\)/, "the note is untouched");
+      if (field.kind === "noteQuantity") assert.match(next, /@water\{[^}]*\}\(at \^\{777%F\}\)/);
+      else assert.match(next, /\(at \^\{90-95%F\}\)/, "the note is untouched");
     }
   }
+});
+
+test("a cook that changed a note's value shows what the sheet said, and the comparison names it", () => {
+  const sheet = "Mix @water{380%g}(at ^{90-95%F}) and @flour{500%g}.";
+  const cooked = "Mix @water{380%g}(at ^{85%F}) and @flour{500%g}.";
+  const parsed = parseCooklang(cooked);
+  annotateCookLogDiff(parsed.steps, parseCooklang(sheet).steps);
+  const fields = plain(CookSheet.buildFields(parsed.steps));
+  const note = fields.find((f) => f.kind === "noteQuantity");
+  assert.deepEqual([note.original.quantity, note.current.quantity], ["90-95", "85"]);
+  assert.equal(CookSheet.changeKind(note), "changed");
+  assert.equal(CookSheet.cookChangeSummary(fields, 1, [CookSheet.keyId(note.key)]), "water temperature: 90-95°F → 85°F");
 });
 
 // A sheet and its cooks, parsed the way the test page parses them.

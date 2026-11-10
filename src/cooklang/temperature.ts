@@ -156,6 +156,35 @@ export function splitTextWithTemperatures(
   return tokens.length ? tokens : splitTextIntoParsedSteps(text, meta);
 }
 
+// The values in a component's note (`@water{380%g}(at ^{90-95%F})`): each
+// `^{}` / `%{}` as an inlineQuantity-shaped value, and the note as parts,
+// strings with the index of each value where it sits (["at ", 0]). Null
+// when the note has none.
+export function noteValueParts(
+  note: string | null,
+  extractions: TemperatureExtraction[],
+): { note_values: ParsedStep[]; note_parts: Array<string | number> } | null {
+  if (!note || !note.includes(TEMP_MARK_START)) return null;
+  const values: ParsedStep[] = [];
+  const parts: Array<string | number> = [];
+  TEMP_PLACEHOLDER_RE.lastIndex = 0;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TEMP_PLACEHOLDER_RE.exec(note))) {
+    const temp = extractions[Number(m[1])];
+    if (!temp) continue;
+    if (m.index > last) parts.push(note.slice(last, m.index));
+    const value: ParsedStep = { type: "inlineQuantity", value: temp.display, quantity: temp.quantity, units: temp.units, range: temp.range };
+    if (temp.is_temperature) value.kind = "temperature";
+    parts.push(values.length);
+    values.push(value);
+    last = m.index + m[0].length;
+  }
+  if (!values.length) return null;
+  if (last < note.length) parts.push(note.slice(last));
+  return { note_values: values, note_parts: parts };
+}
+
 // The parser only gives step text back to splitTextWithTemperatures. A `^{}`
 // or `%{}` anywhere else (an ingredient's note `@water{380%g}(at ^{90%F})`,
 // a `>` note, a section name, the metadata) would keep its placeholder, which

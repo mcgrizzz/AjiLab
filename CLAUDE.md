@@ -75,6 +75,7 @@ Wraps `@cooklang/cooklang` and adds AjiLab-specific syntax on top:
 - `@?`, `@-`, `@&`, `@&(=N)` — annotated ingredients (optional/hidden/repeat-reference/intermediate). Parsed by `collectComponentAnnotations`.
 - `!+ ` / `!- ` — cook log deviation markers (added/skipped step). Resolved at render via `resolveDeviationMarkers`.
 - `@./slug/v1.0{}` — recipe reference. `parseReferencePath` splits slug/version/categoryPath.
+- `@water{380%g}(at ^{90-95%F})` — a `^{}` / `%{}` inside an ingredient's or cookware's note is a value of that component: the parser gives the token `note_values` and `note_parts`, the step actions address it as `noteQuantity` (numbered on its own, so the step's `inlineQuantity` order doesn't change), and the cook screen, cook diff and comparison table treat it like any value. A prose temperature in a note ("at 200°F") stays words. The name says what an ingredient is; brand or preparation goes in the note.
 - **Cook log diff annotation** — `pairCookLogStepsToSource` aligns log steps to source steps by position + Jaccard similarity (threshold 0.3, nearby radius 2), then `annotateStepDiff` attaches per-token diff fields used by the renderer.
 
 `parseCooklang(text)` is the single entry point and returns a `ParsedRecipe` with sections, steps, ingredient summary, computed metrics, and editable quantity tokens.

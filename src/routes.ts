@@ -675,7 +675,7 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
       const tokenIndex = Number(body?.token_index);
       const newQuantity = String(body?.new_quantity ?? "");
       const newUnits = String(body?.new_units ?? "");
-      const kindOk = kind === "ingredient" || kind === "timer" || kind === "inlineQuantity";
+      const kindOk = kind === "ingredient" || kind === "timer" || kind === "inlineQuantity" || kind === "noteQuantity";
       if (!kindOk || !Number.isFinite(tokenIndex) || tokenIndex < 0) {
         return c.json({ error: "token_kind + token_index required" }, 400);
       }

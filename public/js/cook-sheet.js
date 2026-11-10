@@ -46,20 +46,14 @@ const CookSheet = (() => {
       const info = stepInfo(step);
       if (!Number.isFinite(info.stepNumber)) continue;
       const added = info.deviation === 'added';
-      const counts = { ingredient: 0, timer: 0, inlineQuantity: 0 };
-      for (const token of step) {
-        if (!token || typeof token !== 'object' || !KINDS.includes(token.type)) continue;
-        // Every value of a kind counts, with an amount or not ("@pepper{}",
-        // "@oil"), as the server's step actions count them.
-        const index = counts[token.type]++;
-        if (!hasQuantity(token)) continue;
-        const name = token.type === 'inlineQuantity' ? '' : lower(token.name);
+      const counts = { ingredient: 0, timer: 0, inlineQuantity: 0, noteQuantity: 0 };
+      const push = (token, kind, index, name) => {
         let key = null;
         if (!added) {
-          const id = `${token.type}|${name}`;
+          const id = `${kind}|${lower(name)}`;
           const n = ordinals.get(id) || 0;
           ordinals.set(id, n + 1);
-          key = { kind: token.type, name, n };
+          key = { kind, name: lower(name), n };
         }
         const current = { quantity: bareQuantity(token.quantity, token.units), units: String(token.units || '') };
         const annotated = token.source_quantity !== undefined && token.source_quantity !== null;
@@ -70,17 +64,32 @@ const CookSheet = (() => {
           id: `f${fields.length}`,
           sectionIndex: info.sectionIndex,
           stepNumber: info.stepNumber,
-          kind: token.type,
+          kind,
           index,
-          name: String(token.name || ''),
-          isTemp: token.type === 'inlineQuantity' && TEMP_UNIT.test(String(token.units || '')),
+          name,
+          isTemp: (kind === 'inlineQuantity' || kind === 'noteQuantity') && TEMP_UNIT.test(String(token.units || '')),
           // Scaling changes only ingredients that aren't fixed (@salt{=2%g}).
-          scales: token.type === 'ingredient' && !token.fixed,
+          scales: kind === 'ingredient' && !token.fixed,
           key,
           added,
           original,
           current,
         });
+      };
+      for (const token of step) {
+        if (!token || typeof token !== 'object') continue;
+        if (KINDS.includes(token.type)) {
+          // Every value of a kind counts, with an amount or not ("@pepper{}",
+          // "@oil"), as the server's step actions count them.
+          const index = counts[token.type]++;
+          if (hasQuantity(token)) push(token, token.type, index, token.type === 'inlineQuantity' ? '' : String(token.name || ''));
+        }
+        // The values in an ingredient's or cookware's note ("water, at
+        // 90-95°F") follow it, numbered on their own as the server numbers them.
+        for (const value of token.note_values || []) {
+          const index = counts.noteQuantity++;
+          if (hasQuantity(value)) push(value, 'noteQuantity', index, String(token.name || ''));
+        }
       }
     }
     return fields;
@@ -372,6 +381,8 @@ const CookSheet = (() => {
     const where = step ? `, step ${step}` : '';
     if (field.kind === 'ingredient') return repeated.has(lower(field.name)) ? `${field.name}${where}` : field.name;
     if (field.kind === 'timer') return `time${where}`;
+    // A value in an ingredient's note: "water temperature".
+    if (field.kind === 'noteQuantity') return `${field.name} ${field.isTemp ? 'temperature' : 'amount'}${repeated.has(lower(field.name)) ? where : ''}`;
     return `${field.isTemp ? 'temperature' : 'amount'}${where}`;
   }
 

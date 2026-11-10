@@ -62,6 +62,13 @@ export interface ParsedStep {
   units?: string;
   range?: QuantityRange | null;
   kind?: "temperature";
+  // An ingredient's or cookware's note with values in it
+  // (`@water{380%g}(at ^{90-95%F})`): each `^{}` / `%{}` as an
+  // inlineQuantity-shaped value, and the note as text parts with each value's
+  // index where it sits (["at ", 0]). They're the step's noteQuantity values,
+  // counted on their own (mutations.ts scanAnnotations).
+  note_values?: ParsedStep[];
+  note_parts?: Array<string | number>;
   // Cook log deviation marker — set on every token in a step prefixed with
   // `!+ ` (added) or `!- ` (skipped). The prefix is stripped from the rendered
   // text. Modifications are detected by diffing against source, not marked.

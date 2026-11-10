@@ -151,6 +151,11 @@
 
 .ck-icon { font-size: 0.85em; color: var(--chip-timer-fg); }
 
+/* An ingredient's or cookware's note, "(at 90-95°F)", in a step. */
+.cook-note { color: var(--ink2); font-style: italic; }
+
+.cook-note .ck-field { font-style: normal; }
+
 /* A time's unit, picked from a list beside its number. */
 .ck-unit {
   font: inherit;

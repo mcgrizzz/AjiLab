@@ -89,7 +89,8 @@ const DEVIATION_MARKERS = {
 } as const;
 
 export interface AnnotationMatch {
-  kind: "ingredient" | "timer" | "inlineQuantity";
+  // noteQuantity: a `^{…}` / `%{…}` inside a component's note.
+  kind: "ingredient" | "timer" | "inlineQuantity" | "noteQuantity";
   // Offsets relative to the slice we scanned (the step's joined line text).
   sigil_start: number;       // position of `@` / `~` / `%` / `^`
   name_end: number;          // position just after the name (= position of `{`)
@@ -195,10 +196,10 @@ export function scanAnnotations(text: string): AnnotationMatch[] {
       prose: { start, end },
     });
   }
-  // A temperature inside a component's note (`@water{380%g}(at ^{90%F})`,
-  // `#pot{}(at 200°F)`) is part of the note, not a value of the step: the
-  // parser makes no token for it, so counting it would shift every value
-  // after it and an edit would land on the wrong one.
+  // A value inside a component's note (`@water{380%g}(at ^{90%F})`) belongs
+  // to that component, not to the step: it's a noteQuantity, counted on its
+  // own (the parser's note_values), so the step's inline quantities keep
+  // their order. A prose temperature in a note ("at 200°F") is just words.
   const noteSpans: Array<[number, number]> = [];
   const NOTE_RE = /[@#][^@#~\n{}]*\{[^}\n]*\}\(([^)\n]*)\)/g;
   let nm: RegExpExecArray | null;
@@ -208,7 +209,10 @@ export function scanAnnotations(text: string): AnnotationMatch[] {
   }
   const inNote = (a: AnnotationMatch) => a.kind === "inlineQuantity"
     && noteSpans.some(([s, e]) => a.sigil_start > s && a.sigil_start < e);
-  return out.filter((a) => !inNote(a)).sort((a, b) => a.sigil_start - b.sigil_start);
+  return out
+    .filter((a) => !(inNote(a) && a.prose))
+    .map((a) => (inNote(a) ? { ...a, kind: "noteQuantity" as const } : a))
+    .sort((a, b) => a.sigil_start - b.sigil_start);
 }
 
 function composeBraceContent(quantity: string, units: string): string {
@@ -223,7 +227,7 @@ export function updateStepQuantity(
   text: string,
   sectionIndex: number,
   stepNumber: number,
-  kind: "ingredient" | "timer" | "inlineQuantity",
+  kind: "ingredient" | "timer" | "inlineQuantity" | "noteQuantity",
   index: number,
   newQuantity: string,
   newUnits: string,

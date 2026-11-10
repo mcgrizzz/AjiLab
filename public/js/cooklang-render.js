@@ -118,7 +118,7 @@ const CL = {
           case 'ingredient': {
             const prepRef = buildPrepReferenceAttrs(token);
             const amtHtml = ingredientAmountHtml(token, token.fixed ? 1 : scale, showAmounts, options.units);
-            const noteHtml = token.note ? ` <span class="s-component-note">(${proseHtml(token.note, options.temperatureUnit)})</span>` : '';
+            const noteHtml = componentNoteHtml(token, options.temperatureUnit);
             const optHtml = token.optional ? ' <span class="s-component-optional">(optional)</span>' : '';
             if (token.recipe_reference) {
               return renderRecipeReferenceChip(token) + amtHtml + noteHtml + optHtml;
@@ -129,7 +129,7 @@ const CL = {
             return `<span class="s-ingredient${token.optional ? ' s-ingredient-optional' : ''}">${escHtml(token.name)}${amtHtml}</span>${noteHtml}${optHtml}`;
           }
           case 'cookware': {
-            const noteHtml = token.note ? ` <span class="s-component-note">(${proseHtml(token.note, options.temperatureUnit)})</span>` : '';
+            const noteHtml = componentNoteHtml(token, options.temperatureUnit);
             return `<span class="s-cookware">${escHtml(token.name)}</span>${noteHtml}`;
           }
           case 'timer': {
@@ -537,6 +537,26 @@ function valueArrowSuffix(token) {
 
 // Inverse: from→to display where from = source, to = current value. Used by
 // timer / inline so the reading order matches the ingredient amount style.
+// An ingredient's or cookware's note, " (at 90-95°F)": a value written in
+// it with ^{…} / %{…} (note_values) is drawn like one in the step, in the
+// reader's temperature unit, with "was → now" on a cook that changed it.
+function componentNoteHtml(token, preferredUnit) {
+  if (!token?.note) return '';
+  const inner = Array.isArray(token.note_parts)
+    ? token.note_parts.map((part) => {
+      if (typeof part !== 'number') return proseHtml(part, preferredUnit);
+      const value = token.note_values?.[part];
+      if (!value) return '';
+      const isTemp = canonicalTemperatureUnit(value.units);
+      const html = isTemp
+        ? `<span class="s-temp">${formatInlineTemperatureToken(value, preferredUnit)}</span>`
+        : `<span class="s-quantity">${escHtml(value.value)}</span>`;
+      return valueWithSource(value, html);
+    }).join('')
+    : proseHtml(token.note, preferredUnit);
+  return ` <span class="s-component-note">(${inner})</span>`;
+}
+
 function valueWithSource(token, currentHtml) {
   if (!hasSourceDiff(token)) return currentHtml;
   const was = token.source_value != null && token.source_value !== ''

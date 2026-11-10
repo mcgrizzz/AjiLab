@@ -24,7 +24,7 @@ import type {
   QuantityRange,
 } from "../cooklang.ts";
 import { extractComputedMetrics } from "./metrics.ts";
-import { extractTemperatures, splitTextWithTemperatures, restoreTemperaturePlaceholders } from "./temperature.ts";
+import { extractTemperatures, splitTextWithTemperatures, restoreTemperaturePlaceholders, noteValueParts } from "./temperature.ts";
 import {
   splitTextIntoParsedSteps,
   makeStepId,
@@ -545,6 +545,7 @@ export function parseCooklang(text: string): ParsedRecipe {
                   reference_section_name: referenceSectionName,
                   recipe_reference: !!refPath || (annotation?.recipe || false),
                   reference_path: refPath,
+                  ...noteValueParts(ingredientNote(ing), temperatureExtractions),
                 }];
               }
               case "cookware": {
@@ -557,6 +558,7 @@ export function parseCooklang(text: string): ParsedRecipe {
                   step_id: stepId,
                   step_number: stepNumber,
                   section_index: sectionIndex,
+                  ...noteValueParts(cookwareNote(cw), temperatureExtractions),
                 }];
               }
               case "timer": {
