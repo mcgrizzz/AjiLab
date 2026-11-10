@@ -66,10 +66,13 @@
 .step-text .s-timer,
 .step-text .s-temp,
 .step-text .s-quantity {
-  padding: 1px 6px;
+  padding: 1px 4px;
   border-radius: 4px;
   font-weight: 600;
 }
+
+/* A chip and the punctuation after it wrap as one. */
+.step-text .s-glue { white-space: nowrap; }
 
 .step-text .s-ingredient {
   color: var(--chip-ingredient-fg);
@@ -108,8 +111,7 @@
 .step-text .s-timer {
   color: var(--chip-timer-fg);
   background: var(--chip-timer-bg);
-  font-family: var(--font-mono);
-  font-size: 0.88em;
+  font-variant-numeric: tabular-nums;
 }
 
 .media-strip-card {
@@ -177,8 +179,8 @@
 button.s-timer-start {
   border: 0;
   font: inherit;
-  font-family: var(--font-mono);
-  font-size: 0.88em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
   line-height: inherit;
 }

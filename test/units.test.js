@@ -133,6 +133,22 @@ test('renderer applies unit choices to the ingredient list and step amounts', ()
   assert.match(CL.renderSteps(steps, 1, {}, true, { units: none }), /\(1 L\)/);
 });
 
+test('punctuation after a chip wraps with it', () => {
+  const { CL } = setup();
+  const steps = [[
+    { type: 'text', value: 'Season with ' },
+    { type: 'ingredient', name: 'salt' },
+    { type: 'text', value: ', ' },
+    { type: 'ingredient', name: 'pepper' },
+    { type: 'text', value: ' and rest ' },
+    { type: 'timer', value: '48 hours', quantity: 48, units: 'hours' },
+    { type: 'text', value: '.' },
+  ]];
+  const html = CL.renderSteps(steps, 1, {}, false, { units: none });
+  assert.match(html, /<span class="s-glue"><span class="s-ingredient">salt<\/span>,<\/span> <span class="s-ingredient">pepper<\/span> and rest/);
+  assert.match(html, /<span class="s-glue"><span class="s-timer">⏱ 48 hours<\/span>\.<\/span><\/span><\/li>/);
+});
+
 test('US amounts use fractions within 3%, metric uses decimals', () => {
   const { Units } = setup();
   assert.equal(Units.present(450, 'g', 1, pick('pasta', 'lb'), 'pasta').text, '1 lb', 'no false precision (0.99 lb)');

@@ -556,8 +556,14 @@
   border-radius: var(--r);
 }
 
-/* The step being edited, marked in the preview. */
+/* The step being edited, marked in the preview. It reaches into the
+   preview's padding so the bar sits clear of the step number and nothing
+   moves when the mark does. */
 .editor-preview .step-item.preview-cursor {
+  margin: 0 -12px;
+  padding-left: 12px;
+  padding-right: 12px;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 70%, transparent);
   background: color-mix(in srgb, var(--accent) 5%, transparent);
 }

@@ -112,7 +112,7 @@ const CL = {
           if (metaKeys.includes(key) || knownMeta.includes(key) || key.startsWith('metric.')) return '';
         }
       }
-      const html = step.map(token => {
+      const renderToken = (token) => {
         if (typeof token === 'string') return escHtml(token);
         switch (token.type) {
           case 'ingredient': {
@@ -167,7 +167,24 @@ const CL = {
           default:
             return escHtml(token.value || '');
         }
-      }).join('');
+      };
+      // Punctuation right after a chip ("@salt{}, @pepper{}.") stays with
+      // it, so a line never starts with a comma.
+      const tokens = step.slice();
+      const parts = [];
+      for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i];
+        const next = tokens[i + 1];
+        const isChip = token && typeof token === 'object' && token.type !== 'text' && token.type !== 'comment';
+        const punct = isChip && next?.type === 'text' ? /^[,.;:!?)\]…]+/.exec(next.value || '') : null;
+        if (punct) {
+          parts.push(`<span class="s-glue">${renderToken(token)}${escHtml(punct[0])}</span>`);
+          tokens[i + 1] = { ...next, value: next.value.slice(punct[0].length) };
+        } else {
+          parts.push(renderToken(token));
+        }
+      }
+      const html = parts.join('');
       const stepId = getRenderedStepId(step);
       const deviation = getStepDeviation(step);
       const isModified = !deviation && stepHasModification(step);
