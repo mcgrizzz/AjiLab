@@ -440,9 +440,47 @@ const Units = (() => {
     return String(aUnits ?? '').trim().toLowerCase() === String(bUnits ?? '').trim().toLowerCase();
   }
 
+  // ── Converted temperatures ──
+  // 450°F is 232.22…°C. How that's shown is the reader's choice, kept on
+  // this device: to a tenth (232.2, whole when close), whole degrees (232),
+  // or to 5° when hot (230; 100°C / 212°F and up, whole degrees below).
+  // Only converted values are rounded; a temperature shown as written is
+  // left alone. The server's compare (step-diff.ts) rounds the same way.
+  const TEMPERATURE_ROUNDINGS = ['tenth', 'whole', 'five'];
+
+  function readPref(name, fallback) {
+    try { return globalThis.localStorage?.getItem(name) || fallback; } catch { return fallback; }
+  }
+  function writePref(name, value) {
+    try { globalThis.localStorage?.setItem(name, value); } catch {}
+  }
+
+  function temperatureRounding() {
+    const r = readPref('ajilab:temp-rounding', 'tenth');
+    return TEMPERATURE_ROUNDINGS.includes(r) ? r : 'tenth';
+  }
+  function setTemperatureRounding(r) {
+    if (TEMPERATURE_ROUNDINGS.includes(r)) writePref('ajilab:temp-rounding', r);
+  }
+  // The unit temperatures are shown in (°F unless the reader picked °C).
+  function preferredTemperature() {
+    return readPref('ajilab:temp-unit', 'F') === 'C' ? 'C' : 'F';
+  }
+  function setPreferredTemperature(unit) {
+    if (unit === 'C' || unit === 'F') writePref('ajilab:temp-unit', unit);
+  }
+
+  // A converted temperature in `unit`, rounded, as text without the unit.
+  function roundTemperature(value, unit, rounding = temperatureRounding()) {
+    if (rounding === 'whole') return String(Math.round(value));
+    if (rounding === 'five') return String(value >= (unit === 'C' ? 100 : 212) ? Math.round(value / 5) * 5 : Math.round(value));
+    return String(Math.abs(value - Math.round(value)) < 0.05 ? Math.round(value) : Number(value.toFixed(1)));
+  }
+
   return { UNITS, key, lookup, unitLabel, parseAmount, parseQuantity, formatNumber,
     overrideKey, present, alternatives, scaleForTarget, temperatureKey,
-    compareAmounts, sameAmount, percentChange, comparableUnits };
+    compareAmounts, sameAmount, percentChange, comparableUnits,
+    TEMPERATURE_ROUNDINGS, temperatureRounding, setTemperatureRounding, preferredTemperature, setPreferredTemperature, roundTemperature };
 })();
 
 if (typeof globalThis !== 'undefined') globalThis.Units = Units;

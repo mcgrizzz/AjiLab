@@ -181,6 +181,15 @@ Object.assign(RecipeView, {
       : '';
     const parsedEntry = this.cookLogParsed?.[log.id];
     const parsed = parsedEntry?.parsed;
+    // The changes marked "I meant this", at the cook's own scale.
+    const meant = parsed && log.intended?.length
+      ? CookSheet.cookChangeList(CookSheet.buildFields(parsed.steps), 1, log.intended.map(CookSheet.keyId))
+      : [];
+    const meantHtml = meant.length
+      ? `<div class="cook-log-meant"><span class="cook-log-next-label">Meant</span> ${meant.map((m) => escHtml(m)).join('; ')}</div>`
+      : '';
+    // Temperatures as the cook was recorded (°C if the paper was).
+    const temperatureUnit = log.display?.temp || 'F';
     if (!this.expandedCookLogs) this.expandedCookLogs = new Set();
     const isOpen = this.expandedCookLogs.has(log.id);
     const recipeHtml = parsed
@@ -189,8 +198,8 @@ Object.assign(RecipeView, {
           <div class="cook-log-recipe-body">
             ${CL.renderMetrics(parsed.metrics)}
             <div class="cook-log-recipe-grid">
-              ${parsed.ingredients?.length ? `<div class="cook-log-recipe-ingredients"><div class="section-head">Ingredients</div>${CL.renderIngredientSummary(parsed.ingredient_summary, 1, { mode: this.ingredientSummaryMode, disableScale: true })}</div>` : ''}
-              ${parsed.steps?.length ? `<div class="cook-log-recipe-steps"><div class="section-head">Steps</div>${CL.renderSteps(parsed.steps, 1, parsed.metadata, true)}</div>` : ''}
+              ${parsed.ingredients?.length ? `<div class="cook-log-recipe-ingredients"><div class="section-head">Ingredients</div>${CL.renderIngredientSummary(parsed.ingredient_summary, 1, { mode: this.ingredientSummaryMode, disableScale: true, temperatureUnit })}</div>` : ''}
+              ${parsed.steps?.length ? `<div class="cook-log-recipe-steps"><div class="section-head">Steps</div>${CL.renderSteps(parsed.steps, 1, parsed.metadata, true, { temperatureUnit })}</div>` : ''}
             </div>
           </div>
         </details>`
@@ -204,6 +213,7 @@ Object.assign(RecipeView, {
       </div>
       ${cookPhotosHtml(log)}
       ${nextHtml}
+      ${meantHtml}
       ${recipeHtml}
       ${detailHtml}
       <div class="cook-log-actions">
@@ -291,7 +301,7 @@ Object.assign(RecipeView, {
     try {
       const fromKey = `cooklog-source:${logId}`;
       const toKey = `cooklog:${logId}`;
-      const cmp = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/compare?from=${encodeURIComponent(fromKey)}&to=${encodeURIComponent(toKey)}&temp=${encodeURIComponent(this.temperatureUnit || 'F')}`);
+      const cmp = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/compare?from=${encodeURIComponent(fromKey)}&to=${encodeURIComponent(toKey)}&temp=${encodeURIComponent(this.temperatureUnit || 'F')}&round=${Units.temperatureRounding()}`);
       this.renderCompareResult(target, cmp);
     } catch (e) {
       target.innerHTML = `<p class="text-muted">Error: ${escHtml(e.message)}</p>`;
@@ -532,6 +542,8 @@ Object.assign(RecipeView, {
     const r = btn.getBoundingClientRect();
     menu.style.top = `${r.bottom + window.scrollY + 4}px`;
     menu.style.left = `${Math.max(8, r.right + window.scrollX - menu.offsetWidth)}px`;
+    actionMenuOpener = btn;
+    menu.querySelector('.step-action-item')?.focus();
     menu.addEventListener('click', (e) => {
       const item = e.target.closest('.step-action-item');
       if (!item) return;

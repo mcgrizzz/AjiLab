@@ -133,7 +133,7 @@ test('renderer applies unit choices to the ingredient list and step amounts', ()
   assert.match(text(CL.renderSteps(steps, 1, {}, true, { units: none })), /\(1 L\)/);
 });
 
-test('a timer keeps the punctuation after it; other chips are left to wrap', () => {
+test('punctuation after a chip sits snug against it; a timer also keeps it on its line', () => {
   const { CL } = setup();
   const steps = [[
     { type: 'text', value: 'Season with ' },
@@ -143,8 +143,9 @@ test('a timer keeps the punctuation after it; other chips are left to wrap', () 
     { type: 'text', value: '.' },
   ]];
   const html = CL.renderSteps(steps, 1, {}, false, { units: none });
-  assert.match(html, /<span class="s-ingredient">salt<\/span>, then rest/);
-  assert.match(html, /<span class="s-glue"><span class="s-timer">⏱ 48 hours<\/span>\.<\/span><\/span><\/li>/);
+  // Other chips are left to wrap: no glue around the salt.
+  assert.match(html, /with <span class="s-ingredient">salt<\/span><span class="s-punct">,<\/span> then rest/);
+  assert.match(html, /<span class="s-glue"><span class="s-timer">⏱ 48 hours<\/span><span class="s-punct">\.<\/span><\/span><\/span><\/li>/);
 });
 
 test('an amount is drawn as its number, then its unit', () => {

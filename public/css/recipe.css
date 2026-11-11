@@ -69,7 +69,12 @@
   color: var(--ink3);
 }
 
+/* As wide as its longest choice, but never wider than the page: a long
+   Testing line would push a phone's page sideways. */
 .version-select {
+  max-width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
   font-family: var(--font-sans);
   font-size: 0.82rem;
   padding: 3px 8px;
@@ -1038,6 +1043,11 @@ button.ing-qty {
 }
 
 .cook-log-next-text { font-size: 0.9rem; line-height: 1.5; color: var(--ink); }
+
+/* The changes the cook marked "I meant this". */
+.cook-log-meant { font-size: 0.88rem; color: var(--ink2); }
+
+.cook-log-meant .cook-log-next-label { margin-right: 4px; }
 
 .overview-cook-next {
   margin-top: 8px;

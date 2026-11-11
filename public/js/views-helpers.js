@@ -463,8 +463,30 @@ function openActionMenu(event, btn, items) {
     actions[Number(item.dataset.i)]?.();
   });
   setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
+  actionMenuOpener = btn;
   menu.querySelector('.step-action-item')?.focus();
 }
+
+// Esc closes an open ⋯ menu and goes back to the button that opened it;
+// ↑/↓ move between its items.
+let actionMenuOpener = null;
+document.addEventListener('keydown', (e) => {
+  const menu = document.querySelector('.step-action-menu');
+  if (!menu) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    document.querySelectorAll('.step-action-menu').forEach((m) => m.remove());
+    if (actionMenuOpener?.isConnected) actionMenuOpener.focus();
+    actionMenuOpener = null;
+  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const items = [...menu.querySelectorAll('.step-action-item')];
+    if (!items.length) return;
+    e.preventDefault();
+    const at = items.indexOf(document.activeElement);
+    const next = e.key === 'ArrowDown' ? (at + 1) % items.length : (at <= 0 ? items.length - 1 : at - 1);
+    items[next].focus();
+  }
+});
 
 // A phone photo, made small enough to store and load quickly: at most 2000 px
 // on its long side, as JPEG. A type the server doesn't take (HEIC) is turned
@@ -488,4 +510,13 @@ async function shrinkImageFile(file, { maxEdge = 2000, minBytes = 1_500_000 } = 
   } catch {
     return file;
   }
+}
+
+// How a converted temperature is rounded (450°F: 232.2, 232 or 230°C), the
+// reader's choice, as a small select. onchange: the handler, as JS.
+function temperatureRoundingSelect(onchange) {
+  const current = Units.temperatureRounding();
+  const options = [['tenth', '0.1°'], ['whole', '1°'], ['five', '5°']];
+  return `<select class="temp-round" onchange="${onchange}" aria-label="Round converted temperatures" title="Round converted temperatures: 450°F is 232.2, 232 or 230°C">${options
+    .map(([value, label]) => `<option value="${value}"${value === current ? ' selected' : ''}>Round to ${label}</option>`).join('')}</select>`;
 }

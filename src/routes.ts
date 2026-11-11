@@ -6,6 +6,7 @@ import path from "path";
 import { Hono } from "hono";
 import { parseCooklang, annotateCookLogDiff, annotateIngredientSummaryDiff, applyStepDeviation, updateStepQuantity, insertNoteAfterStep, deleteStep as deleteCooklangStep, insertStepAfterStep, insertStepInSection, insertSectionNote, renameSection, insertRecipeNote, resolveDeviationMarkers, scaleCooklangText, normalizeScale } from "./cooklang.ts";
 import { buildInlineDiffLines, diffStepBlocks, diffMetadata, diffMetrics, classifyCookLogVsSource, synthesizePromotedRecipe, diffIngredients } from "./compare.ts";
+import type { TemperatureRounding } from "./compare/step-diff.ts";
 import {
   applyBranchSync,
   attachCookPhoto,
@@ -130,7 +131,7 @@ async function resolveCompareOperand(recipe: any, branch: string, key: string): 
   return recipe.versions.find((version: any) => version.version_string === key) || null;
 }
 
-async function compareVersions(recipe: any, branch: string, fromStr: string, toStr: string, temperatureUnit: "C" | "F" | null = null) {
+async function compareVersions(recipe: any, branch: string, fromStr: string, toStr: string, temperatureUnit: "C" | "F" | null = null, temperatureRounding: TemperatureRounding = "tenth") {
   const fromV = await resolveCompareOperand(recipe, branch, fromStr);
   const toV = await resolveCompareOperand(recipe, branch, toStr);
   if (!fromV || !toV) return null;
@@ -148,7 +149,7 @@ async function compareVersions(recipe: any, branch: string, fromStr: string, toS
     ingredient_diff: diffIngredients(fromParsed.ingredient_summary?.flat || [], toParsed.ingredient_summary?.flat || []),
     metric_changes: diffMetrics(fromParsed.metrics, toParsed.metrics),
     metadata_changes: diffMetadata(fromV.cooklang_text || "", toV.cooklang_text || ""),
-    step_changes: diffStepBlocks(fromV.cooklang_text || "", toV.cooklang_text || "", { temperatureUnit }),
+    step_changes: diffStepBlocks(fromV.cooklang_text || "", toV.cooklang_text || "", { temperatureUnit, temperatureRounding }),
     step_count_from: fromParsed.steps.length,
     step_count_to: toParsed.steps.length,
   };
@@ -488,9 +489,12 @@ function installBranchRoutes(prefix: string, includeRecipeCrud = false) {
     const fromStr = c.req.query("from");
     const toStr = c.req.query("to");
     if (!fromStr || !toStr) return c.json({ error: "from and to required" }, 400);
-    // ?temp=C|F shows step temperatures in the reader's chosen unit.
+    // ?temp=C|F shows step temperatures in the reader's chosen unit, and
+    // ?round=whole|five rounds the converted ones as the reader likes.
     const temp = c.req.query("temp");
-    const result = await compareVersions(recipe, activeBranch(c), fromStr, toStr, temp === "C" || temp === "F" ? temp : null);
+    const round = c.req.query("round");
+    const result = await compareVersions(recipe, activeBranch(c), fromStr, toStr, temp === "C" || temp === "F" ? temp : null,
+      round === "whole" || round === "five" ? round : "tenth");
     if (!result) return c.json({ error: "version not found" }, 404);
     return c.json(result);
   });

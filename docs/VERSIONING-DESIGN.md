@@ -218,8 +218,11 @@ Revised after the cook-recording audit (Nov 2): recording the scenario there
 actions across a modal and a second screen, ending in a native `prompt()`.
 - **One click to start, no form first.** "Record a cook" opens the screen
   filled in from the paper in hand: the newest print with no cook since
-  (phase 2's `cookStart`), its scale and its print date. Nothing is required;
-  the cook is saved at the first change or on Done.
+  (phase 2's `cookStart`) and its scale, cooked today (the print date is a
+  choice, not the default: the Nov 10 audit cooked days after printing and
+  got the print date silently). Nothing is required; the cook is saved at
+  the first change or on Done, and the screen says so before it happens
+  ("Your first change records this cook, as cooked today").
   **"Cooked as written"** records it as is and leaves only Outcome.
 - **The paper's order.** A slim header (sheet, scale, and the date as
   **Print date · Today · Yesterday · pick…**, time optional), then the sheet
@@ -230,14 +233,18 @@ actions across a modal and a second screen, ending in a native `prompt()`.
 - **Fast number editing.** The whole chip (name and amount) is the target,
   at least 32 px tall, styled like the printed text with a dotted underline.
   **Tab / Shift-Tab** moves through the values in sheet order, ingredient list
-  included; **Enter** confirms and moves on; **Esc** reverts. Saving happens in
-  the background with no repaint, no focus or layout change: the space for
-  "was 220 g" is reserved. A unit or a range can be typed ("1 cup", "18-20").
+  included; **Enter** confirms and moves on (something unreadable stays, with
+  a message; leaving the box puts the value back and says so); **Esc**
+  reverts. Saving happens in the background with no repaint. "was 220 g ↺ ·
+  I meant this" sits beside a changed value in the ingredient list, and on a
+  line under its step in the steps. A note or added step saves on Enter, on
+  leaving it, or on Done. On a phone, Skip / Note / Add a step sit behind ⋯. A unit or a range can be typed ("1 cup", "18-20").
   `Units.sameAmount` greys slips and highlights real changes while typing.
   Clicking the struck-through old value reverts it; Ctrl/Cmd-Z undoes the
   last change.
-- **Ingredient list:** an ingredient used once is edited in the list. One used
-  in several steps shows its total and is edited in the steps.
+- **Ingredient list:** an ingredient used once is edited in the list, with its
+  note and the values in it ("(at 90-95°F)"). One used in several steps
+  shows its total and is edited in the steps.
 - **In place, no dialogs.** Each step has a visible **Skip** toggle. Notes and
   added steps open as text areas under the step (Enter saves, Shift-Enter is a
   new line). All six `prompt()` calls go.
@@ -534,6 +541,12 @@ where the name already says it; a test behind the current version says
   (header: "as printed: °C, water in oz"), a bare number is read in the shown
   unit, and what's typed is saved in the recipe's own unit (230 °C →
   `^{446%F}`, 6 oz → `@water{170%g}`), so the text keeps one set of units.
+  Converted temperatures are rounded the reader's way (to 0.1°, 1°, or 5°
+  when hot: Steps toolbar and print options, kept on the device with the
+  °F/°C choice; `prints.display.round`). Typing back what the paper showed
+  is no change (232 for 450°F shown as 232°C), and a value typed in another
+  unit ("200 g" where the paper said oz) shows as typed while the screen is
+  open.
 
 **Phase 5: re-basing. Dropped** (Nov 2). It only matters when tests run in
 parallel, adopting an older test already merges correctly, and the test says

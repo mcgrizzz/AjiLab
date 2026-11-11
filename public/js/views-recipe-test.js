@@ -50,7 +50,7 @@ Object.assign(RecipeView, {
       return;
     }
     try {
-      const cmp = await API.get(`${this.apiBase()}/compare?from=${encodeURIComponent(test.base_version)}&to=${encodeURIComponent(test.version_string)}&temp=${encodeURIComponent(this.temperatureUnit || 'F')}`);
+      const cmp = await API.get(`${this.apiBase()}/compare?from=${encodeURIComponent(test.base_version)}&to=${encodeURIComponent(test.version_string)}&temp=${encodeURIComponent(this.temperatureUnit || 'F')}&round=${Units.temperatureRounding()}`);
       if (document.getElementById('test-changes') !== el) return;
       this.renderCompareResult(el, cmp);
     } catch (e) {

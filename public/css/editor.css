@@ -570,10 +570,10 @@
 
 @media (min-width: 768px) {
   /* Source and preview each scroll on their own, filling the screen below
-     the sticky toolbar. */
+     the recipe's tabs and the sticky toolbar. */
   .editor-split {
     flex-direction: row;
-    height: calc(100dvh - var(--nav-h) - var(--editor-toolbar-h, 44px) - var(--timer-tray-h, 0px));
+    height: calc(100dvh - var(--nav-h) - var(--tab-bar-h, 42px) - var(--editor-toolbar-h, 44px) - var(--timer-tray-h, 0px));
     min-height: 420px;
   }
   .editor-code {

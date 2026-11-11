@@ -224,7 +224,7 @@ Object.assign(RecipeView, {
     const requestId = (this.compareRequestId = (this.compareRequestId || 0) + 1);
     result.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
     try {
-      const cmp = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&temp=${encodeURIComponent(this.temperatureUnit || 'F')}`);
+      const cmp = await API.get(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&temp=${encodeURIComponent(this.temperatureUnit || 'F')}&round=${Units.temperatureRounding()}`);
       if (requestId !== this.compareRequestId) return; // a newer pick won
       this.renderCompareResult(result, cmp);
     } catch (e) {

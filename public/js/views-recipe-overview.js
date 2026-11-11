@@ -111,7 +111,12 @@ Object.assign(RecipeView, {
       actions.push(`<button class="btn btn-sm btn-outline" onclick="RecipeView.openSaveTestModal()">Save as ${escHtml(recipe.next_test_label)}…</button>`);
       note = 'The working copy is where the next test is set up. Save it as a test to print and cook it.';
     } else {
-      actions.push(`<button class="btn btn-sm btn-primary" onclick="RecipeView.logThisCook()" title="Record a cook of ${escHtml(name)}${escHtml(scaleNote)}">Record a cook</button>`);
+      // Named, since it isn't always the sheet on screen: a sheet printed
+      // and not yet recorded comes first (it's the paper in your hand).
+      const start = RecipeEditState.cookStart(recipe, primary, { explicit: !!this.explicitVersionRequest, scale: this.scale });
+      const cookOf = start.version_string ? entryLabelFor(recipe, start.version_string) : name;
+      const printedNote = start.print && start.version_string !== key ? `, printed ${shortDate(start.print.printed_at)} and not recorded yet` : scaleNote;
+      actions.push(`<button class="btn btn-sm btn-primary" onclick="RecipeView.logThisCook()" title="Record a cook of ${escHtml(cookOf)}${escHtml(printedNote)}">Record a cook of ${escHtml(cookOf)}</button>`);
       actions.push(`<button class="btn btn-sm" onclick="RecipeView.openPrintView()" title="Print ${escHtml(name)}${escHtml(scaleNote)} (Ctrl+P)">Print</button>`);
       if (primary.kind === 'test' && !primary.locked) {
         actions.push(`<button class="btn btn-sm" onclick="RecipeView.fixTypo('${escJs(key)}')" title="You can edit ${escHtml(primary.label)} until it’s cooked">Edit</button>`);
@@ -239,14 +244,21 @@ Object.assign(RecipeView, {
   },
 
   async startNewTest(fromKey, testing) {
-    closeModal();
+    // It takes a moment (the working copy is reset on the server): say so
+    // in place until the Editor opens.
+    const button = document.getElementById('new-test-go');
+    if (button?.disabled) return;
+    if (button) { button.disabled = true; button.textContent = 'Starting…'; }
     const from = entryByKey(this.recipe, fromKey);
-    await this.replaceDraft({
+    const ok = await this.replaceDraft({
       sourceLabel: from?.label || fromKey,
       targetText: from?.cooklang_text ?? null,
       request: () => API.post(`/recipes/${this.slug}/branches/${encodeURIComponent(this.branchSlug)}/versions/${encodeURIComponent(fromKey)}/fork`, { testing }),
       message: `Working copy reset to ${from?.label || fromKey}. Make your change, then save it as a test.`,
     });
+    if (document.getElementById('new-test-go') !== button) return;
+    if (ok) closeModal();
+    else { button.disabled = false; button.textContent = 'Start test'; }
   },
 
   // What a new test started from this sheet will be called: "v1.1 · Test 3"

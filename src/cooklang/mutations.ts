@@ -199,7 +199,8 @@ export function scanAnnotations(text: string): AnnotationMatch[] {
   // A value inside a component's note (`@water{380%g}(at ^{90%F})`) belongs
   // to that component, not to the step: it's a noteQuantity, counted on its
   // own (the parser's note_values), so the step's inline quantities keep
-  // their order. A prose temperature in a note ("at 200°F") is just words.
+  // their order. A temperature written in words in a note ("at 200°F") is
+  // one too, and editing it makes it a `^{}`, as in a step.
   const noteSpans: Array<[number, number]> = [];
   const NOTE_RE = /[@#][^@#~\n{}]*\{[^}\n]*\}\(([^)\n]*)\)/g;
   let nm: RegExpExecArray | null;
@@ -210,7 +211,6 @@ export function scanAnnotations(text: string): AnnotationMatch[] {
   const inNote = (a: AnnotationMatch) => a.kind === "inlineQuantity"
     && noteSpans.some(([s, e]) => a.sigil_start > s && a.sigil_start < e);
   return out
-    .filter((a) => !(inNote(a) && a.prose))
     .map((a) => (inNote(a) ? { ...a, kind: "noteQuantity" as const } : a))
     .sort((a, b) => a.sigil_start - b.sigil_start);
 }

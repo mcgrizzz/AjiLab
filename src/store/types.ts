@@ -138,10 +138,12 @@ export interface PrintRecord {
 }
 
 // How a sheet's amounts were shown on paper: temperatures in °F or °C, and
-// ingredients shown in another unit ({ flour: "cup" }).
+// ingredients shown in another unit ({ flour: "cup" }), and how converted
+// temperatures were rounded ("whole": 232°C, "five": 230°C; absent: 232.2°C).
 export interface SheetDisplay {
   temp?: "F" | "C";
   units?: Record<string, string>;
+  round?: "whole" | "five";
 }
 
 export interface BranchCounts {

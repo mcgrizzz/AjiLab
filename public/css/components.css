@@ -74,6 +74,9 @@
 /* A timer and the punctuation after it wrap as one (renderSteps). */
 .step-text .s-glue { white-space: nowrap; }
 
+/* Punctuation after a chip, drawn into the chip's padding. */
+.s-punct { margin-left: -0.2em; }
+
 .step-text .s-ingredient {
   color: var(--chip-ingredient-fg);
   background: var(--chip-ingredient-bg);
@@ -507,3 +510,15 @@ button.s-timer-start:hover { text-decoration: underline; text-underline-offset: 
 .folder-pick-icon .ri-svg { width: 16px; height: 16px; }
 .folder-pick-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ri-inline { display: inline-flex; vertical-align: -0.15em; margin-left: 2px; }
+
+/* "Round to 0.1°": how converted temperatures read (Steps toolbar, print options). */
+.temp-round {
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--ink2);
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: var(--r-sm);
+  padding: 4px 6px;
+  cursor: pointer;
+}

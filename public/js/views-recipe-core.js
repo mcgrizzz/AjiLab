@@ -38,7 +38,7 @@ const RecipeView = {
     this.lastRenderedTab = null;
     this.scale = parseFloat(opts.scale) > 0 ? parseFloat(opts.scale) : 1;
     this.showAmounts = true;
-    this.temperatureUnit = 'F';
+    this.temperatureUnit = Units.preferredTemperature();
     this.closeQtyPopover?.();
     // Per-ingredient display units last until a different recipe is opened.
     if (this.unitOverrides?.slug !== slug) this.unitOverrides = null;

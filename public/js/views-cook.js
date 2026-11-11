@@ -49,8 +49,11 @@ const CookView = {
     clearTimeout(this.reflectTimer);
     this.changingSheet = false;
     this.startShown = false;
-    // How the paper showed the amounts ({ temp, units }); values show the same.
+    // How the paper showed the amounts ({ temp, units, round }); values show
+    // the same, except one typed in another unit, which shows as typed
+    // (showAs: field id → that unit).
     this.display = {};
+    this.showAs = new Map();
     this.uploading = 0;
   },
 
@@ -87,7 +90,8 @@ const CookView = {
         }
         this.sheetKey = this.start.version_string;
         this.scale = this.start.scale;
-        if (this.start.print) this.day = CookSheet.localDay(this.start.print.printed_at);
+        // Cooked today unless you say otherwise: the print date is one of
+        // the choices, not the default (people cook days after printing).
         this.display = this.printDisplay();
       }
       await this.loadSheet();
@@ -117,7 +121,23 @@ const CookView = {
 
   // A value as the paper showed it, as text.
   shown(f, amount = f.current) {
-    return CookSheet.formatAmount(CookSheet.shownAmount(f, amount, this.display), f.isTemp);
+    return CookSheet.formatAmount(CookSheet.shownAmount(f, amount, this.displayFor(f)), f.isTemp);
+  },
+
+  // How this value is shown: as on the paper, or in the unit it was typed in.
+  displayFor(f) {
+    const as = this.showAs.get(f.id);
+    if (!as) return this.display;
+    if (f.isTemp) return { ...this.display, temp: /^°?\s*c/i.test(as) ? 'C' : 'F' };
+    const def = f.kind === 'ingredient' ? Units.lookup(as) : null;
+    return def ? { ...this.display, units: { ...(this.display.units || {}), [Units.overrideKey(f.name)]: def.key } } : this.display;
+  },
+
+  // What the value is called: "flour", "time", "water temperature".
+  valueName(f) {
+    if (f.kind === 'ingredient') return f.name;
+    if (f.kind === 'timer') return 'time';
+    return `${f.kind === 'noteQuantity' ? `${f.name} ` : ''}${f.isTemp ? 'temperature' : 'amount'}`;
   },
 
   // A time in a unit the list knows: its box holds the number, the list
@@ -158,8 +178,17 @@ const CookView = {
   // A time's bare number takes the unit chosen beside it.
   readTyped(f, text) {
     const unit = this.hasUnitList(f) ? document.querySelector(`.ck-unit[data-f="${f.id}"]`)?.value : null;
-    const typed = CookSheet.parseTyped(text, f, unit || CookSheet.shownAmount(f, f.current, this.display).units);
-    return typed ? CookSheet.savedAmount(f, typed) : null;
+    return CookSheet.readTyped(f, text, this.displayFor(f), unit);
+  },
+
+  // The unit typed with a value, when it's not the one shown ("200 g" where
+  // the paper said 7 oz): the value then shows in it.
+  typedUnit(f, text) {
+    if (this.hasUnitList(f)) return null;
+    const units = CookSheet.parseTyped(text, f, '')?.units;
+    if (!units) return null;
+    const shown = CookSheet.shownAmount(f, f.current, this.displayFor(f)).units;
+    return CookSheet.formatAmount({ quantity: 1, units }, f.isTemp) === CookSheet.formatAmount({ quantity: 1, units: shown }, f.isTemp) ? null : units;
   },
 
   sheetEntry() {
@@ -182,6 +211,18 @@ const CookView = {
     this.fields = CookSheet.buildFields(this.parsed.steps);
     this.sections = CookSheet.ingredientRows(this.parsed.ingredient_summary, this.fields);
     this.listed = CookSheet.listedFieldIds(this.sections);
+    // An ingredient's note values go with it in the list.
+    for (const row of this.sections.flatMap((section) => section.rows)) {
+      if (row.field) for (const f of this.noteFieldsOf(row.field)) this.listed.add(f.id);
+    }
+  },
+
+  // The values in the note of the ingredient a value belongs to.
+  noteFieldsOf(f) {
+    const own = this.componentOf(f);
+    const count = (own?.token.note_values || []).length;
+    return own ? this.fields.filter((x) => x.kind === 'noteQuantity' && x.sectionIndex === f.sectionIndex
+      && x.stepNumber === f.stepNumber && x.index >= own.noteIndex && x.index < own.noteIndex + count) : [];
   },
 
   field(id) {
@@ -200,7 +241,7 @@ const CookView = {
           <span class="cook-status" id="cook-status" role="status" aria-live="polite"></span>
         </div>
         <header class="cook-header">
-          <h1 class="cook-title">${log ? `Cook of ${escHtml(shortDate(log.cooked_at))}` : 'Record a cook'}</h1>
+          <h1 class="cook-title" id="cook-title">${this.titleText()}</h1>
           <div class="cook-sheet-line" id="cook-sheet-line">${this.sheetLineHtml()}</div>
           <div class="cook-date" id="cook-date" role="group" aria-label="When you cooked">${this.dateHtml()}</div>
         </header>
@@ -250,8 +291,23 @@ const CookView = {
     });
     view.addEventListener('focusout', (e) => {
       if (e.target.dataset?.justFocused) delete e.target.dataset.justFocused;
+      this.onFocusOut(e);
     });
     this.setStatus();
+  },
+
+  // One title before and after it's recorded: "Cook · Nov 10".
+  titleText() {
+    const date = new Date(`${this.day}T12:00`);
+    const opts = { month: 'short', day: 'numeric' };
+    if (date.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+    return `Cook · ${escHtml(date.toLocaleDateString(undefined, opts))}`;
+  },
+
+  // "today", "yesterday", "on Nov 2".
+  dayWords() {
+    const words = shortDate(`${this.day}T12:00`);
+    return words === 'today' || words === 'yesterday' ? words : `on ${words}`;
   },
 
   photosHtml() {
@@ -335,7 +391,8 @@ const CookView = {
   },
 
   dateHtml() {
-    const printedAt = !this.log && this.start?.print ? this.start.print.printed_at : null;
+    const print = this.start?.print;
+    const printedAt = print && print.version_string === this.sheetKey ? print.printed_at : null;
     const choices = CookSheet.dateChoices(new Date(), printedAt);
     const chips = choices.map((c) => {
       const on = c.day === this.day;
@@ -355,8 +412,16 @@ const CookView = {
     const lead = recorded
       ? '<span class="cook-start-done" role="status">✓ Recorded</span>'
       : '<button class="btn btn-primary" data-act="as-written">Cooked as written</button>';
-    return `${lead}
+    return `${lead}${this.startWhenHtml(recorded)}
       <span class="cook-start-note">${recorded ? 'Change' : 'Or change'} what you did differently below: Tab moves between values, Enter confirms, Esc puts one back.</span>`;
+  },
+
+  // Before anything is saved, say what the first change does, and as which day.
+  startWhenHtml(recorded = !!this.log) {
+    const when = recorded
+      ? `Recorded as cooked ${escHtml(this.dayWords())}.`
+      : `Nothing is saved yet. Your first change records this cook, as cooked <strong>${escHtml(this.dayWords())}</strong>.`;
+    return `<span class="cook-start-when" id="cook-start-when">${when}</span>`;
   },
 
   sheetHtml() {
@@ -372,41 +437,84 @@ const CookView = {
       ${parsed.steps?.length ? `<div class="section-head mt16">Steps</div><ol class="cook-steps">${this.stepsHtml()}</ol>` : ''}`;
   },
 
+  // A row of the ingredient list: its amount, its note ("at 90-95°F", any
+  // value in it editable here), and "was …" beside what changed.
   rowHtml(row) {
     if (row.field) {
-      return `<li class="cook-ing-row">${this.fieldHtml(row.field, { tabbable: true, inList: true })}</li>`;
+      const own = this.componentOf(row.field);
+      const notes = this.noteFieldsOf(row.field);
+      const note = own ? this.componentNoteHtml(own.token, notes, own.noteIndex, () => true) : '';
+      return `<li class="cook-ing-row">${this.fieldHtml(row.field, { tabbable: true, inList: true })}${note}
+        <span class="ck-wases">${[row.field, ...notes].map((f) => this.wasHtml(f, f.kind !== 'ingredient')).join('')}</span></li>`;
     }
     const amount = CookSheet.formatAmount(row.amount);
     return `<li class="cook-ing-row cook-ing-row-fixed">
       <span class="cook-ing-amt">${escHtml(amount)}</span>
       <span class="cook-ing-name">${escHtml(row.name)}</span>
+      ${row.note ? `<span class="cook-note">(${renderTextWithBreaks(row.note, this.display.temp || 'F')})</span>` : ''}
       ${row.uses > 1 ? '<span class="cook-ing-hint">change it in the steps</span>' : ''}
     </li>`;
+  },
+
+  // The step token a value belongs to, and the index (among the step's note
+  // values) of its note's first value.
+  componentOf(f) {
+    for (const step of this.parsed.steps || []) {
+      const info = CookSheet.stepInfo(step);
+      if (info.sectionIndex !== f.sectionIndex || info.stepNumber !== f.stepNumber) continue;
+      let n = 0;
+      let noteIndex = 0;
+      for (const token of step) {
+        if (!token || typeof token !== 'object') continue;
+        if (token.type === f.kind && n++ === f.index) return { token, noteIndex };
+        noteIndex += (token.note_values || []).length;
+      }
+    }
+    return null;
+  },
+
+  // An ingredient's or cookware's note, "(at 90-95°F)", with any value in it
+  // editable like the rest. first: the index of its first value among the
+  // step's note values. tabbable(f): whether its value is a Tab stop here.
+  componentNoteHtml(token, fields, first, tabbable) {
+    if (!token?.note || (token.type !== 'ingredient' && token.type !== 'cookware')) return '';
+    let index = first;
+    const inner = (token.note_parts || [token.note]).map((part) => {
+      if (typeof part !== 'number') return renderTextWithBreaks(part, this.display.temp || 'F');
+      const at = index++;
+      const f = fields.find((x) => x.kind === 'noteQuantity' && x.index === at);
+      return f ? this.fieldHtml(f, { tabbable: tabbable(f) }) : escHtml(token.note_values?.[part]?.value || '');
+    }).join('');
+    const endsWithValue = typeof (token.note_parts || []).at(-1) === 'number';
+    return ` <span class="cook-note">(${inner}${endsWithValue ? '<span class="ck-punct">)</span>' : ')'}</span>`;
   },
 
   fieldHtml(f, { tabbable = true, inList = false } = {}) {
     const value = this.inputText(f);
     const size = this.hasUnitList(f) ? this.boxSize(f, value) : Math.max(3, value.length + 1, this.inputText(f, f.original).length + 1);
-    const name = f.kind === 'ingredient' ? f.name
-      : (f.kind === 'timer' ? 'time'
-        : `${f.kind === 'noteQuantity' ? `${f.name} ` : ''}${f.isTemp ? 'temperature' : 'amount'}`);
+    const name = this.valueName(f);
     const label = f.kind === 'ingredient'
       ? `<span class="ck-name">${escHtml(f.name)}</span>`
       : (f.kind === 'timer' ? '<span class="ck-icon" aria-hidden="true">⏱</span>' : '');
     const input = `<input class="ck-input" data-f="${f.id}" value="${escHtml(value)}" size="${size}" spellcheck="false" autocomplete="off"${tabbable ? '' : ' tabindex="-1"'} aria-label="${escHtml(`${name}, the sheet said ${this.shown(f, f.original)}`)}" />`;
     const unitList = this.hasUnitList(f) ? `<span class="ck-unit-wrap">${this.unitListHtml(f)}</span>` : '';
     const chip = inList ? `${input}${unitList}${label}` : `${label}${input}${unitList}`;
-    // In a step, a value the ingredient list also shows leaves "was …" to
-    // the list.
-    const quiet = !inList && this.listed.has(f.id);
-    return `<span class="ck-field ck-${CookSheet.changeKind(f)}${inList ? ' ck-in-list' : ''}${unitList ? ' ck-has-unit' : ''}" data-f="${f.id}"${quiet ? ' data-quiet="1"' : ''}><label class="ck-chip">${chip}</label><span class="ck-was">${quiet ? '' : this.wasInner(f)}</span></span>`;
+    return `<span class="ck-field ck-${CookSheet.changeKind(f)}${inList ? ' ck-in-list' : ''}${unitList ? ' ck-has-unit' : ''}" data-f="${f.id}"><label class="ck-chip">${chip}</label></span>`;
   },
 
-  wasInner(f) {
+  // "was 232.2°C ↺ · I meant this" for a changed value: beside it in the
+  // ingredient list, on a line under the step in the steps. labelled: says
+  // which value ("time was 1-2 min").
+  wasHtml(f, labelled) {
+    return `<span class="ck-was" data-was="${f.id}"${labelled ? ' data-labelled="1"' : ''}>${this.wasInner(f, labelled)}</span>`;
+  },
+
+  wasInner(f, labelled = false) {
     const kind = CookSheet.changeKind(f);
     if (kind === 'unchanged') return '';
     const meant = f.key && this.intended.has(CookSheet.keyId(f.key));
-    return `<button class="ck-was-btn" data-act="revert" data-f="${f.id}" tabindex="-1" title="Put back what the sheet said">was ${escHtml(this.shown(f, f.original))}</button>`
+    return (labelled ? `<span class="ck-was-what">${escHtml(this.valueName(f))}</span>` : '')
+      + `<button class="ck-was-btn" data-act="revert" data-f="${f.id}" tabindex="-1" title="Put back what the sheet said">was <s>${escHtml(this.shown(f, f.original))}</s> <span class="ck-undo" aria-hidden="true">↺</span></button>`
       + (kind === 'changed' && f.key
         ? `<button class="ck-meant" data-act="meant" data-f="${f.id}" tabindex="-1" aria-pressed="${!!meant}" title="Mark this change as deliberate">${meant ? '✓ I meant this' : 'I meant this'}</button>`
         : '');
@@ -453,21 +561,27 @@ const CookView = {
           default: return escHtml(token.value || '');
         }
       };
-      // An ingredient's or cookware's note, "(at 90-95°F)", with any value
-      // in it editable like the rest.
       const noteHtml = (token) => {
-        if (!token.note || (token.type !== 'ingredient' && token.type !== 'cookware')) return '';
-        const parts = token.note_parts || [token.note];
-        const inner = parts.map((part) => {
-          if (typeof part !== 'number') return renderTextWithBreaks(part, this.display.temp || 'F');
-          const index = counts.noteQuantity++;
-          const f = here.find((x) => x.kind === 'noteQuantity' && x.index === index);
-          return f ? this.fieldHtml(f) : escHtml(token.note_values?.[part]?.value || '');
-        }).join('');
-        return ` <span class="cook-note">(${inner})</span>`;
+        const first = counts.noteQuantity;
+        counts.noteQuantity += (token.note_values || []).length;
+        return this.componentNoteHtml(token, here, first, (f) => !this.listed.has(f.id));
       };
-      const body = step.map((token) => (typeof token === 'string' ? escHtml(token) : tokenHtml(token) + noteHtml(token))).join('');
+      // Punctuation straight after a value sits snug against its chip.
+      let afterField = false;
+      const body = step.map((token) => {
+        if (typeof token === 'string') { afterField = false; return escHtml(token); }
+        const punct = afterField && token.type === 'text' ? /^[,.;:!?)\]…]+/.exec(token.value || '') : null;
+        const html = punct
+          ? `<span class="ck-punct">${escHtml(punct[0])}</span>${tokenHtml({ ...token, value: token.value.slice(punct[0].length) })}`
+          : tokenHtml(token);
+        const note = noteHtml(token);
+        afterField = !note && html.startsWith('<span class="ck-field');
+        return html + note;
+      }).join('');
       const valueless = !here.some((f) => !this.listed.has(f.id));
+      // What changed in this step, on a line of its own under it (values
+      // the ingredient list shows say so there).
+      const changes = here.filter((f) => !this.listed.has(f.id)).map((f) => this.wasHtml(f, true)).join('');
       const tools = added
         ? `<span class="cook-badge-added">Added</span><button class="cook-tool" data-act="remove-step" tabindex="-1">Remove</button>`
         : `<button class="cook-tool cook-skip" data-act="skip" aria-pressed="${skipped}" tabindex="-1" title="${skipped ? 'Not skipped after all' : 'Skip this step'} (Alt+S)">${skipped ? 'Skipped' : 'Skip'}</button>`;
@@ -475,12 +589,14 @@ const CookView = {
         <span class="cook-step-num" aria-hidden="true">${added ? '+' : number}</span>
         <div class="cook-step-main">
           <div class="cook-step-text">${body}</div>
-          <div class="cook-step-tools">${tools}
+          <div class="cook-step-changes">${changes}</div>
+          <div class="cook-step-tools" id="cook-tools-${info.sectionIndex}-${info.stepNumber}">${tools}
             <button class="cook-tool" data-act="note" tabindex="-1" title="Add a note under this step (Alt+N)">Note</button>
             <button class="cook-tool" data-act="add-step" tabindex="-1" title="Add a step you did after this one">Add a step after</button>
           </div>
           <div class="cook-step-editor"></div>
         </div>
+        <button class="cook-tool cook-more" data-act="more" tabindex="-1" aria-expanded="false" aria-controls="cook-tools-${info.sectionIndex}-${info.stepNumber}" aria-label="Skip, note or add a step" title="Skip, note or add a step">⋯</button>
       </li>`);
     }
     return out.join('');
@@ -561,13 +677,23 @@ const CookView = {
   },
 
   // A note, an added step or an undo changes the sheet's shape: reparse and
-  // repaint it, keeping focus where it was.
+  // repaint it, keeping focus where it was. A note or step being written
+  // elsewhere meanwhile stays open, with what's typed in it.
   async repaintSheet(focus) {
     await this.loadSheet();
     const sheet = document.getElementById('cook-sheet');
     if (!sheet || !this.active) return;
+    const open = [...sheet.querySelectorAll('.cook-editor-text')].filter((t) => !t.dataset.done).map((t) => {
+      const step = this.stepOf(t);
+      return step && { sectionIndex: step.sectionIndex, stepNumber: step.stepNumber, mode: t.dataset.mode, value: t.value, focused: t === document.activeElement };
+    }).filter(Boolean);
     sheet.innerHTML = this.sheetHtml();
-    if (focus) focus();
+    for (const o of open) {
+      const li = sheet.querySelector(`.cook-step[data-section="${o.sectionIndex}"][data-step="${o.stepNumber}"]`);
+      const area = li && this.openEditor(this.stepOf(li), o.mode, { focus: o.focused });
+      if (area) area.value = o.value;
+    }
+    if (focus && !open.some((o) => o.focused)) focus();
   },
 
   // ── Values ──────────────────────────────────────────────────────────────────
@@ -581,7 +707,9 @@ const CookView = {
     for (const el of document.querySelectorAll(`.ck-field[data-f="${f.id}"]`)) {
       el.classList.remove('ck-unchanged', 'ck-same', 'ck-changed', 'ck-invalid');
       el.classList.add(`ck-${kind}`);
-      if (!preview) el.querySelector('.ck-was').innerHTML = el.dataset.quiet ? '' : this.wasInner(f);
+    }
+    if (!preview) {
+      for (const el of document.querySelectorAll(`.ck-was[data-was="${f.id}"]`)) el.innerHTML = this.wasInner(f, !!el.dataset.labelled);
     }
     if (!preview) {
       const value = this.inputText(f);
@@ -622,16 +750,36 @@ const CookView = {
     }, { undo: true });
   },
 
-  commitInput(input) {
+  // Take what's typed in a value's box. Something that can't be read stays
+  // there with a message when you press Enter (false: don't move on); when
+  // you leave the box, the value is put back, saying so. An emptied box is
+  // put back too.
+  commitInput(input, { leaving = false } = {}) {
     const f = this.field(input.dataset.f);
-    if (!f) return;
-    const typed = this.readTyped(f, input.value);
+    if (!f) return true;
+    const text = input.value;
+    const typed = this.readTyped(f, text);
     if (!typed) {
-      if (input.value.trim()) showToast(this.hasUnitList(f) ? 'Type a time, like 20, 1:30 or 2 hours' : 'Type an amount, like 225, 1 cup or 18-20');
+      if (text.trim() && !leaving) {
+        input.setCustomValidity(this.unreadable(f, text));
+        input.reportValidity();
+        return false;
+      }
+      if (text.trim()) showToast(`${this.unreadable(f, text)} It's back to ${this.shown(f)}.`);
+      input.setCustomValidity('');
       this.paintField(f);
-      return;
+      return true;
     }
+    input.setCustomValidity('');
+    const as = this.typedUnit(f, text);
+    if (as) this.showAs.set(f.id, as);
     this.setValue(f, typed);
+    return true;
+  },
+
+  unreadable(f, text) {
+    const like = this.hasUnitList(f) ? '20, 1:30, 1h30 or 2 hours' : (f.isTemp ? '230, 230°C or 450°F' : '225, 225 g or 18-20');
+    return `Couldn't read “${text.trim()}”. Try ${like}.`;
   },
 
   // The next (or previous) place to type: values, and steps with none.
@@ -685,15 +833,17 @@ const CookView = {
 
   // A note under the step, or a step you added after it: a text area in
   // place. Enter saves, Shift-Enter is a new line, Esc cancels.
-  openEditor(step, mode) {
+  openEditor(step, mode, { focus = true } = {}) {
     const box = step.li.querySelector('.cook-step-editor');
-    if (!box) return;
+    if (!box) return null;
     const id = `cook-ed-${step.sectionIndex}-${step.stepNumber}`;
     const isNote = mode === 'note';
     box.innerHTML = `<label class="cook-editor-label" for="${id}">${isNote ? 'Note under this step' : 'A step you added after this one'}</label>
       <textarea id="${id}" class="field-input cook-editor-text" rows="2" data-mode="${mode}" placeholder="${isNote ? 'e.g. dough sticky' : 'e.g. Fold 4 times. Amounts work as on the sheet: @water{20%g}'}"></textarea>
-      <div class="cook-editor-hint">Enter saves · Shift-Enter for a new line · Esc cancels</div>`;
-    box.querySelector('textarea').focus();
+      <div class="cook-editor-hint">Enter (or leaving it) saves · Shift-Enter for a new line · Esc cancels</div>`;
+    const area = box.querySelector('textarea');
+    if (focus) area.focus();
+    return area;
   },
 
   closeEditor(step, { refocus = true } = {}) {
@@ -702,19 +852,21 @@ const CookView = {
     if (refocus) this.focusStep(step.sectionIndex, step.stepNumber);
   },
 
-  saveEditor(textarea) {
+  // leaving: focus went elsewhere (or Done), so it stays there.
+  saveEditor(textarea, { leaving = false } = {}) {
     const step = this.stepOf(textarea);
-    if (!step) return;
+    if (!step || textarea.dataset.done) return;
+    textarea.dataset.done = '1';
     const content = textarea.value.trim();
     const mode = textarea.dataset.mode;
-    if (!content) { this.closeEditor(step); return; }
+    if (!content) { this.closeEditor(step, { refocus: !leaving }); return; }
     this.closeEditor(step, { refocus: false });
     const { sectionIndex, stepNumber } = step;
     this.enqueue(async () => {
       await this.stepAction(sectionIndex, stepNumber, mode === 'note'
         ? { action: 'insert-note', note: content }
         : { action: 'insert-step-after', content: `!+ ${content.replace(/\s*\n\s*/g, ' ')}` });
-      await this.repaintSheet(() => this.focusStep(sectionIndex, stepNumber, { after: true }));
+      await this.repaintSheet(leaving ? null : () => this.focusStep(sectionIndex, stepNumber, { after: true }));
     }, { undo: true });
   },
 
@@ -730,13 +882,14 @@ const CookView = {
     area.setSelectionRange(area.value.length, area.value.length);
   },
 
-  saveNote(area) {
+  saveNote(area, { leaving = false } = {}) {
     const li = area.closest('.cook-step-comment');
-    if (!li) return;
+    if (!li || area.dataset.done) return;
+    area.dataset.done = '1';
     const note = li.dataset.note;
     const occurrence = Number(li.dataset.occurrence) || 0;
     const next = area.value;
-    if (next.replace(/\s+/g, ' ').trim() === note) { this.cancelNote(area); return; }
+    if (next.replace(/\s+/g, ' ').trim() === note) { this.cancelNote(area, { refocus: !leaving }); return; }
     this.enqueue(async () => {
       const text = CookSheet.replaceNote(this.text, note, occurrence, next);
       if (text === this.text) return;
@@ -745,11 +898,12 @@ const CookView = {
     }, { undo: true });
   },
 
-  cancelNote(area) {
+  cancelNote(area, { refocus = true } = {}) {
     const li = area.closest('.cook-step-comment');
     if (!li) return;
+    area.dataset.done = '1';
     li.textContent = li.dataset.note;
-    li.focus();
+    if (refocus) li.focus();
   },
 
   removeAddedStep(step) {
@@ -798,6 +952,10 @@ const CookView = {
     const box = document.getElementById('cook-date');
     const focusedTime = document.activeElement?.id === 'cook-time';
     if (box && !focusedTime) box.innerHTML = this.dateHtml();
+    const title = document.getElementById('cook-title');
+    if (title) title.innerHTML = this.titleText();
+    const when = document.getElementById('cook-start-when');
+    if (when) when.outerHTML = this.startWhenHtml();
     if (this.log) this.enqueue(() => this.putLog({ cooked_at: this.cookedAtIso() }));
   },
 
@@ -808,6 +966,7 @@ const CookView = {
     if (el.classList.contains('ck-input')) {
       const f = this.field(el.dataset.f);
       if (!f) return;
+      el.setCustomValidity('');
       const typed = this.readTyped(f, el.value);
       this.paintField(f, { kind: typed ? CookSheet.changeKind(f, typed) : 'invalid' });
       if (this.hasUnitList(f)) el.size = this.boxSize(f, el.value);
@@ -824,8 +983,7 @@ const CookView = {
 
   onChange(e) {
     const el = e.target;
-    if (el.classList.contains('ck-input')) this.commitInput(el);
-    else if (el.classList.contains('ck-unit')) {
+    if (el.classList.contains('ck-unit')) {
       // The number stays; it's the unit that was wrong ("20" hours, not min).
       const f = this.field(el.dataset.f);
       const input = f && this.inputsFor(f)[0];
@@ -836,6 +994,17 @@ const CookView = {
       this.time = el.value || '';
       if (this.log) this.enqueue(() => this.putLog({ cooked_at: this.cookedAtIso() }));
     } else if (el.dataset?.reflect) this.saveReflect();
+  },
+
+  // Leaving a value takes what's typed; leaving a note or step being
+  // written saves it (Esc is the way to throw it away).
+  onFocusOut(e) {
+    const el = e.target;
+    // A box taken away by a repaint isn't being left.
+    if (!el.isConnected) return;
+    if (el.classList?.contains('ck-input')) this.commitInput(el, { leaving: true });
+    else if (el.classList?.contains('cook-editor-text')) this.saveEditor(el, { leaving: true });
+    else if (el.classList?.contains('cook-note-fix')) this.saveNote(el, { leaving: true });
   },
 
   onKeydown(e) {
@@ -852,7 +1021,11 @@ const CookView = {
     }
     if (el.classList.contains('ck-input')) {
       const f = this.field(el.dataset.f);
-      if (e.key === 'Enter') { e.preventDefault(); this.commitInput(el); this.focusNext(el, e.shiftKey ? -1 : 1); return; }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (this.commitInput(el)) this.focusNext(el, e.shiftKey ? -1 : 1);
+        return;
+      }
       if (e.key === 'Escape' && f) {
         e.preventDefault();
         const committed = this.inputText(f);
@@ -879,7 +1052,7 @@ const CookView = {
     }
     if (el.classList.contains('cook-editor-text')) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.saveEditor(el); }
-      else if (e.key === 'Escape') { e.preventDefault(); this.closeEditor(this.stepOf(el)); }
+      else if (e.key === 'Escape') { e.preventDefault(); el.dataset.done = '1'; this.closeEditor(this.stepOf(el)); }
       return;
     }
     if (el.id === 'cook-outcome' && e.key === 'Enter') { e.preventDefault(); document.getElementById('cook-next')?.focus(); return; }
@@ -900,6 +1073,10 @@ const CookView = {
     else if (act === 'revert' && f) { this.setValue(f, f.original); this.inputsFor(f)[0]?.focus(); }
     else if (act === 'meant' && f) this.toggleMeant(f);
     else if (act === 'skip' && step) this.toggleSkip(step);
+    else if (act === 'more' && step) {
+      const open = step.li.classList.toggle('is-open');
+      target.setAttribute('aria-expanded', String(open));
+    }
     else if (act === 'note' && step) this.openEditor(step, 'note');
     else if (act === 'add-step' && step) this.openEditor(step, 'add');
     else if (act === 'remove-step' && step) this.removeAddedStep(step);
@@ -945,6 +1122,12 @@ const CookView = {
   },
 
   async done() {
+    // Ctrl+Enter leaves nothing behind: what's typed in a value, a note or a
+    // step being written is taken first.
+    const active = document.activeElement;
+    if (active?.classList.contains('ck-input') && !this.commitInput(active, { leaving: true })) return;
+    document.querySelectorAll('.cook-editor-text').forEach((t) => this.saveEditor(t, { leaving: true }));
+    document.querySelectorAll('.cook-note-fix').forEach((t) => this.saveNote(t, { leaving: true }));
     this.saveReflect();
     await this.queue;
     if (this.failed) { showToast(`Couldn't save: ${this.failed}`); return; }

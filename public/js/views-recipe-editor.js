@@ -62,6 +62,11 @@ Object.assign(RecipeView, {
       : '';
     const testingLine = isEditingDraft && editable.testing
       ? `<span class="editor-testing">Testing: ${escHtml(editable.testing)}</span>` : '';
+    // A working copy based on an older version: offer the newer one (it
+    // asks before replacing changes of its own).
+    const current = this.recipe?.current_version;
+    const newer = isEditingDraft && current && editable.base_version && editable.base_version !== current.version_string
+      ? `<button class="link-btn editor-newer" onclick="RecipeView.startNextBetaFrom('${escJs(current.version_string)}')">${escHtml(current.label)} is newer: start from it…</button>` : '';
     body.innerHTML = `
       <div class="editor-wrap">
         ${isEditingTest ? `
@@ -77,6 +82,7 @@ Object.assign(RecipeView, {
           <div class="editor-toolbar">
             <span class="editor-target"${targetTitle ? ` title="${escHtml(targetTitle)}"` : ''}>${escHtml(this.editTargetLabel())}</span>
             ${testingLine}
+            ${newer}
             <span id="editor-save-pill" class="save-pill" data-state="saved" role="status" aria-live="polite"></span>
             ${isEditingCookLog ? '' : '<span id="editor-title-notice" class="title-check" hidden></span>'}
             <span class="editor-toolbar-spacer"></span>
@@ -171,16 +177,21 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
     this.updatePreview();
   },
 
-  // Scroll the page so the editor head pins under the nav and the panes fill
-  // the window. Arriving by URL (or a reload) never scrolls back up past where
-  // you already are; a tab switch (force) always lands on the panes.
+  // Scroll the page so the recipe's tabs sit under the nav, the editor head
+  // under them, and the panes fill the rest of the window: the tabs stay in
+  // sight, as the way back to the other views. Arriving by URL (or a
+  // reload) never scrolls back up past where you already are; a tab switch
+  // (force) always lands on the panes.
   scrollEditorIntoView(force = false) {
     const head = document.querySelector('.editor-head');
     if (!head) return;
     const nav = document.getElementById('topnav')?.offsetHeight || 0;
-    // Measure where the head sits in the page, not where it's stuck on screen.
+    const tabs = document.querySelector('.recipe-header .tab-bar');
+    if (tabs) document.documentElement.style.setProperty('--tab-bar-h', `${tabs.offsetHeight}px`);
+    // Measure where they sit in the page, not where the head is stuck on screen.
     const before = head.previousElementSibling;
-    const naturalTop = before ? before.getBoundingClientRect().bottom : head.parentElement.getBoundingClientRect().top;
+    const naturalTop = tabs ? tabs.getBoundingClientRect().top
+      : (before ? before.getBoundingClientRect().bottom : head.parentElement.getBoundingClientRect().top);
     const target = Math.max(0, Math.round(naturalTop + window.scrollY - nav));
     if (force ? window.scrollY !== target : window.scrollY < target) window.scrollTo({ top: target, behavior: 'auto' });
   },
@@ -266,8 +277,11 @@ Bake in a #oven{} at 180°C for ~{25%minutes}.">${escHtml(text)}</textarea>
       },
       draft?.base_version && entryByKey(this.recipe, draft.base_version)
         ? { label: `Reset to ${draft.base_version}…`, onClick: () => this.startNextBetaFrom(draft.base_version) }
-        : (current ? { label: `Reset to ${current.label}…`, onClick: () => this.startNextBetaFrom(current.version_string) } : null),
-    ]);
+        : null,
+      current && current.version_string !== draft?.base_version
+        ? { label: `Start again from ${current.label}…`, onClick: () => this.startNextBetaFrom(current.version_string) }
+        : null,
+    ].filter(Boolean));
   },
 
   finishFixingVersion() {

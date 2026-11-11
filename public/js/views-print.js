@@ -16,7 +16,8 @@ const PrintView = {
     const sheet = this.sheet;
     if (!sheet || !document.body.classList.contains('print-route')) return;
     // How the amounts were shown, so the cook screen can show the same.
-    const display = { temp: RecipeView.temperatureUnit || 'F', units: { ...RecipeView.unitView(sheet.slug).overrides } };
+    const round = Units.temperatureRounding();
+    const display = { temp: RecipeView.temperatureUnit || 'F', units: { ...RecipeView.unitView(sheet.slug).overrides }, ...(round === 'tenth' ? {} : { round }) };
     API.post(`/recipes/${sheet.slug}/branches/${encodeURIComponent(sheet.branch)}/prints`, {
       version: sheet.version_string, scale: sheet.scale, display,
     }).catch(() => {});
@@ -50,6 +51,12 @@ const PrintView = {
 
   setTemperature(unit) {
     RecipeView.temperatureUnit = unit;
+    Units.setPreferredTemperature(unit);
+    Router.dispatch(location.pathname + location.search);
+  },
+
+  setTemperatureRounding(value) {
+    Units.setTemperatureRounding(value);
     Router.dispatch(location.pathname + location.search);
   },
 
@@ -70,6 +77,7 @@ const PrintView = {
       <span class="print-option">
         <span class="print-option-label">Temps</span>
         ${['F', 'C'].map((u) => `<button type="button" class="scale-btn${u === temp ? ' active' : ''}" aria-pressed="${u === temp}" onclick="PrintView.setTemperature('${u}')">°${u}</button>`).join('')}
+        ${temperatureRoundingSelect('PrintView.setTemperatureRounding(this.value)')}
       </span>
       <label class="print-option"><input type="checkbox" ${this.options.photo ? 'checked' : ''} onchange="PrintView.toggle('photo', this.checked)" /> Photo</label>
       <label class="print-option"><input type="checkbox" ${this.options.notes ? 'checked' : ''} onchange="PrintView.toggle('notes', this.checked)" /> Notes</label>

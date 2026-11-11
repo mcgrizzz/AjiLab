@@ -159,7 +159,7 @@ const CL = {
               ? ` data-draft-token-id="${escHtml(matchedToken.id)}" onclick="RecipeView.selectDraftQuantity('${escHtml(matchedToken.id)}', this)"`
               : '';
             const inlineHtml = `<span class="${cls}${matchedToken ? ' draft-token-selectable' : ''}${modCls}"${attr}>${value}</span>`;
-            return valueWithSource(token, inlineHtml);
+            return valueWithSource(token, inlineHtml, isTemp ? options.temperatureUnit : null);
           }
           case 'text':
           case 'comment':
@@ -168,17 +168,21 @@ const CL = {
             return escHtml(token.value || '');
         }
       };
-      // Browsers don't start a line with the comma after a chip, except
-      // after a button (the Overview's timers): a timer and the punctuation
-      // after it wrap as one. Timers are short; other chips may still break.
+      // Punctuation straight after a chip is drawn snug against it (the
+      // chip's padding would read as a space: "bowl ."). Browsers don't
+      // start a line with it, except after a button (the Overview's
+      // timers): a timer and the punctuation after it wrap as one. Timers
+      // are short; other chips may still break.
       const tokens = step.slice();
       const parts = [];
       for (let i = 0; i < tokens.length; i++) {
         const token = tokens[i];
         const next = tokens[i + 1];
-        const punct = token?.type === 'timer' && next?.type === 'text' ? /^[,.;:!?)\]…]+/.exec(next.value || '') : null;
+        const chip = token && typeof token === 'object' && token.type !== 'text' && token.type !== 'comment' && !token.note;
+        const punct = chip && next?.type === 'text' ? /^[,.;:!?)\]…]+/.exec(next.value || '') : null;
         if (punct) {
-          parts.push(`<span class="s-glue">${renderToken(token)}${escHtml(punct[0])}</span>`);
+          const mark = `<span class="s-punct">${escHtml(punct[0])}</span>`;
+          parts.push(token.type === 'timer' ? `<span class="s-glue">${renderToken(token)}${mark}</span>` : renderToken(token) + mark);
           tokens[i + 1] = { ...next, value: next.value.slice(punct[0].length) };
         } else {
           parts.push(renderToken(token));
@@ -397,8 +401,8 @@ function formatInlineTemperatureToken(token, preferredUnit = 'F') {
   // and drop the rest of the range.
   const range = token.range;
   if (range && Number.isFinite(range.min) && Number.isFinite(range.max)) {
-    const min = formatTemperatureNumber(convertTemperatureValue(range.min, canonical, preferredUnit));
-    const max = formatTemperatureNumber(convertTemperatureValue(range.max, canonical, preferredUnit));
+    const min = formatTemperatureNumber(convertTemperatureValue(range.min, canonical, preferredUnit), preferredUnit);
+    const max = formatTemperatureNumber(convertTemperatureValue(range.max, canonical, preferredUnit), preferredUnit);
     return escHtml(`${min}-${max}°${preferredUnit}`);
   }
   const numeric = parseFloat(token.quantity);
@@ -413,11 +417,13 @@ function formatMatchedTemperature(match, preferredUnit = 'F') {
   const sourceUnit = canonicalTemperatureUnit(match[6]);
   if (!sourceUnit || !Number.isFinite(startValue)) return escHtml(match[0]);
   const targetUnit = preferredUnit === 'C' ? 'C' : 'F';
-  const first = formatTemperatureNumber(convertTemperatureValue(startValue, sourceUnit, targetUnit));
+  // Rounded only when converted: "233°C" written stays 233.
+  const into = sourceUnit === targetUnit ? null : targetUnit;
+  const first = formatTemperatureNumber(convertTemperatureValue(startValue, sourceUnit, targetUnit), into);
   if (endValue === null || !Number.isFinite(endValue)) {
     return escHtml(`${first}°${targetUnit}`);
   }
-  const second = formatTemperatureNumber(convertTemperatureValue(endValue, sourceUnit, targetUnit));
+  const second = formatTemperatureNumber(convertTemperatureValue(endValue, sourceUnit, targetUnit), into);
   return escHtml(`${first}${separator}${second}°${targetUnit}`);
 }
 
@@ -436,7 +442,9 @@ function convertTemperatureValue(value, fromUnit, toUnit) {
   return value;
 }
 
-function formatTemperatureNumber(value) {
+// unit: the value was converted into it, so it's rounded the reader's way.
+function formatTemperatureNumber(value, unit = null) {
+  if (unit) return Units.roundTemperature(value, unit);
   const rounded = Math.abs(value - Math.round(value)) < 0.05
     ? Math.round(value)
     : Number(value.toFixed(1));
@@ -444,7 +452,7 @@ function formatTemperatureNumber(value) {
 }
 
 function formatTemperatureValue(value, unit) {
-  return `${formatTemperatureNumber(value)}°${unit}`;
+  return `${formatTemperatureNumber(value, unit)}°${unit}`;
 }
 
 function ingredientSummaryLabel(name, hasNamedSections) {
@@ -551,19 +559,26 @@ function componentNoteHtml(token, preferredUnit) {
       const html = isTemp
         ? `<span class="s-temp">${formatInlineTemperatureToken(value, preferredUnit)}</span>`
         : `<span class="s-quantity">${escHtml(value.value)}</span>`;
-      return valueWithSource(value, html);
+      return valueWithSource(value, html, isTemp ? preferredUnit : null);
     }).join('')
     : proseHtml(token.note, preferredUnit);
-  return ` <span class="s-component-note">(${inner})</span>`;
+  // Snug against a value that ends the note: "(at 90°F)", not "(at 90°F )".
+  const endsWithValue = Array.isArray(token.note_parts) && typeof token.note_parts.at(-1) === 'number';
+  return ` <span class="s-component-note">(${inner}${endsWithValue ? '<span class="s-punct">)</span>' : ')'}</span>`;
 }
 
-function valueWithSource(token, currentHtml) {
+// tempUnit: a temperature's "was" is shown in the reader's unit, as its
+// value is.
+function valueWithSource(token, currentHtml, tempUnit = null) {
   if (!hasSourceDiff(token)) return currentHtml;
   const was = token.source_value != null && token.source_value !== ''
     ? String(token.source_value)
     : composeAmount(token.source_quantity, token.source_units, token.source_range);
   if (!was) return currentHtml;
-  return `<span class="s-amt-was">${escHtml(was)}</span> <span class="s-amt-arrow">→</span> ${currentHtml}`;
+  const wasHtml = tempUnit && token.source_quantity != null
+    ? formatInlineTemperatureToken({ value: was, quantity: token.source_quantity, units: token.source_units ?? token.units, range: token.source_range }, tempUnit)
+    : escHtml(was);
+  return `<span class="s-amt-was">${wasHtml}</span> <span class="s-amt-arrow">→</span> ${currentHtml}`;
 }
 
 function stepHasModification(step) {

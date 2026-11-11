@@ -65,6 +65,7 @@ Object.assign(RecipeView, {
             <button class="btn btn-sm" id="temp-btn" onclick="RecipeView.toggleTemperatureUnit()">
               Temps: °${this.temperatureUnit}
             </button>
+            ${temperatureRoundingSelect('RecipeView.setTemperatureRounding(this.value)')}
             ${inlineAddNotes}
           </div>
         </div>
@@ -335,10 +336,17 @@ Object.assign(RecipeView, {
     this.rerenderAmounts();
   },
 
+  // The unit and the rounding are the reader's, remembered on this device.
   toggleTemperatureUnit() {
     this.temperatureUnit = this.temperatureUnit === 'F' ? 'C' : 'F';
+    Units.setPreferredTemperature(this.temperatureUnit);
     const button = document.getElementById('temp-btn');
     if (button) button.textContent = `Temps: °${this.temperatureUnit}`;
+    this.rerenderAmounts();
+  },
+
+  setTemperatureRounding(value) {
+    Units.setTemperatureRounding(value);
     this.rerenderAmounts();
   },
 
@@ -572,8 +580,13 @@ Object.assign(RecipeView, {
   async afterDraftReplaced(snapshot, message) {
     await this.refreshRecipe();
     const replacedText = this.recipe?.draft?.cooklang_text ?? '';
+    // Arriving in the Editor from another tab is a step Back can undo: a
+    // new history entry, which then gets the Editor's URL.
+    const fromEditor = this.activeTab === 'editor';
     this.activeTab = 'editor';
+    if (!fromEditor) history.pushState({}, '', location.pathname + location.search);
     await this.renderDetail(document.getElementById('view-container'), 'draft', { syncUrl: true, replaceUrl: true });
+    this.syncTabUrl();
     if (!snapshot) { showToast(message); return; }
     showToast(message, { action: { label: 'Undo', onClick: () => this.restoreDraft(snapshot, replacedText) } });
   },

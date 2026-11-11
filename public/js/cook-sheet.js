@@ -106,6 +106,7 @@ const CookSheet = (() => {
         const uses = inSection.filter((f) => lower(f.name) === lower(ingredient.name));
         return {
           name: String(ingredient.name || ''),
+          note: String(ingredient.note || ''),
           amount: { quantity: ingredient.quantity ?? '', units: ingredient.units || '' },
           field: uses.length === 1 ? uses[0] : null,
           uses: uses.length,
@@ -213,8 +214,8 @@ const CookSheet = (() => {
     return t === 'c' || t === 'celsius' ? 'C' : (t === 'f' || t === 'fahrenheit' ? 'F' : null);
   };
   const convertTemp = (v, from, to) => (from === to ? v : (to === 'C' ? (v - 32) * 5 / 9 : v * 9 / 5 + 32));
-  // As the print rounds them: whole degrees when close, else one decimal.
-  const tempText = (v) => String(Math.abs(v - Math.round(v)) < 0.05 ? Math.round(v) : Number(v.toFixed(1)));
+  // Saved back in the recipe's unit: to a tenth, whole when close.
+  const tempText = (v, unit) => Units.roundTemperature(v, unit, 'tenth');
   // A converted amount Cooklang can hold: no fraction glyphs, sensible digits.
   const plainNumber = (v) => String(v >= 100 ? Math.round(v) : Number(v.toFixed(v < 10 ? 2 : 1)));
 
@@ -224,7 +225,8 @@ const CookSheet = (() => {
       const from = tempKey(amount.units);
       const nums = Units.parseQuantity(String(amount.quantity));
       if (!from || from === display.temp || !nums) return amount;
-      return { quantity: nums.map((n) => tempText(convertTemp(n, from, display.temp))).join('-'), units: display.temp };
+      // Rounded as the paper rounded it (display.round, the reader's choice).
+      return { quantity: nums.map((n) => Units.roundTemperature(convertTemp(n, from, display.temp), display.temp, display.round || 'tenth')).join('-'), units: display.temp };
     }
     if (field.kind === 'ingredient' && display.units && Object.keys(display.units).length) {
       const shown = Units.present(amount.quantity, amount.units, 1, { overrides: display.units }, field.name);
@@ -242,7 +244,7 @@ const CookSheet = (() => {
       const from = tempKey(typed.units);
       const to = tempKey(own);
       if (!from || !to || from === to) return typed;
-      return { quantity: nums.map((n) => tempText(convertTemp(n, from, to))).join('-'), units: own };
+      return { quantity: nums.map((n) => tempText(convertTemp(n, from, to), to)).join('-'), units: own };
     }
     if (field.kind === 'ingredient') {
       const a = Units.lookup(typed.units);
@@ -252,6 +254,22 @@ const CookSheet = (() => {
       }
     }
     return typed;
+  }
+
+  // What a typed value means. When it reads the same as the paper showed the
+  // value now (or the sheet's own value), it's that value: typing back the
+  // 232 the paper showed for 450°F isn't a change to 449.6°F. Otherwise it's
+  // what was typed, in the recipe's own unit. unit: a time's chosen unit.
+  // Null when it isn't an amount.
+  function readTyped(field, text, display, unit = null) {
+    const shownUnits = unit || shownAmount(field, field.current, display).units;
+    const typed = parseTyped(text, field, shownUnits);
+    if (!typed) return null;
+    const as = formatAmount(typed, field.isTemp);
+    for (const amount of [field.current, field.original]) {
+      if (formatAmount(shownAmount(field, amount, display), field.isTemp) === as) return amount;
+    }
+    return savedAmount(field, typed);
   }
 
   // "°C, flour in cups": what the screen converts, for its header.
@@ -531,7 +549,7 @@ const CookSheet = (() => {
     return f?.key ? keyId(f.key) : null;
   }
 
-  return { shownAmount, savedAmount, displayNote, cookOrder, changeList, cookChangeList, adoptFromCookNotes,
+  return { shownAmount, savedAmount, readTyped, displayNote, cookOrder, changeList, cookChangeList, adoptFromCookNotes,
     stepList, atSheetScale, comparison, metricRows, changeSummary, cookChangeSummary, keyForChange,
     noteAdded, replaceNote, buildFields, ingredientRows, listedFieldIds, formatAmount, parseTyped, changeKind, keyId,
     timeUnit, timeUnitText, parseDuration,

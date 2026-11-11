@@ -15,6 +15,7 @@ const context = vm.createContext({});
 vm.runInContext(read("../public/js/units.js"), context);
 vm.runInContext(read("../public/js/cook-sheet.js"), context);
 const CookSheet = vm.runInContext("CookSheet", context);
+const Units = vm.runInContext("Units", context);
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 const SHEET = `---
@@ -229,7 +230,7 @@ test("values without an amount still count, as the server counts them", () => {
   assert.equal(updateStepQuantity("Add @oil, then stir.", 0, 1, "ingredient", 0, "0", ""), "Add oil, then stir.");
 });
 
-test("a value in an ingredient's note is that ingredient's, counted on its own; prose in a note is words", () => {
+test("a value in an ingredient's note is that ingredient's, counted on its own, written in words or not", () => {
   // `(at ^{90-95%F})` once showed placeholder characters, and counting it
   // among the step's values would have sent an oven edit to the water. It's
   // a noteQuantity now: editable, and numbered apart from the step's values.
@@ -241,9 +242,11 @@ test("a value in an ingredient's note is that ingredient's, counted on its own; 
     const water = parsed.steps[0].find((t) => t.name === "water");
     assert.deepEqual(plain(water.note_parts), ["at ", 0]);
     assert.equal(water.note_values[0].quantity, "90-95");
-    assert.equal(parsed.steps[0].find((t) => t.name === "bowl").note_values, undefined, "30°C in words isn't a value");
+    const bowl = parsed.steps[0].find((t) => t.name === "bowl");
+    assert.deepEqual(plain(bowl.note_parts), ["warm, ", 0], "30°C in words is a value too");
+    assert.equal(bowl.note_values[0].quantity, 30);
     const fields = fieldsOf(text);
-    assert.deepEqual(fields.map((f) => `${f.kind}#${f.index}`), ["ingredient#0", "ingredient#1", "noteQuantity#0", "inlineQuantity#0", "timer#0"]);
+    assert.deepEqual(fields.map((f) => `${f.kind}#${f.index}`), ["ingredient#0", "ingredient#1", "noteQuantity#0", "noteQuantity#1", "inlineQuantity#0", "timer#0"]);
     const note = fields.find((f) => f.kind === "noteQuantity");
     assert.equal(note.name, "water");
     assert.equal(note.isTemp, true);
@@ -253,8 +256,10 @@ test("a value in an ingredient's note is that ingredient's, counted on its own; 
       const next = updateStepQuantity(text, field.sectionIndex, field.stepNumber, field.kind, field.index, "777", field.current.units);
       const after = fieldsOf(next);
       after.forEach((other, i) => assert.equal(other.current.quantity, other.id === field.id ? "777" : fields[i].current.quantity, `${field.kind}#${field.index} at ${scale}×`));
-      if (field.kind === "noteQuantity") assert.match(next, /@water\{[^}]*\}\(at \^\{777%F\}\)/);
+      if (field.kind === "noteQuantity" && field.name === "water") assert.match(next, /@water\{[^}]*\}\(at \^\{777%F\}\)/);
       else assert.match(next, /\(at \^\{90-95%F\}\)/, "the note is untouched");
+      if (field.kind === "noteQuantity" && field.name === "bowl") assert.match(next, /#bowl\{\}\(warm, \^\{777%C\}\)/, "words become a ^{}");
+      else assert.match(next, /\(warm, 30°C\)/);
     }
   }
 });
@@ -341,6 +346,32 @@ test("values show as the paper did, and what's typed is saved in the recipe's un
   assert.equal(CookSheet.changeKind(oven, CookSheet.savedAmount(oven, CookSheet.parseTyped("232.2", oven, "C"))), "unchanged");
   assert.equal(CookSheet.changeKind(flour, CookSheet.savedAmount(flour, CookSheet.parseTyped("7¾", flour, "oz"))), "unchanged");
   assert.equal(CookSheet.displayNote(paper), "°C, flour in oz");
+});
+
+test("a converted temperature rounds the reader's way, and typing back what the paper showed changes nothing", () => {
+  const fields = fieldsOf("Mix @water{380%g}(at ^{90-95%F}) and @flour{500%g}.\n\nBake at ^{450%F} for ~{30%min}.");
+  const water = fields.find((f) => f.kind === "noteQuantity");
+  const oven = fields.find((f) => f.kind === "inlineQuantity");
+  const flour = fields.find((f) => f.name === "flour" && f.kind === "ingredient");
+  const shown = (f, display) => CookSheet.formatAmount(CookSheet.shownAmount(f, f.current, display), f.isTemp);
+  assert.deepEqual([shown(oven, { temp: "C" }), shown(water, { temp: "C" })], ["232.2°C", "32.2-35°C"]);
+  assert.deepEqual([shown(oven, { temp: "C", round: "whole" }), shown(water, { temp: "C", round: "whole" })], ["232°C", "32-35°C"]);
+  // To 5° only when hot: water stays to the degree.
+  assert.deepEqual([shown(oven, { temp: "C", round: "five" }), shown(water, { temp: "C", round: "five" })], ["230°C", "32-35°C"]);
+  assert.equal(Units.roundTemperature(176.67, "C", "five"), "175");
+  assert.equal(Units.roundTemperature(446, "F", "five"), "445");
+  assert.equal(Units.roundTemperature(32.2, "C", "tenth"), "32.2");
+  // The paper said 232°C: typing 232 back is the sheet's 450°F, not 449.6°F.
+  const paper = { temp: "C", round: "whole" };
+  assert.deepEqual(plain(CookSheet.readTyped(oven, "232", paper)), plain(oven.original));
+  assert.deepEqual(plain(CookSheet.readTyped(oven, "232°C", paper)), plain(oven.original));
+  assert.deepEqual(plain(CookSheet.readTyped(water, "32-35", paper)), plain(water.original));
+  // A real change is saved in the recipe's unit.
+  assert.deepEqual(plain(CookSheet.readTyped(oven, "220", paper)), { quantity: "428", units: "F" });
+  assert.deepEqual(plain(CookSheet.readTyped(oven, "440°F", paper)), { quantity: "440", units: "F" });
+  // As written when nothing's converted; nonsense isn't a value.
+  assert.deepEqual(plain(CookSheet.readTyped(flour, "500 g", {})), plain(flour.original));
+  assert.equal(CookSheet.readTyped(oven, "hot", paper), null);
 });
 
 test("cooks of the same day are in the order they were saved", () => {

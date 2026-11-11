@@ -157,32 +157,40 @@ export function splitTextWithTemperatures(
 }
 
 // The values in a component's note (`@water{380%g}(at ^{90-95%F})`): each
-// `^{}` / `%{}` as an inlineQuantity-shaped value, and the note as parts,
-// strings with the index of each value where it sits (["at ", 0]). Null
-// when the note has none.
+// `^{}` / `%{}`, and each temperature written in words ("at 90-95°F"), as an
+// inlineQuantity-shaped value, and the note as parts, strings with the index
+// of each value where it sits (["at ", 0]). Null when the note has none.
 export function noteValueParts(
   note: string | null,
   extractions: TemperatureExtraction[],
 ): { note_values: ParsedStep[]; note_parts: Array<string | number> } | null {
-  if (!note || !note.includes(TEMP_MARK_START)) return null;
+  if (!note) return null;
   const values: ParsedStep[] = [];
   const parts: Array<string | number> = [];
+  const addValue = (value: ParsedStep) => { parts.push(values.length); values.push(value); };
+  // Words, with any written temperature in them as a value (as in a step).
+  const addText = (text: string) => {
+    for (const token of splitTextIntoParsedSteps(text)) {
+      if (token.type === "inlineQuantity") {
+        const { type, value, quantity, units, range, kind } = token;
+        addValue({ type, value, quantity, units, range, kind });
+      } else if (token.value) parts.push(token.value);
+    }
+  };
   TEMP_PLACEHOLDER_RE.lastIndex = 0;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = TEMP_PLACEHOLDER_RE.exec(note))) {
     const temp = extractions[Number(m[1])];
     if (!temp) continue;
-    if (m.index > last) parts.push(note.slice(last, m.index));
+    if (m.index > last) addText(note.slice(last, m.index));
     const value: ParsedStep = { type: "inlineQuantity", value: temp.display, quantity: temp.quantity, units: temp.units, range: temp.range };
     if (temp.is_temperature) value.kind = "temperature";
-    parts.push(values.length);
-    values.push(value);
+    addValue(value);
     last = m.index + m[0].length;
   }
-  if (!values.length) return null;
-  if (last < note.length) parts.push(note.slice(last));
-  return { note_values: values, note_parts: parts };
+  if (last < note.length) addText(note.slice(last));
+  return values.length ? { note_values: values, note_parts: parts } : null;
 }
 
 // The parser only gives step text back to splitTextWithTemperatures. A `^{}`

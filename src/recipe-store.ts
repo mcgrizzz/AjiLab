@@ -494,11 +494,14 @@ export async function updateVersionNotes(slug: string, versionString: string, no
 
 // ── Prints ───────────────────────────────────────────────────────────────────
 
-// Only the parts of a display we understand: "F"/"C", and ingredient → unit.
+// Only the parts of a display we understand: "F"/"C", ingredient → unit,
+// and the rounding of converted temperatures.
 export function normalizeDisplay(raw: unknown): SheetDisplay {
   const out: SheetDisplay = {};
   const temp = (raw as any)?.temp;
   if (temp === "F" || temp === "C") out.temp = temp;
+  const round = (raw as any)?.round;
+  if (round === "whole" || round === "five") out.round = round;
   const units = (raw as any)?.units;
   if (units && typeof units === "object" && !Array.isArray(units)) {
     const clean: Record<string, string> = {};
