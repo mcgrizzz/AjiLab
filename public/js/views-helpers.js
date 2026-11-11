@@ -450,7 +450,9 @@ function openActionMenu(event, btn, items) {
   menu.innerHTML = items.filter(Boolean).map((item) => {
     if (item === 'sep') return '<div class="step-action-sep"></div>';
     actions.push(item.onClick);
-    return `<button class="step-action-item${item.danger ? ' step-action-danger' : ''}" role="menuitem" data-i="${actions.length - 1}"${item.title ? ` title="${escHtml(item.title)}"` : ''}>${escHtml(item.label)}</button>`;
+    // checked (true/false): one of a set of choices, ticked when it's the one.
+    const choice = typeof item.checked === 'boolean';
+    return `<button class="step-action-item${item.danger ? ' step-action-danger' : ''}${choice ? ' step-action-choice' : ''}" role="${choice ? 'menuitemradio' : 'menuitem'}"${choice ? ` aria-checked="${item.checked}"` : ''} data-i="${actions.length - 1}"${item.title ? ` title="${escHtml(item.title)}"` : ''}>${escHtml(item.label)}</button>`;
   }).join('');
   document.body.appendChild(menu);
   const r = btn.getBoundingClientRect();

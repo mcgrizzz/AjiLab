@@ -62,10 +62,9 @@ Object.assign(RecipeView, {
             <button class="btn btn-sm" id="amounts-btn" onclick="RecipeView.toggleAmounts()" aria-pressed="${this.showAmounts}">
               Amounts in steps: ${this.showAmounts ? 'On' : 'Off'}
             </button>
-            <button class="btn btn-sm" id="temp-btn" onclick="RecipeView.toggleTemperatureUnit()">
-              Temps: °${this.temperatureUnit}
+            <button class="btn btn-sm" id="temp-btn" onclick="RecipeView.openTemperatureMenu(event, this)" aria-haspopup="menu" title="Temperatures: °F or °C, and how converted ones are rounded">
+              Temps: °${this.temperatureUnit} ▾
             </button>
-            ${temperatureRoundingSelect('RecipeView.setTemperatureRounding(this.value)')}
             ${inlineAddNotes}
           </div>
         </div>
@@ -336,12 +335,28 @@ Object.assign(RecipeView, {
     this.rerenderAmounts();
   },
 
-  // The unit and the rounding are the reader's, remembered on this device.
-  toggleTemperatureUnit() {
-    this.temperatureUnit = this.temperatureUnit === 'F' ? 'C' : 'F';
+  // Temps ▾: the unit, and how a converted temperature is rounded. Both are
+  // the reader's, remembered on this device (until there's a settings page).
+  openTemperatureMenu(event, btn) {
+    const unit = this.temperatureUnit;
+    const round = Units.temperatureRounding();
+    // An example in the unit shown: 450°F as °C, or 233°C as °F.
+    const examples = unit === 'C' ? { tenth: '232.2°C', whole: '232°C', five: '230°C' } : { tenth: '451.4°F', whole: '451°F', five: '450°F' };
+    openActionMenu(event, btn, [
+      { label: 'Show in °F', checked: unit === 'F', onClick: () => this.setTemperatureUnit('F') },
+      { label: 'Show in °C', checked: unit === 'C', onClick: () => this.setTemperatureUnit('C') },
+      'sep',
+      { label: `Round to 0.1° (${examples.tenth})`, checked: round === 'tenth', onClick: () => this.setTemperatureRounding('tenth') },
+      { label: `Round to 1° (${examples.whole})`, checked: round === 'whole', onClick: () => this.setTemperatureRounding('whole') },
+      { label: `Round to 5° when hot (${examples.five})`, checked: round === 'five', onClick: () => this.setTemperatureRounding('five') },
+    ]);
+  },
+
+  setTemperatureUnit(unit) {
+    this.temperatureUnit = unit === 'C' ? 'C' : 'F';
     Units.setPreferredTemperature(this.temperatureUnit);
     const button = document.getElementById('temp-btn');
-    if (button) button.textContent = `Temps: °${this.temperatureUnit}`;
+    if (button) button.textContent = `Temps: °${this.temperatureUnit} ▾`;
     this.rerenderAmounts();
   },
 

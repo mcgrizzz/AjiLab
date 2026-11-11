@@ -454,6 +454,15 @@ button.ing-qty {
   font-size: inherit;
 }
 
+/* One of a set of choices (Temps ▾): a tick on the one in use. */
+.step-action-choice::before {
+  content: "";
+  display: inline-block;
+  width: 1.3em;
+}
+
+.step-action-choice[aria-checked="true"]::before { content: "✓"; }
+
 .step-action-item:hover {
   background: var(--bg2);
 }
